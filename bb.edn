@@ -1,0 +1,48 @@
+{:tasks
+ {:requires ([babashka.fs :as fs]
+             [babashka.process :as p])
+
+  -npm-install
+  {:doc  "Install node dependencies when node_modules is missing."
+   :task (when-not (fs/exists? "node_modules")
+           (shell "npm install --no-audit --no-fund"))}
+
+  dev
+  {:doc     "Backend on :8280 + shadow-cljs watch, together."
+   :depends [-npm-install]
+   :task    (run! p/check
+                  [(p/process {:inherit true :shutdown p/destroy-tree}
+                              "npx shadow-cljs watch app")
+                   (p/process {:inherit true :shutdown p/destroy-tree}
+                              "clojure -M:dev")])}
+
+  test:clj
+  {:doc  "JVM suite — clojure.test over test/clj and test/cljc."
+   :task (shell "clojure -X:test")}
+
+  test:cljs
+  {:doc     "Compile the browser test build. The Playwright run that
+             executes it in headless Chromium lands in adsb-4ga.8."
+   :depends [-npm-install]
+   :task    (do (shell "npx shadow-cljs compile test")
+                (println "cljs tests compiled."
+                         "Browser execution lands in adsb-4ga.8."))}
+
+  test:watch
+  {:doc     "shadow-cljs watch on the test build; rerun on save at :8290."
+   :depends [-npm-install]
+   :task    (shell "npx shadow-cljs watch test")}
+
+  test
+  {:doc     "Everything — clj, cljc, cljs. What CI runs."
+   :depends [test:clj test:cljs]
+   :task    (println "All test tasks passed.")}
+
+  lint
+  {:doc  "clj-kondo over src and test. Warnings are failures."
+   :task (shell "clojure -M:lint --lint src test")}
+
+  build
+  {:doc     "Production artifacts. (Runnable jar is adsb-kh4.1.)"
+   :depends [-npm-install]
+   :task    (shell "npx shadow-cljs release app")}}}

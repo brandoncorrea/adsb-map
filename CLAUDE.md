@@ -66,7 +66,7 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 bb dev          # backend + shadow-cljs watch
 bb test         # everything — clj, cljc, cljs. What CI runs.
 bb test:clj     # JVM only. Fast. Run this most.
-bb test:cljs    # browser suite, real headless Chromium via Playwright
+bb test:cljs    # compiles the browser test build (Playwright run: adsb-4ga.8)
 bb lint         # clj-kondo — treat its warnings as failures
 bb build        # production artifacts
 ```

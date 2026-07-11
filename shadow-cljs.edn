@@ -1,0 +1,20 @@
+{:source-paths ["src/cljc" "src/cljs" "test/cljc" "test/cljs"]
+
+ :dependencies
+ [[reagent "1.2.0"]
+  [re-frame "1.4.3"]]
+
+ ;; Serves the compiled browser-test page during `shadow-cljs watch test`.
+ ;; The Playwright runner (adsb-4ga.8) points at this port.
+ :dev-http {8290 "target/browser-test"}
+
+ :builds
+ {:app  {:target     :browser
+         :output-dir "resources/public/js"
+         :asset-path "/js"
+         :modules    {:main {:init-fn adsb.core/init!}}}
+
+  :test {:target    :browser-test
+         :test-dir  "target/browser-test"
+         :ns-regexp "-test$"
+         :runner-ns adsb.test-runner}}}

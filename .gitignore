@@ -7,3 +7,10 @@
 
 # Editor
 .idea/
+
+# Build output
+.cpcache/
+.shadow-cljs/
+node_modules/
+resources/public/js/
+target/
