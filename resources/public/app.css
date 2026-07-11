@@ -1,0 +1,47 @@
+/* App shell — NEUTRAL PLACEHOLDER styling only.
+   The design direction (adsb-bvi.5) is not chosen; this commits to none of
+   the proposed looks. Full-viewport map, a minimal header bar, nothing more. */
+
+html,
+body,
+#app {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* The shell fills the viewport; the map is its full-bleed background. */
+.adsb-shell {
+  position: relative;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.adsb-map {
+  position: absolute;
+  inset: 0;
+}
+
+/* Thin header bar floating over the map. Placeholder chrome only. */
+.adsb-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 16px;
+  background: rgba(20, 22, 26, 0.85);
+  color: #f5f6f7;
+}
+
+.adsb-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}

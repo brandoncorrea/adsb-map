@@ -4,9 +4,11 @@
  [[reagent "1.2.0"]
   [re-frame "1.4.3"]]
 
- ;; Serves the compiled browser-test page during `shadow-cljs watch test`.
- ;; The Playwright runner (adsb-4ga.8) points at this port.
- :dev-http {8290 "target/browser-test"}
+ ;; 8080 serves the app shell (index.html + basemap) during `bb dev`
+ ;; / `shadow-cljs watch app` — adsb-2yu.1. 8290 serves the compiled
+ ;; browser-test page; the Playwright runner (adsb-4ga.8) points at it.
+ :dev-http {8080 "resources/public"
+            8290 "target/browser-test"}
 
  :builds
  {:app  {:target     :browser

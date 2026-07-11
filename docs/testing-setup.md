@@ -3,9 +3,10 @@
 Stack-specific testing mechanics. For philosophy — naming, what to test, the cast of
 fixtures — see `/docs/testing-standards.md`.
 
-> **Status:** This describes the intended setup. The CLJS browser runner is tracked
-> in a bead and has not been built yet. Where reality disagrees with this document,
-> reality wins — fix the document.
+> **Status:** Built and passing (adsb-4ga.8). `bb test:cljs` compiles the `:test`
+> build and drives it in real headless Chromium via Playwright, mapping the run to
+> the process exit code. Where reality disagrees with this document, reality wins —
+> fix the document.
 
 ## Framework
 
@@ -71,9 +72,11 @@ the outcome somewhere Playwright can see it:
 
 ```clojure
 (ns adsb.test-runner
-  (:require
+  {:dev/always true}                            ; recompile so the macro below
+  (:require                                     ; always sees the current tests
     [cljs.test :as t]
-    [shadow.test :as st]))
+    [shadow.test :as st]
+    [shadow.test.env :as env]))
 
 (defmethod t/report [::t/default :end-run-tests] [m]
   (set! (.-adsbTestResult js/window)
@@ -81,22 +84,36 @@ the outcome somewhere Playwright can see it:
   (set! (.-adsbTestsDone js/window) true))
 
 (defn ^:export init []
+  ;; REQUIRED. `env/get-test-data` is a macro that snapshots the registered
+  ;; test namespaces at compile time; without this the registry is empty and
+  ;; `run-all-tests` runs zero tests — a green suite that proves nothing.
+  (-> (env/get-test-data)
+      (env/reset-test-data!))
   (st/run-all-tests))
 ```
 
-**3. Playwright drives the page and maps it to an exit code.** Load, wait for the
-flag, read the counts, exit non-zero if anything failed:
+That registry step and the `{:dev/always true}` metadata are not optional. shadow's
+default runners (`shadow.test.browser`, `shadow.test.node`) both do exactly this; a
+custom runner that skips it silently reports `0 passed, 0 failed`.
+
+**3. Playwright drives the page and maps it to an exit code.** The `bb test:cljs`
+task compiles the `:test` build first (`npx shadow-cljs compile test`), then hands
+`target/browser-test` to the driver. The driver serves that directory itself over
+HTTP on an ephemeral port — shadow's generated `index.html` loads `/js/test.js` by an
+absolute path, so `file://` won't do, and a self-assigned port never contends with
+the `:dev-http` server or a second suite running concurrently. Then: launch Chromium,
+wait for the flag, read the counts, exit non-zero if anything failed:
 
 ```js
-// script/run-browser-tests.mjs
+// script/run-browser-tests.mjs  (abridged — see the file for the static server)
 import { chromium } from "playwright"
 
 const browser = await chromium.launch()
 const page = await browser.newPage()
 
 page.on("console", msg => console.log(msg.text()))
-await page.goto("http://localhost:8290")
-await page.waitForFunction(() => window.adsbTestsDone, { timeout: 60_000 })
+await page.goto(`http://127.0.0.1:${port}/`)          // port assigned by the OS
+await page.waitForFunction(() => window.adsbTestsDone === true, { timeout: 60_000 })
 
 const { pass, fail, error } = await page.evaluate(() => window.adsbTestResult)
 await browser.close()
@@ -107,6 +124,10 @@ process.exit(fail + error > 0 ? 1 : 0)
 
 Piping the browser console to stdout is the difference between a debuggable failure
 and a mystery. Don't skip it.
+
+Playwright is a `devDependency`; its Chromium is installed with
+`npx playwright install chromium` (the `bb test:cljs` task ensures this — it's a
+no-op once cached).
 
 ## Running Tests
 
@@ -206,15 +227,35 @@ asserting against the previous frame. Force it:
 
 ```clojure
 (rf/dispatch [:aircraft/select "a1b2c3"])
-(r/flush!)                                  ; <- without this, you see the old DOM
+(r/flush)                                   ; <- reagent.core/flush, no bang
 (is (.getByText rtl/screen "UPS2717"))
 ```
 
-`run-test-sync` handles the re-frame event queue, but **not** Reagent's render
-queue. When an assertion fails and the value you see is one step stale, this is why.
+The function is `reagent.core/flush` — **no `!`**, despite touching the DOM; that's
+Reagent's spelling, not ours to change. `run-test-sync` handles the re-frame event
+queue, but **not** Reagent's render queue. When an assertion fails and the value you
+see is one step stale, this is why.
 
-For genuinely async behavior (a debounce, an SSE arrival), use RTL's `waitFor`
-rather than sprinkling `flush!` calls.
+`r/flush` forces Reagent's own batch, but it does **not** force React 18's commit.
+RTL 16 mounts through a React 18 `createRoot`, which commits a re-render triggered by
+a ratom or dispatch **asynchronously** — so for anything downstream of a state change,
+`flush` alone is not enough. Reach for RTL's async queries (`findByText`,
+`findByRole`) or `waitFor`, which poll the real DOM until it settles, and drive them
+from a `cljs.test` `async` block:
+
+```clojure
+(deftest counter-responds
+  (rtl/render (r/as-element [counter]))
+  (.click rtl/fireEvent (.getByRole rtl/screen "button" #js {:name "increment"}))
+  (async done
+    (-> (.findByText rtl/screen "1")
+        (.then  (fn [el]  (is (= "1" (.-textContent el)))))
+        (.catch (fn [err] (is false (str err))))
+        (.finally done))))
+```
+
+The working example lives in `test/cljs/adsb/reagent_rtl_test.cljs`; the re-frame
+isolation example in `test/cljs/adsb/re_frame_isolation_test.cljs`.
 
 **Never use an anonymous `fn` as a component's event handler in a test-sensitive
 path.** A fresh closure every render defeats React's reconciliation and makes
