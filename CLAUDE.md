@@ -60,18 +60,70 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
 ## Build & Test
 
-_Add your build and test commands here_
+`bb` is the command surface. Prefer it over raw `clojure`/`shadow-cljs` invocations.
 
 ```bash
-# Example:
-# npm install
-# npm test
+bb dev          # backend + shadow-cljs watch
+bb test         # everything — clj, cljc, cljs. What CI runs.
+bb test:clj     # JVM only. Fast. Run this most.
+bb test:cljs    # browser suite, real headless Chromium via Playwright
+bb lint         # clj-kondo — treat its warnings as failures
+bb build        # production artifacts
 ```
+
+CLJS tests run in a **real browser**, not jsdom — jsdom has no layout engine and no
+WebGL, so MapLibre cannot initialize and `getBoundingClientRect` returns zeros. Do
+not "simplify" this to jsdom; it produces a green suite that proves nothing.
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+A live aircraft map. An ultrafeeder container on the home server receives ADS-B
+broadcasts; this app ingests, validates, and streams them to a browser map.
+
+```
+ultrafeeder  ──poll aircraft.json──►  backend (JVM)  ──SSE──►  browser
+                                       validate + normalize      MapLibre
+```
+
+```
+src/clj/adsb/     backend — ingest/, stream/ (SSE), http/ (reitit)
+src/cljc/adsb/    shared domain — pure. aircraft, schema (Malli), geo.
+src/cljs/adsb/    frontend — Reagent + re-frame chrome, MapLibre map
+```
+
+Stack: deps.edn + babashka + shadow-cljs · Ring/reitit + http-kit · Malli ·
+Reagent + re-frame · MapLibre GL JS · clojure.test / cljs.test.
+
+**Three decisions that look like mistakes if you don't know why:**
+
+1. **The aircraft layer does not go through React.** Hundreds of aircraft updating
+   every second will crawl if each is a Reagent component. Positions are pushed
+   straight into a MapLibre GeoJSON source via `setData`. re-frame owns the chrome;
+   the map owns the planes.
+2. **Ingest sits behind a protocol** (`adsb.ingest.source/Source`). We poll
+   `aircraft.json` today; SBS and Beast are the same data at lower latency. The swap
+   must never reach the domain.
+3. **The shared domain is pure.** No I/O, no atoms, no clock in `src/cljc/`. Time is
+   an argument, not an ambient fact. That's what makes it testable and portable.
 
 ## Conventions & Patterns
 
-_Add your project-specific conventions here_
+Full detail in `docs/`. **Read `docs/clean-code-standards.md` before writing code.**
+The load-bearing ones:
+
+- **`?` for predicates, `!` for side effects.** Non-negotiable. The `!` is the only
+  warning a reader gets that a function touches the world.
+- **Namespaced keys in domain maps** — `:aircraft/icao`, not `:icao`.
+- **Reagent components are kebab-case functions** (`aircraft-panel`), not PascalCase.
+  They're not React components; they're functions returning hiccup.
+- **Validate once, at the boundary, with Malli. Then trust.** The domain does not
+  re-check. If you're writing defensive checks deep in the UI, the boundary leaked.
+- **`(if (seq coll))`, never `(if coll)`.** Empty collections are truthy. This is the
+  most common real bug in Clojure.
+- **Never `clojure.core/read-string` on network data** — it evaluates code. Use
+  `clojure.edn/read-string`.
+- **The feeder is untrusted.** ADS-B is unauthenticated radio; anyone with a $30 SDR
+  can inject fake aircraft. See `docs/validation-boundaries.md` — read it before
+  touching ingest.
+- **Never test against a live feeder.** The sky is not a fixture. Replay a recorded
+  payload.

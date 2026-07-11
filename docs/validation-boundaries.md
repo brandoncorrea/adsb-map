@@ -1,0 +1,250 @@
+# Validation Boundaries
+
+This document defines where input validation lives, and why there's more of it here
+than you'd expect for a hobby project.
+
+## Start Here: ADS-B Has No Authentication
+
+This is the single most important fact about the system, and everything else in this
+document follows from it.
+
+**ADS-B is broadcast in the clear, with no authentication, no encryption, and no
+integrity checking of any kind.** An aircraft transmits its identity and position;
+anyone with a receiver hears it. The protocol was designed in an era when the ability
+to transmit on 1090 MHz implied you were an aircraft. That assumption is no longer
+true — a software-defined radio costs about thirty dollars, and injecting entirely
+fictional aircraft into a receiver's view is a well-documented, frequently
+demonstrated attack.
+
+So when a payload arrives claiming a 747 is at 41,000 feet over Denver, the honest
+description of what we know is: **somebody, somewhere, transmitted a radio signal
+that says so.** That's all.
+
+This does not mean the sky is full of attackers. It means the ingest path is a
+genuine trust boundary rather than a formality, and it should be built like one. We
+are not defending a bank. But we *are* parsing adversarially-shaped input from an
+anonymous source, and the code should read like it knows that.
+
+Ultrafeeder is not the adversary here. Ultrafeeder is an honest reporter of what the
+antenna heard. The antenna is the boundary.
+
+## The Trust Map
+
+Untrusted data enters at five places, in descending order of how much it should
+worry you:
+
+1. **The ultrafeeder feed** — unauthenticated radio, relayed as JSON. The primary
+   boundary. Everything below is secondary.
+2. **The HTTP API** — query params and paths, from any browser that finds the port.
+3. **Configuration and environment** — the feeder URL is operator-supplied, and it
+   determines what host the server makes requests to.
+4. **Dependencies** — Maven and npm packages run with full privileges at build and
+   at runtime.
+5. **The SSE stream, as seen by the browser** — our own server, so mostly trusted,
+   but the *content* it carries originated at the antenna and is not laundered clean
+   by having passed through us.
+
+That last one is the subtle one, and it's covered in Boundary 4.
+
+## Boundary 1 — Ingest (the important one)
+
+Everything from the feeder is validated and coerced by **Malli**, at the edge, before
+it becomes a domain aircraft. The schemas live in `src/cljc/adsb/schema.cljc`.
+
+### The feeder payload is messier than you think
+
+`aircraft.json` is not a clean data structure. It's the accreted output of a
+real-world decoder handling real-world radio. The traps, all of which are real:
+
+| Field | The trap |
+|---|---|
+| `alt_baro` | Is a **number**, *or* the **string `"ground"`**. Not `0`. The string. |
+| `lat` / `lon` | Frequently **absent entirely**. An aircraft can be heard for minutes before it ever transmits a position — or never. |
+| `flight` | The callsign, **space-padded to 8 characters** (`"UPS2717 "`). Trim it. Also often absent. |
+| `hex` | Usually a 6-char ICAO address, but may be **prefixed with `~`** for non-ICAO (TIS-B / ADS-R) targets. |
+| `squawk` | A **string of four octal digits** (`"7700"`), not an integer. `"0000"` is meaningful and is not nil. |
+| `gs`, `track`, `baro_rate` | Any of them may be **absent** on any given cycle. Absent is not zero. |
+| Any field | May be **`null`**. |
+
+Every one of those is a test in `test/cljc/adsb/` and a real class of input in the
+cast (see `testing-standards.md`).
+
+The rule that follows: **absent is not zero, and zero is not absent.** An aircraft
+with no reported altitude is not an aircraft at sea level. An aircraft with no
+reported speed is not stationary. Coercing missing data into a plausible-looking
+default is how you end up drawing a 747 parked in the Atlantic.
+
+### Validate once, at the edge
+
+```clojure
+(defn ->aircraft
+  "Coerce one raw feeder entry into a domain aircraft, or nil if it can't be."
+  [raw]
+  (when-let [coerced (m/coerce schema/raw-aircraft raw mt/json-transformer)]
+    (aircraft/normalize coerced)))
+```
+
+Past this function, the rest of the system may **trust the data completely**. The
+domain does not re-check. Handlers do not re-check. The UI does not re-check. That's
+what a boundary *is* — the place where you pay the cost once so that nobody
+downstream has to pay it again, or forget to.
+
+If you find yourself writing `(when (:aircraft/position a) ...)` deep in the UI, ask
+why an unpositioned aircraft got that far. The answer is usually that the boundary
+leaked.
+
+### One bad aircraft must not kill the batch
+
+A payload of 400 aircraft with one malformed entry should yield **399 aircraft and
+one log line** — not an exception, not an empty map, not a dropped poll cycle.
+
+```clojure
+(defn ->aircraft-batch [raw-entries]
+  (->> raw-entries
+       (keep #(try
+                (->aircraft %)
+                (catch #?(:clj Exception :cljs :default) e
+                  (log/warn "Rejected aircraft" {:hex (:hex %) :error (ex-message e)})
+                  nil)))
+       vec))
+```
+
+The ingest loop is a long-running process fed by a noisy radio. It **must not die.**
+A malformed entry is an ordinary Tuesday, not an exceptional condition. Treating it
+as exceptional means the map goes blank because one aircraft two hundred miles away
+had a corrupted burst.
+
+Log the rejection with enough context to debug it — but do not log the entire
+payload on every failure, or a stuck bad actor will fill the disk.
+
+### Plausibility is a second, separate layer
+
+Schema validity and physical plausibility are different questions, and conflating
+them is a mistake.
+
+An aircraft reporting 400,000 feet, or 3,000 knots, or a position in the middle of
+the Pacific when your antenna is in Colorado, is **schema-valid**. Every field has
+the right type. It's also nonsense — the product of a corrupted burst, a decoder
+bug, or somebody with an SDR having fun.
+
+```clojure
+(def plausible-altitude-ft [:int {:min -1500 :max 60000}])
+(def plausible-ground-speed-kt [:int {:min 0 :max 1000}])
+```
+
+Decide explicitly, per field, what to do when plausibility fails — and write the
+decision down:
+
+- **Out of receiver range** (a position further away than physics allows for your
+  antenna's horizon) → **drop it.** It didn't come from the sky you can see.
+- **Absurd altitude or speed** → **drop the field, keep the aircraft.** The rest of
+  its data may be fine, and a plane with a garbled altitude is still a plane.
+- **Impossible position jump** (400 nm in one second) → **flag it, don't drop it.**
+  This is the fingerprint of spoofing, and silently discarding it means you'd never
+  know. Surface it.
+
+The temptation is to silently clamp bad values into range. **Don't.** Clamping turns
+"this data is wrong" into "this data is fine," which is the opposite of what a
+boundary is for.
+
+## Boundary 2 — The HTTP API
+
+reitit does coercion with the same Malli schemas, declaratively:
+
+```clojure
+["/api/aircraft/:icao"
+ {:get {:parameters {:path [:map [:icao schema/icao-address]]}
+        :responses  {200 {:body schema/aircraft}}
+        :handler    handler/aircraft-detail}}]
+```
+
+- **Every parameter is coerced by a schema.** No hand-rolled `Integer/parseInt` in a
+  handler. No `(keyword (:type params))` — that's unbounded keyword interning from
+  user input, which is a memory leak with a friendly face.
+- **Responses are schema'd too.** It catches the day a domain change silently alters
+  the API contract.
+- **Never build a query from a string.** No SQL today, but when history lands (bead
+  pending), the parameterized-query rule arrives with it.
+
+## Boundary 3 — Configuration
+
+`ADSB_ULTRAFEEDER_URL` decides what host the server issues HTTP requests to. That is
+a **server-side request forgery** primitive, and it deserves to be named as one.
+
+Today it's read from the environment by the operator, which makes the risk low: if
+you can set the server's env vars, you have already won. So the rule is simply:
+
+- The feeder URL comes from the **environment only**. It is never read from a request
+  parameter, a header, or the SSE channel.
+- Validate it at startup — it must parse, and it must be `http`/`https`. Fail loudly
+  at boot, not on the first poll.
+
+**If this ever becomes user-configurable — a settings page, a multi-feeder
+selector — the risk changes completely** and you need an allowlist of permitted
+hosts. Do not let it reach `http://169.254.169.254/` or `http://localhost:6379/`.
+Write that bead the day the feature is proposed.
+
+## Boundary 4 — The Browser
+
+Reagent escapes strings in hiccup by default, so `[:span callsign]` is safe even
+though `callsign` came off an unauthenticated radio. That's the default, and the
+default is correct.
+
+It stops being correct the moment anyone reaches for an escape hatch:
+
+- **`:dangerouslySetInnerHTML`** — there is no legitimate use for this in this
+  application. If it appears in a diff, that's a finding.
+- **A URL built from feeder data** — `[:a {:href (str "/track/" callsign)}]` where
+  `callsign` is attacker-controlled. Route params get encoded; hrefs get validated.
+- **Anything reaching `js/eval`, `set!` on `.-innerHTML`, or dynamic script
+  injection** — same answer.
+
+The mental model to hold: **the callsign in your DOM is a string that an anonymous
+stranger transmitted over the air.** It passed through our schema, which checked that
+it's a string of a plausible length. It did not become *trustworthy* along the way.
+It became *well-typed*. Those are different things, and the difference is exactly
+where XSS lives.
+
+## Boundary 5 — Dependencies
+
+Maven and npm packages run with full privileges — at build time and at runtime.
+Treat updates as their own audit step, in their own commit, so a regression is
+bisectable. See `security-checklist.md` §6.
+
+## Where Validation Does NOT Belong
+
+Validation belongs at boundaries. Putting it anywhere else is not "extra safety" —
+it's noise that obscures where the real boundary is, and it rots.
+
+- **Not in the domain.** `src/cljc/` receives already-validated data. A domain
+  function that defensively checks whether its argument is a map is a domain function
+  that doesn't know what its contract is.
+- **Not in Reagent components.** A component that renders "unknown" when the callsign
+  is nil is fine. A component that *validates* the aircraft is a component doing the
+  boundary's job, badly and late.
+- **Not twice.** If ingest coerced altitude to an int, the UI does not re-parse it.
+
+The test for whether something is a boundary: **is this the first place the data
+enters our control?** If yes, validate. If no, trust — and if you don't feel you can
+trust it, the real bug is upstream.
+
+## What This Project Does NOT Have
+
+Documenting absences explicitly, so nobody adds validation in the wrong place or
+audits for a threat that doesn't exist:
+
+- **No user accounts, no auth, no sessions** → no password validation, no JWTs, no
+  session fixation. The app is read-only and anonymous.
+- **No writes from the browser.** The client sends no state to the server. There is
+  no `POST /aircraft`, and there should never be — the aircraft come from the sky,
+  not from a form.
+- **No database** (yet). When history lands, parameterized queries and a migration
+  story arrive with it. Until then, there is no injection surface.
+- **No file uploads, no user-supplied templates, no server-side rendering of user
+  content.**
+- **No secrets in the browser.** MapLibre needs no vendor token. If a tile provider
+  requiring a key is ever adopted, that key becomes the first browser-visible secret
+  and this section changes. See `security-checklist.md` §3.
+
+If any of these change, reintroduce the relevant validation layer and update this
+document in the same commit.
