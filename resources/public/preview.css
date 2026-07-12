@@ -288,6 +288,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.14em;
+  font-size: var(--t-2); /* B's own spec — caps carry it at this size */
 }
 
 .adsb-preview[data-typography="drafting-room"] .adsb-conn,
@@ -357,6 +358,7 @@
 
 .adsb-preview[data-typography="annotation"] .adsb-legend-heading {
   color: var(--magenta);
+  font-size: var(--t-2); /* C's spec: the pen's block headings run small */
 }
 
 .adsb-preview[data-typography="annotation"] .adsb-panel-title {
@@ -413,8 +415,14 @@
   padding: var(--s3) var(--s3);
 }
 
+/* Caption sizes are PER-SYSTEM, not global: only Drafting Room prints
+   its captions at --t-2 — caps-tracked gothic survives that size. The
+   serif and mono systems designed theirs at --t-1, and forcing them
+   smaller renders those candidates illegible, i.e. a lie about them
+   (Overseer finding, dgb.11 reopen). Base is t-1; B's block drops its
+   own to t-2. */
 .adsb-preview .adsb-legend-heading {
-  font-size: var(--t-2);
+  font-size: var(--t-1);
   margin-bottom: var(--s2);
 }
 
@@ -489,7 +497,7 @@
 
 .adsb-preview .adsb-fact-label {
   color: var(--faded-ink);
-  font-size: var(--t-2);
+  font-size: var(--t-1);
 }
 
 .adsb-preview .adsb-fact-value {
