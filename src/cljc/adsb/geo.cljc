@@ -143,66 +143,6 @@
     aircraft))
 
 ;; ---------------------------------------------------------------------
-;; The cast shadow — altitude as instinct (design-direction §8)
-;;
-;; Every airborne aircraft throws a shadow onto the chart: the shadow's
-;; OFFSET from the glyph scales with altitude, so a plane on the deck has
-;; its shadow tucked beneath it and one at FL380 floats far off the page.
-;; Vertical rate rides the channel for free — a closing shadow reads as a
-;; descent before any number does.
-;;
-;; The math lives HERE, not in the style layer, because MapLibre cannot
-;; express it: `icon-translate` is a constant paint property (never
-;; data-driven), and `icon-offset` — which IS data-driven — is applied in
-;; the ICON's coordinate frame, i.e. it rotates with `icon-rotate`. The
-;; light must not turn with the plane: the sun sits at one fixed azimuth
-;; over the whole chart (NW, so shadows fall SE — the classic cartographic
-;; hillshade convention). So each feature carries a pre-COUNTER-rotated
-;; offset: the fixed map-space shadow direction, rotated back by the
-;; track, so MapLibre's rotation restores it. Style expressions have no
-;; trig; this pure fn is the only place the rotation can happen.
-;;
-;; The altitude->distance curve is a SQUARE ROOT, not linear: the sky's
-;; drama lives low (approach, departure, pattern work), so the shadow
-;; must separate perceptibly in the first ten thousand feet rather than
-;; spending its whole travel on the flight levels. sqrt gives half the
-;; full throw by 10,000 ft and elegant compression above.
-
-(def ^:const shadow-azimuth-deg
-  "Map bearing along which every shadow falls: 135° (SE), i.e. light from
-  the NW — the fixed cartographic sun. One sun for the whole chart, so
-  all shadows agree."
-  135)
-
-(def ^:const shadow-max-offset
-  "Shadow offset at `shadow-altitude-cap-ft`, in ICON pixels (MapLibre
-  multiplies `icon-offset` by `icon-size`; the icon canvas is 32 px, so
-  the full throw is roughly one glyph-length of separation)."
-  30.0)
-
-(def ^:const shadow-altitude-cap-ft
-  "Altitude at which the shadow's travel tops out — the same 40,000 ft
-  that caps the altitude colour ramp. Above it the shadow simply stays at
-  full stretch."
-  40000)
-
-(defn shadow-offset
-  "The cast-shadow `icon-offset` for an aircraft at `altitude-ft` flying
-  `track-deg`, as `[dx dy]` in icon pixels (y down, icon frame). The
-  offset is the fixed SE map-space shadow direction counter-rotated by
-  the track (see the section comment): magnitude is `shadow-max-offset`
-  scaled by the SQUARE ROOT of altitude over the cap, clamped to
-  [0, cap] — an aircraft at 0 ft keeps its shadow exactly beneath it.
-  A nil track reads as 0, matching the layer's rotation fallback (the
-  track-less shadow is the symmetric dot, so the rotation is moot)."
-  [altitude-ft track-deg]
-  (let [alt  (min (max altitude-ft 0) shadow-altitude-cap-ft)
-        d    (* shadow-max-offset (Math/sqrt (/ alt shadow-altitude-cap-ft)))
-        beta (deg->rad (- shadow-azimuth-deg (or track-deg 0)))]
-    [(* d (Math/sin beta))
-     (- (* d (Math/cos beta)))]))
-
-;; ---------------------------------------------------------------------
 ;; Domain aircraft -> GeoJSON
 ;;
 ;; Feature `:properties` keys are simple, UNqualified keywords. clj->js
@@ -253,15 +193,6 @@
       track-deg     (assoc :track track-deg)
       on-ground?    (assoc :altitude ground-altitude)
       altitude-ft   (assoc :altitude altitude-ft)
-      ;; The cast shadow (design-direction §8) rides a pre-computed
-      ;; icon-offset — see `shadow-offset` for why the style layer cannot
-      ;; do this math. Only a NUMERIC altitude casts one: "ground" and
-      ;; absent both omit the property (absent is not zero, and the
-      ;; tarmac throws no shadow), which is exactly what the shadow
-      ;; layer's `["has" "shadow-offset"]` filter keys on. When both
-      ;; on-ground? and a numeric altitude are reported, the number wins
-      ;; here just as it wins the :altitude property above.
-      altitude-ft   (assoc :shadow-offset (shadow-offset altitude-ft track-deg))
       (some? stale) (assoc :stale stale)
       (some? age)   (assoc :age-s age)
       ;; Multilateration is lower-confidence than self-reported ADS-B; the

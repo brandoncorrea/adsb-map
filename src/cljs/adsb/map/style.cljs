@@ -62,34 +62,51 @@
   pointing a direction we cannot vouch for would be a lie."
   "aircraft-dot")
 
-(def ^:const shadow-plane-icon-id
-  "The pre-softened plane silhouette the cast-shadow layer prints. A
-  SEPARATE image from the crisp plane: the plane icons are hard-alpha
-  masks, and MapLibre's SDF halo/blur machinery needs an alpha GRADIENT
-  to soften into — so the shadow silhouette is drawn blurred (a
-  pseudo-distance-field) and registered SDF, which is what lets
-  `icon-halo-blur` deepen the penumbra with altitude."
-  "aircraft-shadow-plane")
-
-(def ^:const shadow-dot-icon-id
-  "The pre-softened disc — the shadow of a track-less target."
-  "aircraft-shadow-dot")
-
 ;; ---------------------------------------------------------------------
 ;; Sizes, opacities — the scalar knobs. Edition-free: both prints share
 ;; them. DATA: re-skin here.
+;;
+;; SIZE IS THE INSTINCT-ALTITUDE CHANNEL (adsb-dgb.12, Overseer pick):
+;; low is near is LARGE, high is far is small — perspective, the oldest
+;; depth cue there is. Colour stays the PRECISE altitude channel; size
+;; carries the glance. The alternatives examined and rejected are
+;; recorded on adsb-dgb.8/.12: the cast shadow (busy at density,
+;; near-invisible on dark stock) and the drop-line tether (verticals
+;; re-crowded the cluster). Perspective needs no ink at all, so it is
+;; identical in both editions — and it CALMS the dense sky, because the
+;; cruise-level crowd is what shrinks.
 
 (def ^:const base-icon-size
-  "Icon-size multiplier for an ordinary aircraft." 0.9)
+  "Icon-size multiplier for an aircraft whose altitude is unknown — the
+  neutral middle of the perspective ramp, making no height claim."
+  0.9)
 
 (def ^:const emergency-icon-size
   "Icon-size multiplier for an aircraft squawking distress — larger so it
-  cannot be missed in a crowd." 1.6)
+  cannot be missed in a crowd. Overrides perspective entirely: a plane in
+  distress is never allowed to look far away." 1.6)
 
-(def ^:const mlat-icon-size
-  "Icon-size multiplier for a multilaterated position — a touch smaller
-  than a self-reporting target, a quiet visual demotion for the lower
-  confidence of an mlat fix." 0.7)
+(def ^:const ground-icon-size
+  "Icon-size multiplier on the tarmac — deliberately BENEATH the whole
+  perspective ramp, though pure perspective would argue otherwise: a
+  hub's apron holds dozens of parked and taxiing aircraft, the least
+  interesting targets on the chart, and they must never out-draw
+  anything that is flying." 0.5)
+
+(def ^:const perspective-size-stops
+  "The instinct-altitude ramp: icon-size by feet, low = near = LARGE,
+  high = far = small. Front-loaded like the colour ramp — the sky's
+  drama (approach, departure, pattern work) lives under 10,000 ft, so
+  most of the shrink happens above that line."
+  [[0 1.25] [10000 1.0] [40000 0.55]])
+
+(def ^:const mlat-size-factor
+  "Multiplier on a multilaterated position's perspective size — the quiet
+  lower-confidence demotion, COMPOSED with the altitude size rather than
+  replacing it (an mlat fix at 3,000 ft must still read nearer than an
+  ADS-B target at FL400). Approximately the pre-perspective 0.7/0.9
+  demotion ratio."
+  0.78)
 
 (def ^:const base-opacity 1.0)
 
@@ -122,22 +139,6 @@
   bottoms out here, then the client drops the feature."
   (/ aircraft/age-out-threshold-ms 1000))
 
-(def ^:const shadows-enabled?
-  "The cast-shadow prototype's toggle (design-direction §8, adsb-dgb.8).
-  True prints the shadow layer under the aircraft; false withholds it
-  without touching any other wiring — the visual pass flips this one
-  constant to accept or reject the invention. Overseer verdict 2026-07-12:
-  OFF — too busy at density and near-invisible on the night edition. The
-  instinct-altitude channel is being re-explored (adsb-dgb.12) before the
-  layer is deleted or replaced."
-  false)
-
-(def ^:const shadow-softness-stops
-  "SDF halo width/blur (px) by altitude — the penumbra deepens as the
-  aircraft climbs, so a high shadow reads soft and a low one crisp.
-  Edition-free: softness is geometry, not ink."
-  [[0 0.2] [40000 2.0]])
-
 (def ^:const halo-width
   "The hairline paper-coloured halo that lets an ink glyph survive a busy
   chart area (design-direction §4). Width is shared; the COLOUR is the
@@ -166,11 +167,6 @@
     :emergency-color "#CE2029"   ; red pen; overrides everything
     :halo-color      "#F5EFDF"   ; the day paper itself
     :trail-rgb       "44, 42, 36" ; day ink #2C2A24
-    ;; The cast shadow (§8): the day chart's own ink, thrown at low alpha
-    ;; onto warm paper. Alpha FALLS as altitude rises — a high sun-shadow
-    ;; is fainter and softer, never a competing glyph.
-    :shadow-ink      "#2C2A24"
-    :shadow-opacity-stops [[0 0.30] [40000 0.16]]
     :altitude-stops  [[0     "#A0622D"]    ; sienna — on the deck
                       [10000 "#C2447C"]    ; aviation magenta
                       [20000 "#7A4F86"]    ; plum — the transition
@@ -182,13 +178,6 @@
     :emergency-color "#FF5A4D"   ; red pen re-inked to carry on dark
     :halo-color      "#151B26"   ; the night paper itself
     :trail-rgb       "233, 226, 206" ; night ink #E9E2CE
-    ;; Re-reasoned for dark stock, NOT inherited: night ink (#E9E2CE) is
-    ;; light, and a light shadow is a glow — a lie about the sun. The
-    ;; night shadow is a deeper black-blue than the paper itself (a
-    ;; shadow can only darken), pushed to higher alpha because dark-on-
-    ;; dark needs more presence to read at all.
-    :shadow-ink      "#05080F"
-    :shadow-opacity-stops [[0 0.55] [40000 0.32]]
     :altitude-stops  [[0     "#C98A54"]    ; lamplit sienna
                       [10000 "#E06A9F"]    ; night-print magenta
                       [20000 "#A98BC4"]    ; lifted plum
@@ -248,17 +237,34 @@
    ["get" "emergency"] (:emergency-color (palette theme))
    (altitude-color-expression theme)])
 
+(defn perspective-size-expression
+  "The instinct-altitude size (adsb-dgb.12): the three altitude states
+  peeled apart exactly as the colour expression peels them — absent
+  altitude takes the neutral base (no height claim), \"ground\" tucks
+  beneath the ramp, and a numeric altitude interpolates low-large to
+  high-small through `perspective-size-stops`."
+  []
+  ["case"
+   ["!" ["has" "altitude"]]           base-icon-size
+   ["==" ["get" "altitude"] "ground"] ground-icon-size
+   (into ["interpolate" ["linear"] ["get" "altitude"]]
+         (mapcat identity perspective-size-stops))])
+
 (defn icon-size-expression
-  "Emergency aircraft draw largest; a multilaterated (lower-confidence)
-  position draws a little smaller as a quiet demotion; everyone else is
-  the base size. Emergency wins first — a squawking mlat target is still
-  an emergency and must not be shrunk. `[\"get\" \"mlat\"]` is null when
-  absent, which `case` reads as false, so a plain ADS-B target is base."
+  "Emergency wins first and absolutely — a plane in distress draws
+  largest no matter its altitude, and a squawking mlat target must not
+  be shrunk. Everyone else takes the perspective-altitude size, times
+  the mlat demotion factor when the position is multilaterated —
+  MULTIPLIED, not substituted, so lower confidence reads as a touch
+  smaller at every altitude without stealing the altitude channel.
+  `[\"get\" \"mlat\"]` is null when absent, which `case` reads as false,
+  so a plain ADS-B target keeps factor 1."
   []
   ["case"
    ["get" "emergency"] emergency-icon-size
-   ["get" "mlat"]      mlat-icon-size
-   base-icon-size])
+   ["*"
+    ["case" ["get" "mlat"] mlat-size-factor 1.0]
+    (perspective-size-expression)]])
 
 (defn icon-opacity-expression
   "Silent aircraft fade CONTINUOUSLY as their age grows, not in one step:
@@ -285,91 +291,6 @@
   imply a heading we do not have."
   []
   ["case" ["has" "track"] plane-icon-id dot-icon-id])
-
-;; ---------------------------------------------------------------------
-;; The cast shadow (design-direction §8, adsb-dgb.8) — altitude's second
-;; channel: instinct. A second symbol layer UNDER the aircraft, printing
-;; the pre-softened silhouette in shadow ink, displaced SE by altitude.
-;;
-;; Technique note (the experiment's finding): `icon-translate` cannot
-;; carry this — it is a constant paint property, never data-driven in
-;; MapLibre (4.7 included). `icon-offset` IS data-driven, but it lives in
-;; the icon's rotated frame, so the fixed NW sun requires each feature's
-;; offset to be counter-rotated by its track — trig no style expression
-;; can do. adsb.geo/shadow-offset therefore computes the finished [dx dy]
-;; per feature, and the expressions here only read it back. Blur rides
-;; the SDF halo over a PRE-BLURRED shadow image (the crisp plane's alpha
-;; is hard — an SDF halo has nothing to soften into), so the penumbra can
-;; still deepen continuously with altitude.
-
-(defn shadow-icon-image-expression
-  "The soft shadow silhouette per feature, mirroring the aircraft layer's
-  choice: the directional shadow when a track is known, the soft disc
-  when it is not."
-  []
-  ["case" ["has" "track"] shadow-plane-icon-id shadow-dot-icon-id])
-
-(defn shadow-offset-expression
-  "Read the per-feature `[dx dy]` computed by adsb.geo/shadow-offset,
-  asserted to the two-number array `icon-offset` demands. Every feature
-  the shadow layer draws carries the property — the layer's
-  `[\"has\" \"shadow-offset\"]` filter guarantees it — so the assertion
-  can never see a missing value."
-  []
-  ["array" "number" 2 ["get" "shadow-offset"]])
-
-(defn shadow-opacity-expression
-  "The shadow's alpha: the edition's altitude-falling base (a high shadow
-  is fainter) MULTIPLIED by the same continuous age fade the aircraft
-  wears — a stale plane's shadow fades with the plane, never outliving
-  it. `[\"get\" \"altitude\"]` is safely numeric here: only a numeric
-  altitude ever earns a `shadow-offset` (adsb.geo), and the layer filter
-  admits nothing else."
-  [theme]
-  ["*"
-   (into ["interpolate" ["linear"] ["get" "altitude"]]
-         (mapcat identity (:shadow-opacity-stops (palette theme))))
-   (icon-opacity-expression)])
-
-(defn shadow-softness-expression
-  "Halo width/blur by altitude — the penumbra grows as the plane climbs."
-  []
-  (into ["interpolate" ["linear"] ["get" "altitude"]]
-        (mapcat identity shadow-softness-stops)))
-
-(defn shadow-layer-spec
-  "The complete MapLibre symbol-layer spec for the cast-shadow `layer-id`
-  over `source-id` (the SAME GeoJSON source as the aircraft — no second
-  setData, no second conversion), printed in `theme`'s shadow ink. Add it
-  BELOW the aircraft layer: the shadow lies on the paper; the plane flies
-  over it.
-
-  The filter keeps the semantics honest at the layer boundary: only
-  features carrying `shadow-offset` — i.e. only numeric altitudes — are
-  drawn at all. On-ground and altitude-unknown aircraft cast NOTHING
-  (absent is not zero). Rotation, size, and overlap mirror the aircraft
-  layer exactly, so the shadow is the plane's true silhouette: same
-  track, same emergency enlargement, and `icon-offset` (which MapLibre
-  multiplies by `icon-size`) throws a big glyph's shadow proportionally
-  further."
-  [theme layer-id source-id]
-  (let [ink (:shadow-ink (palette theme))]
-    {:id     layer-id
-     :type   "symbol"
-     :source source-id
-     :filter ["has" "shadow-offset"]
-     :layout {:icon-image              (shadow-icon-image-expression)
-              :icon-rotate             ["get" "track"]
-              :icon-rotation-alignment "map"
-              :icon-size               (icon-size-expression)
-              :icon-offset             (shadow-offset-expression)
-              :icon-allow-overlap      true
-              :icon-ignore-placement   true}
-     :paint  {:icon-color      ink
-              :icon-opacity    (shadow-opacity-expression theme)
-              :icon-halo-color ink
-              :icon-halo-width (shadow-softness-expression)
-              :icon-halo-blur  (shadow-softness-expression)}}))
 
 (defn aircraft-layer-spec
   "The complete MapLibre symbol-layer spec for the aircraft `layer-id`

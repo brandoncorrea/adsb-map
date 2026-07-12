@@ -109,17 +109,13 @@
           handle (layer/attach! m)]
       (fire-load! fake)
 
-      (testing "load adds both sources and the layer stack in z order:
-                trail, then shadow (when the prototype toggle is on),
-                then aircraft — shadow on the paper, plane over it"
+      (testing "load adds both sources and both layers, trail beneath aircraft"
         (is (= {layer/source-id       layer/source-spec
                 layer/trail-source-id layer/trail-source-spec}
                (:sources @rec)))
-        (is (= (cond-> [(layer/trail-layer-spec :day)]
-                 style/shadows-enabled? (conj (layer/shadow-layer-spec :day))
-                 :always                (conj (layer/layer-spec :day)))
+        (is (= [(layer/trail-layer-spec :day) (layer/layer-spec :day)]
                (:layers @rec))
-            "add order is z order: the aircraft layer is added last"))
+            "the trail layer is added first, so it renders under the plane"))
 
       (rf/dispatch [:stream/received (frame [fixtures/ups-2717
                                              fixtures/never-positioned])])
@@ -195,15 +191,10 @@
           handle (layer/attach! m)]
       (fire-load! fake)
       (let [images (:images @rec)]
-        (testing "all four icons registered via the seam's add-image! —
-                  the crisp plane and dot, plus their pre-softened shadow
-                  variants (adsb-dgb.8)"
-          (is (= #{style/plane-icon-id style/dot-icon-id
-                   style/shadow-plane-icon-id style/shadow-dot-icon-id}
+        (testing "both icons registered via the seam's add-image!"
+          (is (= #{style/plane-icon-id style/dot-icon-id}
                  (into #{} (map :id) images))))
-        (testing "registered SDF, so the altitude/emergency colour can tint
-                  them — and the shadow's soft alpha ramp is what gives
-                  icon-halo-blur a field to deepen"
+        (testing "registered SDF, so the altitude/emergency colour can tint them"
           (is (seq images))
           (is (every? #(true? (get-in % [:opts :sdf])) images))))
       (layer/detach! handle))))
@@ -364,11 +355,8 @@
         (is (= layer/trail-source-spec
                (get (:sources @rec) layer/trail-source-id)))
         (is (true? (:lineMetrics layer/trail-source-spec))))
-      (testing "its line layer is added below the aircraft symbol layer
-                (and below the shadow, when the prototype toggle is on)"
-        (is (= (cond-> [(layer/trail-layer-spec :day)]
-                 style/shadows-enabled? (conj (layer/shadow-layer-spec :day))
-                 :always                (conj (layer/layer-spec :day)))
+      (testing "its line layer is added below the aircraft symbol layer"
+        (is (= [(layer/trail-layer-spec :day) (layer/layer-spec :day)]
                (:layers @rec))))
       (layer/detach! handle))))
 

@@ -62,17 +62,56 @@
         (is (= (:emergency-color (style/palette theme)) (nth expr 2)))
         (is (= (style/altitude-color-expression theme) (nth expr 3))
             "otherwise the three-state altitude ramp"))))
-  (testing "size: emergency wins first, then mlat is demoted, else base"
+  (testing "size: emergency wins first and absolutely — a distressed plane
+            is never allowed to look far away"
     (let [expr (style/icon-size-expression)]
-      (is (= ["case"
-              ["get" "emergency"] style/emergency-icon-size
-              ["get" "mlat"]      style/mlat-icon-size
-              style/base-icon-size]
-             expr))
-      (is (> style/emergency-icon-size style/base-icon-size)
-          "emergency is unmissably large")
-      (is (< style/mlat-icon-size style/base-icon-size)
-          "an mlat fix reads a touch smaller — lower confidence"))))
+      (is (= "case" (first expr)))
+      (is (= ["get" "emergency"] (nth expr 1)))
+      (is (= style/emergency-icon-size (nth expr 2)))
+      (is (> style/emergency-icon-size
+             (apply max (map second style/perspective-size-stops)))
+          "emergency out-draws even the largest perspective size"))))
+
+;; ---------------------------------------------------------------------
+;; Size is the instinct-altitude channel (adsb-dgb.12, Overseer pick):
+;; perspective — low is near is LARGE, high is far is small. Colour
+;; stays the precise channel; size carries the glance.
+
+(deftest size-is-perspective-altitude
+  (let [expr (style/perspective-size-expression)]
+    (testing "the three altitude states peel apart exactly as colour's do"
+      (is (= "case" (first expr)))
+      (is (= ["!" ["has" "altitude"]] (nth expr 1)))
+      (is (= style/base-icon-size (nth expr 2))
+          "absent altitude takes the neutral base — no height claim")
+      (is (= ["==" ["get" "altitude"] "ground"] (nth expr 3)))
+      (is (= style/ground-icon-size (nth expr 4))))
+    (testing "the numeric branch interpolates the perspective stops"
+      (let [ramp (nth expr 5)]
+        (is (= ["interpolate" ["linear"] ["get" "altitude"]] (take 3 ramp)))
+        (is (= (mapcat identity style/perspective-size-stops)
+               (drop 3 ramp))))))
+
+  (testing "the ramp is perspective: strictly LARGER low than high, and
+            front-loaded so the low sky keeps its resolution"
+    (let [sizes (map second style/perspective-size-stops)]
+      (is (apply > sizes) "size only ever falls as altitude climbs")))
+
+  (testing "the ground size sits beneath the whole flying ramp — a parked
+            plane defers to every airborne one"
+    (is (< style/ground-icon-size
+           (apply min (map second style/perspective-size-stops)))))
+
+  (testing "mlat demotion MULTIPLIES the perspective size instead of
+            replacing it — lower confidence reads a touch smaller at every
+            altitude without stealing the altitude channel"
+    (let [expr (style/icon-size-expression)
+          body (nth expr 3)]
+      (is (= ["*"
+              ["case" ["get" "mlat"] style/mlat-size-factor 1.0]
+              (style/perspective-size-expression)]
+             body))
+      (is (< 0 style/mlat-size-factor 1) "a demotion, never an erasure"))))
 
 (deftest age-fades-opacity-continuously
   (testing "opacity interpolates over age-s, guarded for the absent case"
@@ -100,83 +139,6 @@
         "aged reads dimmer, not gone")))
 
 ;; ---------------------------------------------------------------------
-;; The cast shadow (design-direction §8, adsb-dgb.8) — a prototype behind
-;; a toggle. The spec is DATA, so the contract is proved as data: the
-;; layer draws only shadow-bearing features, reads the geo-computed
-;; offset, wears the edition's shadow ink, fades with altitude AND age,
-;; and softens as the plane climbs.
-
-(deftest shadow-prototype-is-behind-a-toggle
-  (is (boolean? style/shadows-enabled?)
-      "the visual pass accepts or rejects the invention by flipping ONE
-       constant"))
-
-(deftest shadow-layer-draws-only-what-casts-a-shadow
-  (doseq [theme themes]
-    (let [spec (style/shadow-layer-spec theme "aircraft-shadows" "aircraft")]
-      (is (= "symbol" (:type spec)))
-      (is (= "aircraft" (:source spec))
-          "the SAME source as the aircraft layer — no second setData")
-      (testing "the filter admits only features carrying shadow-offset —
-                on-ground and altitude-unknown aircraft cast NOTHING
-                (adsb.geo omits the property; absent is not zero)"
-        (is (= ["has" "shadow-offset"] (:filter spec))))
-      (testing "the offset is the geo-computed [dx dy], read back as the
-                two-number array icon-offset demands"
-        (is (= ["array" "number" 2 ["get" "shadow-offset"]]
-               (get-in spec [:layout :icon-offset]))))
-      (testing "the shadow is the plane's true silhouette: same rotation,
-                same size treatment, pinned to the map like the plane"
-        (is (= ["get" "track"] (get-in spec [:layout :icon-rotate])))
-        (is (= "map" (get-in spec [:layout :icon-rotation-alignment])))
-        (is (= (style/icon-size-expression)
-               (get-in spec [:layout :icon-size]))))
-      (testing "the soft (pre-blurred) silhouettes, mirroring the
-                plane/dot choice"
-        (is (= ["case" ["has" "track"]
-                style/shadow-plane-icon-id style/shadow-dot-icon-id]
-               (get-in spec [:layout :icon-image]))))
-      (testing "no shadow is dropped by collision — it belongs to a plane
-                that is always drawn"
-        (is (true? (get-in spec [:layout :icon-allow-overlap])))))))
-
-(deftest shadow-wears-the-editions-ink
-  (doseq [theme themes]
-    (let [spec (style/shadow-layer-spec theme "aircraft-shadows" "aircraft")
-          ink  (:shadow-ink (style/palette theme))]
-      (is (some? ink) "each edition carries a shadow ink")
-      (is (= ink (get-in spec [:paint :icon-color])))
-      (is (= ink (get-in spec [:paint :icon-halo-color]))
-          "the penumbra is the same ink, softened — never a second colour"))))
-
-(deftest shadow-opacity-falls-with-altitude-and-fades-with-age
-  (doseq [theme themes]
-    (let [expr  (style/shadow-opacity-expression theme)
-          stops (:shadow-opacity-stops (style/palette theme))]
-      (is (= "*" (first expr)) "altitude base × age fade, multiplied")
-      (testing "the altitude base falls as the plane climbs — a high
-                shadow is fainter, never a rival glyph"
-        (let [ramp (nth expr 1)]
-          (is (= ["interpolate" ["linear"] ["get" "altitude"]] (take 3 ramp)))
-          (is (= (mapcat identity stops) (drop 3 ramp)))
-          (is (> (second (first stops)) (second (last stops)))
-              "alpha at the deck exceeds alpha at the cap")))
-      (testing "the age factor is the SAME continuous fade the aircraft
-                wears — the shadow fades with its plane, never outlives it"
-        (is (= (style/icon-opacity-expression) (nth expr 2)))))))
-
-(deftest shadow-softens-as-the-plane-climbs
-  (let [expr (style/shadow-softness-expression)]
-    (is (= ["interpolate" ["linear"] ["get" "altitude"]] (take 3 expr)))
-    (let [[[low-ft low-px] [high-ft high-px]] style/shadow-softness-stops]
-      (is (< low-ft high-ft))
-      (is (< low-px high-px) "the penumbra deepens with altitude"))
-    (doseq [theme themes]
-      (let [spec (style/shadow-layer-spec theme "s" "a")]
-        (is (= expr (get-in spec [:paint :icon-halo-width])))
-        (is (= expr (get-in spec [:paint :icon-halo-blur])))))))
-
-;; ---------------------------------------------------------------------
 ;; The two printed editions (adsb-dgb.7 / design-direction §2): one plate,
 ;; two inks. Same roles, same feet, no colour carried over unexamined.
 
@@ -192,10 +154,7 @@
               the edition switch unchanged (a shared hex would be the first
               symptom of an invert-and-forget)"
       (doseq [role [:ground-color :unknown-color :emergency-color
-                    :halo-color :trail-rgb
-                    ;; the shadow was re-reasoned for dark stock, not
-                    ;; inherited: different ink AND different alphas
-                    :shadow-ink :shadow-opacity-stops]]
+                    :halo-color :trail-rgb]]
         (is (not= (role day) (role night)) (str role)))
       (is (= [] (filter identity
                         (map (fn [[_ d] [_ n]] (when (= d n) d))
