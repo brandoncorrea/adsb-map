@@ -57,17 +57,17 @@
                     ground-speed-kt track-deg baro-rate-fpm seen-at-ms
                     position-suspect?]}]
   (cond-> {:icao icao}
-    callsign          (assoc :callsign callsign)
-    position          (assoc :lat (:geo/lat position)
-                             :lon (:geo/lon position))
-    altitude-ft       (assoc :altitude altitude-ft)
-    on-ground?        (assoc :on-ground true)
-    squawk            (assoc :squawk squawk)
-    ground-speed-kt   (assoc :ground-speed ground-speed-kt)
-    track-deg         (assoc :track track-deg)
-    baro-rate-fpm     (assoc :baro-rate baro-rate-fpm)
-    seen-at-ms        (assoc :seen-at seen-at-ms)
-    position-suspect? (assoc :position-suspect true)))
+          callsign (assoc :callsign callsign)
+          position (assoc :lat (:geo/lat position)
+                          :lon (:geo/lon position))
+          altitude-ft (assoc :altitude altitude-ft)
+          on-ground? (assoc :on-ground true)
+          squawk (assoc :squawk squawk)
+          ground-speed-kt (assoc :ground-speed ground-speed-kt)
+          track-deg (assoc :track track-deg)
+          baro-rate-fpm (assoc :baro-rate baro-rate-fpm)
+          seen-at-ms (assoc :seen-at seen-at-ms)
+          position-suspect? (assoc :position-suspect true)))
 
 (defn picture->wire
   "The picture (icao -> aircraft) as one frame envelope, built at
@@ -82,16 +82,16 @@
   [{:keys [icao callsign lat lon altitude on-ground squawk ground-speed
            track baro-rate seen-at position-suspect]}]
   (cond-> {:aircraft/icao icao}
-    callsign         (assoc :aircraft/callsign callsign)
-    (and lat lon)    (assoc :aircraft/position {:geo/lat lat :geo/lon lon})
-    altitude         (assoc :aircraft/altitude-ft altitude)
-    on-ground        (assoc :aircraft/on-ground? true)
-    squawk           (assoc :aircraft/squawk squawk)
-    ground-speed     (assoc :aircraft/ground-speed-kt ground-speed)
-    track            (assoc :aircraft/track-deg track)
-    baro-rate        (assoc :aircraft/baro-rate-fpm baro-rate)
-    seen-at          (assoc :aircraft/seen-at-ms seen-at)
-    position-suspect (assoc :aircraft/position-suspect? true)))
+          callsign (assoc :aircraft/callsign callsign)
+          (and lat lon) (assoc :aircraft/position {:geo/lat lat :geo/lon lon})
+          altitude (assoc :aircraft/altitude-ft altitude)
+          on-ground (assoc :aircraft/on-ground? true)
+          squawk (assoc :aircraft/squawk squawk)
+          ground-speed (assoc :aircraft/ground-speed-kt ground-speed)
+          track (assoc :aircraft/track-deg track)
+          baro-rate (assoc :aircraft/baro-rate-fpm baro-rate)
+          seen-at (assoc :aircraft/seen-at-ms seen-at)
+          position-suspect (assoc :aircraft/position-suspect? true)))
 
 (defn wire->picture
   "A decoded frame envelope back into the domain picture, icao ->
