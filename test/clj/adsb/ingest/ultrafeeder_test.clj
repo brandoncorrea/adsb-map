@@ -37,6 +37,58 @@
           (is (some (complement :aircraft/position) batch)
               "position-less aircraft are kept, not dropped"))))))
 
+(defn- capturing-handler
+  "A stub that records the request headers it saw into `seen` before
+  serving the fixture. http-kit lowercases inbound header names."
+  [seen]
+  (fn [{:keys [uri headers]}]
+    (reset! seen headers)
+    (if (= "/data/aircraft.json" uri)
+      {:status 200 :headers {"Content-Type" "application/json"} :body fixture}
+      {:status 404 :body "not here"})))
+
+(deftest sends-auth-headers-when-configured
+  (testing "the feeder-auth headers ride every request to the tunnel"
+    (let [seen (atom nil)]
+      (with-server
+        (capturing-handler seen)
+        (fn [base-url]
+          (source/fetch!
+            (ultrafeeder/->source
+              base-url ultrafeeder/default-timeout-ms
+              {"CF-Access-Client-Id"     "abc123.access"
+               "CF-Access-Client-Secret" "supersecretvalue"}))
+          (is (= "abc123.access" (get @seen "cf-access-client-id")))
+          (is (= "supersecretvalue"
+                 (get @seen "cf-access-client-secret"))))))))
+
+(deftest omits-auth-headers-when-not-configured
+  (testing "no service token means no CF-Access headers on the wire"
+    (let [seen (atom nil)]
+      (with-server
+        (capturing-handler seen)
+        (fn [base-url]
+          (source/fetch! (ultrafeeder/->source base-url))
+          (is (nil? (get @seen "cf-access-client-id")))
+          (is (nil? (get @seen "cf-access-client-secret"))))))))
+
+(deftest failure-path-never-leaks-the-secret
+  (testing "an unreachable feeder throws without the secret in the ex chain"
+    (let [secret "supersecretvalue"
+          src    (ultrafeeder/->source
+                   "http://192.0.2.1:1" 200
+                   {"CF-Access-Client-Id"     "abc123.access"
+                    "CF-Access-Client-Secret" secret})]
+      (try
+        (source/fetch! src)
+        (is false "the unreachable feeder should throw")
+        (catch clojure.lang.ExceptionInfo e
+          (let [dump (str (ex-message e) " "
+                          (pr-str (ex-data e)) " "
+                          (ex-message (or (ex-cause e) e)))]
+            (is (not (re-find (re-pattern secret) dump))
+                "the service-token secret must never surface in an exception")))))))
+
 (deftest non-200-throws
   (testing "a non-200 status becomes an ex-info the poll loop can catch"
     (with-server

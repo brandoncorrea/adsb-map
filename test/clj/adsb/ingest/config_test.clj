@@ -48,6 +48,52 @@
   (testing "a syntactically invalid URL is rejected, not thrown raw"
     (is (map? (rejection "http://bad host/with spaces")))))
 
+(defn- auth-failure [env]
+  (try
+    (config/feeder-auth-headers env)
+    ::no-throw
+    (catch clojure.lang.ExceptionInfo e
+      {:message (ex-message e) :data (ex-data e)})))
+
+(deftest feeder-auth-headers-both-set
+  (testing "both env vars set yields the two CF-Access service-token headers"
+    (is (= {"CF-Access-Client-Id"     "abc123.access"
+            "CF-Access-Client-Secret" "supersecretvalue"}
+           (config/feeder-auth-headers
+             {"ADSB_FEEDER_AUTH_ID"     "abc123.access"
+              "ADSB_FEEDER_AUTH_SECRET" "supersecretvalue"}))))
+  (testing "surrounding whitespace is trimmed off each value"
+    (is (= {"CF-Access-Client-Id"     "id"
+            "CF-Access-Client-Secret" "sec"}
+           (config/feeder-auth-headers
+             {"ADSB_FEEDER_AUTH_ID"     "  id  "
+              "ADSB_FEEDER_AUTH_SECRET" "  sec  "})))))
+
+(deftest feeder-auth-headers-neither-set
+  (testing "no token configured yields nil — a trusted LAN feeder needs none"
+    (is (nil? (config/feeder-auth-headers {})))
+    (is (nil? (config/feeder-auth-headers {"ADSB_FEEDER_AUTH_ID"     ""
+                                           "ADSB_FEEDER_AUTH_SECRET" "   "})))))
+
+(deftest feeder-auth-headers-half-set-fails-loudly
+  (testing "only one half of the credential is a boot-time misconfiguration"
+    (doseq [env [{"ADSB_FEEDER_AUTH_ID" "abc123.access"}
+                 {"ADSB_FEEDER_AUTH_SECRET" "supersecretvalue"}]]
+      (let [{:keys [message data]} (auth-failure env)]
+        (is (map? data) (str "should throw ex-info for " env))
+        (is (re-find #"ADSB_FEEDER_AUTH_ID" (str message)))
+        (is (re-find #"ADSB_FEEDER_AUTH_SECRET" (str message)))))))
+
+(deftest feeder-auth-headers-never-leak-the-secret
+  (testing "the boot-failure message and ex-data never carry the secret value"
+    (let [secret "supersecretvalue"
+          {:keys [message data]}
+          (auth-failure {"ADSB_FEEDER_AUTH_SECRET" secret})]
+      (is (not (re-find (re-pattern secret) (str message)))
+          "the secret must not appear in the exception message")
+      (is (not (re-find (re-pattern secret) (pr-str data)))
+          "the secret must not appear in the ex-data"))))
+
 (deftest replay-source-selection
   (testing "ADSB_SOURCE=replay selects the fixture-replay Source, case-
             and whitespace-insensitively"

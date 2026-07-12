@@ -38,14 +38,17 @@
   had — in which case the gate is disabled and that is logged ONCE
   here, at setup, never per poll. `env` is an environment map
   (string->string, pass (System/getenv) at the edge); `base-url` is
-  the validated feeder URL, or nil when there is nothing to ask.
-  The env override wins over the feeder. Coordinates are deliberately
-  never logged — the position is private."
-  [{:keys [env base-url timeout-ms]
+  the validated feeder URL, or nil when there is nothing to ask;
+  `headers` are the optional static feeder-auth headers (the Cloudflare
+  Access service token — adsb.ingest.config/feeder-auth-headers) sent on
+  the receiver.json request, matching the aircraft.json poll. The env
+  override wins over the feeder. Coordinates are deliberately never
+  logged — the position is private."
+  [{:keys [env base-url timeout-ms headers]
     :or   {timeout-ms default-timeout-ms}}]
   (if-let [position (or (env-position env)
                         (when base-url
-                          (fetch-position! base-url timeout-ms)))]
+                          (fetch-position! base-url timeout-ms headers)))]
     (do (log/info "Receiver position resolved; range gate enabled")
         position)
     (do (log/warn (str "No receiver position (" receiver-lat-env "/"
@@ -101,13 +104,17 @@
   "GET the feeder's receiver.json once and return its position, or nil
   when the feeder is unreachable, answers non-200, or the body carries
   no usable lat/lon. Never throws — no position means a disabled range
-  gate (resolve-position!), not a failed boot."
-  ([base-url] (fetch-position! base-url default-timeout-ms))
-  ([base-url timeout-ms]
+  gate (resolve-position!), not a failed boot. `headers` are the optional
+  static feeder-auth headers (the Cloudflare Access service token) sent so
+  a token-gated tunnel lets the request through; nil on a trusted LAN."
+  ([base-url] (fetch-position! base-url default-timeout-ms nil))
+  ([base-url timeout-ms] (fetch-position! base-url timeout-ms nil))
+  ([base-url timeout-ms headers]
    (let [url (str base-url receiver-json-path)
          {:keys [status body error]} @(http/request {:url     url
                                                      :method  :get
                                                      :timeout timeout-ms
+                                                     :headers headers
                                                      :as      :text})]
      (when (and (nil? error) (= 200 status))
        (let [{:keys [lat lon]} (parse-receiver body)]

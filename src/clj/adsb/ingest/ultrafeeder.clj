@@ -46,10 +46,17 @@
   a side effect, or throw ex-info the poll loop can turn into feeder
   status. A request error (the feeder is down) and a non-200 status are
   both failures — the metadata is left untouched on failure, so a stale
-  count is never mistaken for a fresh one."
-  [base-url timeout-ms metadata]
+  count is never mistaken for a fresh one.
+
+  `headers` are the static feeder-auth headers (the Cloudflare Access
+  service token — adsb.ingest.config/feeder-auth-headers), sent on every
+  request so the tunnel's Access policy lets the poll through; nil on a
+  trusted LAN feeder. They ride the request opts only — never the ex-info,
+  so a failed poll's exception can never leak the secret."
+  [base-url timeout-ms headers metadata]
   (let [url (str base-url aircraft-json-path)
-        {:keys [status body error]} (get-text! url {:timeout timeout-ms})]
+        {:keys [status body error]} (get-text! url {:timeout timeout-ms
+                                                    :headers headers})]
     (cond
       error
       (throw (ex-info "Feeder request failed"
@@ -64,20 +71,26 @@
         (reset! metadata parsed-metadata)
         batch))))
 
-(defrecord UltrafeederSource [base-url timeout-ms metadata]
+(defrecord UltrafeederSource [base-url timeout-ms headers metadata]
   source/Source
   (open! [this] this)
-  (fetch! [_] (fetch-batch! base-url timeout-ms metadata))
+  (fetch! [_] (fetch-batch! base-url timeout-ms headers metadata))
   (close! [this] this)
   source/Metadata
   (last-metadata [_] @metadata))
 
 (defn ->source
   "A Source polling `base-url`/data/aircraft.json. `base-url` should be the
-  validated feeder URL (adsb.ingest.config/validate-feeder-url). The
-  metadata atom starts empty and is filled by the first successful fetch!."
-  ([base-url] (->source base-url default-timeout-ms))
-  ([base-url timeout-ms] (->UltrafeederSource base-url timeout-ms (atom nil))))
+  validated feeder URL (adsb.ingest.config/validate-feeder-url). `headers`
+  are the optional static feeder-auth headers presented on every request
+  (the Cloudflare Access service token —
+  adsb.ingest.config/feeder-auth-headers); nil for a trusted LAN feeder.
+  The metadata atom starts empty and is filled by the first successful
+  fetch!."
+  ([base-url] (->source base-url default-timeout-ms nil))
+  ([base-url timeout-ms] (->source base-url timeout-ms nil))
+  ([base-url timeout-ms headers]
+   (->UltrafeederSource base-url timeout-ms headers (atom nil))))
 
 (comment
   (source/fetch! (->source "http://dietpi.local:8100")))

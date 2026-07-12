@@ -27,11 +27,22 @@ services:
       # PORT the JVM binds inside the container (matches the published port above).
       PORT: "8280"
 
-      # The home ultrafeeder, reached over the tunnel. Placeholder: once the
-      # cloudflared sidecar (adsb-kh4.3) is live this points at the tunnel-local
-      # address it exposes — e.g. http://cloudflared:8080 or the tunnel hostname.
-      # TODO(adsb-kh4.3): replace with the real tunnel address for the feeder.
-      ADSB_ULTRAFEEDER_URL: "${ADSB_ULTRAFEEDER_URL:-http://cloudflared:8080}"
+      # The home ultrafeeder, reached over the Cloudflare Tunnel (adsb-kh4.3).
+      # This is the PUBLIC hostname of the tunnel — cloudflared runs on the HOME
+      # network, not here (see the note below) — so it is an https:// URL and
+      # the app authenticates to it with the service-token headers below.
+      # e.g. https://feeder.bwawan.com
+      ADSB_ULTRAFEEDER_URL: "${ADSB_ULTRAFEEDER_URL:-https://feeder.bwawan.com}"
+
+      # Cloudflare Access service token — the credential the app presents on
+      # EVERY feeder request (aircraft.json AND receiver.json) so the tunnel's
+      # Access policy lets the poll through. Set BOTH or NEITHER: half a
+      # credential fails the boot loudly. Leave both empty for a trusted-LAN
+      # feeder with no Access policy. NEVER commit real values — put them in a
+      # local .env (git-ignored) or the host's secret store. See the runbook in
+      # README.md → Deployment → "Cloud-to-home feeder tunnel".
+      ADSB_FEEDER_AUTH_ID: "${ADSB_FEEDER_AUTH_ID:-}"
+      ADSB_FEEDER_AUTH_SECRET: "${ADSB_FEEDER_AUTH_SECRET:-}"
 
       # Receiver position for the range gate + max-range stat. Optional: without
       # it the app falls back to the feeder's receiver.json, else disables the
@@ -50,17 +61,23 @@ services:
     # it. Override here only if you need different timings.
 
   # ───────────────────────────────────────────────────────────────────────────
-  # TODO(adsb-kh4.3): cloudflared tunnel sidecar — cloud-to-home connectivity
-  # for the feeder. When that bead lands, uncomment and configure so `app` can
-  # reach the home ultrafeeder over the tunnel and point ADSB_ULTRAFEEDER_URL
-  # (above) at this service. Sketch only — do NOT enable as-is.
+  # No cloudflared sidecar here — by design (adsb-kh4.3).
   #
-  # cloudflared:
-  #   image: cloudflare/cloudflared:latest
-  #   restart: unless-stopped
-  #   command: tunnel run
-  #   environment:
-  #     TUNNEL_TOKEN: "${CLOUDFLARED_TUNNEL_TOKEN:?set the tunnel token}"
-  #   # The app talks to the feeder through this container's tunnel-local
-  #   # listener; no ports need publishing to the host.
+  # The direction of the tunnel is the whole point: the CLOUD backend reaches
+  # the HOME feeder, and the feeder must be reachable from nowhere else. So
+  # cloudflared runs on the HOME network (next to the ultrafeeder), exposing
+  # dietpi:8100 as a private hostname (feeder.bwawan.com) that only the
+  # Cloudflare edge can reach — no home port is ever forwarded. That hostname
+  # is gated by a Cloudflare Access "Service Auth" policy, so it is NOT
+  # publicly readable: a request without the service token gets a 403.
+  #
+  # This cloud-side `app` is just an HTTPS client of that hostname. It needs no
+  # tunnel of its own; it points ADSB_ULTRAFEEDER_URL at feeder.bwawan.com and
+  # presents the ADSB_FEEDER_AUTH_ID / ADSB_FEEDER_AUTH_SECRET service token on
+  # every request. A downed tunnel therefore looks exactly like a feeder
+  # outage — the poll loop backs off and the UI shows the feeder as unhealthy.
+  #
+  # Standing up the home-side tunnel + Access policy is operational work on the
+  # Overseer's Cloudflare account (go-live: adsb-kh4.6). The full step-by-step
+  # is in README.md → Deployment → "Cloud-to-home feeder tunnel".
   # ───────────────────────────────────────────────────────────────────────────

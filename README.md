@@ -184,7 +184,9 @@ JRE runtime that runs as a non-root user. Config is **environment-only** — not
 is baked into the image.
 
 The target is Docker in the cloud, internet-facing, reaching the home ultrafeeder
-over a tunnel (see the `cloudflared` sidecar stub in [`compose.yaml`](compose.yaml)).
+over a Cloudflare Tunnel. cloudflared runs on the **home** network (never in this
+compose), exposing the feeder as a private hostname that only the app can read —
+see [Cloud-to-home feeder tunnel](#cloud-to-home-feeder-tunnel) below.
 
 ### Build and run
 
@@ -219,12 +221,121 @@ All configuration is via environment variables (read once at boot,
 | `ADSB_SOURCE` | no | live feeder | Set to `replay` to serve the recorded fixture — **no feeder needed**. Any other value (or unset) uses the live ultrafeeder. |
 | `ADSB_RECEIVER_LAT` | no | feeder's `receiver.json`, else off | Receiver latitude for the range gate and max-range stat. |
 | `ADSB_RECEIVER_LON` | no | feeder's `receiver.json`, else off | Receiver longitude, paired with the above. |
+| `ADSB_FEEDER_AUTH_ID` | no² | — | Cloudflare Access service-token **Client ID**, sent as the `CF-Access-Client-Id` header on every feeder request. |
+| `ADSB_FEEDER_AUTH_SECRET` | no² | — | The service-token **Client Secret** (`CF-Access-Client-Secret`). Never logged. |
 | `JAVA_OPTS` | no | — | Extra JVM flags (heap, GC, …) passed to `java`. |
 
 ¹ Required for the live feeder. Not required when `ADSB_SOURCE=replay`.
+² Optional, but **both or neither** — supplying only one fails the boot loudly.
+Required when the feeder tunnel is gated by a Cloudflare Access policy (the cloud
+deployment); omit both for a trusted-LAN feeder.
 
-The tunnel to the home feeder (`ADSB_ULTRAFEEDER_URL`) and TLS/hardening for
-internet exposure are tracked separately (beads `adsb-kh4.3`, `adsb-kh4.4`).
+TLS/hardening for internet exposure is tracked separately (bead `adsb-kh4.4`).
+
+### Cloud-to-home feeder tunnel
+
+The cloud container is internet-facing; the home ultrafeeder must not be. The
+connection between them is a **Cloudflare Tunnel** whose direction is the whole
+point: the cloud backend reaches *in* to the home feeder, and the feeder is
+reachable from nowhere else. No home port is ever forwarded.
+
+```
+cloud app ──HTTPS + service-token headers──►  feeder.bwawan.com  (Cloudflare edge)
+                                                     │  Access "Service Auth" policy
+                                                     ▼
+                                              cloudflared (HOME) ──► dietpi:8100
+```
+
+- **cloudflared runs on the home network**, beside the ultrafeeder — not in this
+  repo's compose. It dials out to Cloudflare, so the home network needs no inbound
+  ports and no public IP.
+- **A Cloudflare Access policy** gates the tunnel hostname (`feeder.bwawan.com`)
+  with a **service token**: the hostname is not publicly readable, and the cloud
+  app is the only client that holds the token.
+- **The app is a plain HTTPS client** of that hostname. It presents the token as
+  two headers — `CF-Access-Client-Id` / `CF-Access-Client-Secret` — on every
+  request (`aircraft.json` *and* `receiver.json`), threaded from
+  `ADSB_FEEDER_AUTH_ID` / `ADSB_FEEDER_AUTH_SECRET` through
+  `adsb.ingest.config/feeder-auth-headers`.
+
+**Why this over the alternatives.** `cloudflared access tcp` on the cloud side
+would work but adds a second daemon to the cloud container and a localhost hop for
+no gain over an authenticated HTTPS GET. WARP/WireGuard puts the whole cloud host
+on the home network — far more access than "read one JSON file" needs. The
+service-token pattern grants exactly the reach required and nothing more.
+
+**Failure mode is safe.** A downed tunnel, a revoked token, or a missing header
+all yield a non-2xx from the edge, which the poll loop already treats as a feeder
+outage: it backs off, and the browser shows the feeder as unhealthy. No special
+handling, and no way for a live SSE stream to masquerade as healthy over a dead
+feeder.
+
+#### Runbook
+
+The steps below are **operational** — they run against the Overseer's Cloudflare
+account and the home server, so they belong to go-live (`adsb-kh4.6`), not to the
+image. They are recorded here so go-live is a checklist, not a research project.
+
+*On the home server* (where the ultrafeeder lives):
+
+1. **Install cloudflared** and authenticate it to the Cloudflare account:
+   `cloudflared tunnel login`.
+2. **Create the tunnel:** `cloudflared tunnel create adsb-feeder`. This writes a
+   credentials file and prints a tunnel UUID.
+3. **Add the ingress rule** so the tunnel forwards to the local feeder. In the
+   tunnel config (`~/.cloudflared/config.yml`):
+   ```yaml
+   tunnel: <tunnel-UUID>
+   credentials-file: /home/dietpi/.cloudflared/<tunnel-UUID>.json
+   ingress:
+     - hostname: feeder.bwawan.com
+       service: http://dietpi:8100      # or http://localhost:8100 if
+                                         # cloudflared runs on the feeder box
+     - service: http_status:404          # catch-all, required last
+   ```
+   Note: cloudflared resolves `service:` from the home network, so use the LAN
+   name/IP the feeder answers on (`dietpi:8100`, `localhost:8100`, or the LAN IP).
+4. **Route DNS** to the tunnel:
+   `cloudflared tunnel route dns adsb-feeder feeder.bwawan.com`. This creates the
+   proxied CNAME on the `bwawan.com` zone.
+5. **Run it** as a service: `cloudflared tunnel run adsb-feeder` (or
+   `cloudflared service install` for a persistent systemd unit).
+
+*In the Cloudflare Zero Trust dashboard* (Access):
+
+6. **Create a self-hosted Access application** for `feeder.bwawan.com`.
+7. **Add a policy with action _Service Auth_** (not Allow) whose only rule is
+   *Include → Service Token → (the token from the next step)*. This is what makes
+   the hostname unreadable without the token.
+8. **Create the service token** (Access → Service Auth → Service Tokens). Copy the
+   **Client ID** and **Client Secret** — the secret is shown once.
+
+*On the cloud host:*
+
+9. **Wire the env** (via the git-ignored `.env` next to `compose.yaml`, or the
+   host's secret store — never committed):
+   ```bash
+   ADSB_ULTRAFEEDER_URL=https://feeder.bwawan.com
+   ADSB_FEEDER_AUTH_ID=<client-id>
+   ADSB_FEEDER_AUTH_SECRET=<client-secret>
+   ```
+10. **Deploy:** `docker compose up -d --build`. A boot with only one of the two
+    auth vars fails loudly (`… must be set together`).
+
+**Verify** the Access policy actually gates the hostname:
+
+```bash
+# Without the token → the Access policy blocks it (302 to login / 403), NOT 200.
+curl -sS -o /dev/null -w '%{http_code}\n' https://feeder.bwawan.com/data/aircraft.json
+
+# With the token → 200 and the aircraft JSON.
+curl -sS https://feeder.bwawan.com/data/aircraft.json \
+  -H "CF-Access-Client-Id: $ADSB_FEEDER_AUTH_ID" \
+  -H "CF-Access-Client-Secret: $ADSB_FEEDER_AUTH_SECRET" | head
+```
+
+If the first request returns `200`, the policy is misconfigured — the hostname is
+public. Fix the Access application before go-live.
 
 ## License
 

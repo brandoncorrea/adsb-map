@@ -77,6 +77,28 @@
       (fn [base-url]
         (is (nil? (receiver/fetch-position! base-url)))))))
 
+(deftest fetch-position-sends-auth-headers
+  (testing "the feeder-auth headers ride the receiver.json request too, so a
+            token-gated tunnel serves the receiver position"
+    (let [seen (atom nil)]
+      (with-server
+        (fn [{:keys [uri headers]}]
+          (reset! seen headers)
+          (if (= "/data/receiver.json" uri)
+            {:status 200
+             :headers {"Content-Type" "application/json"}
+             :body fixture}
+            {:status 404 :body "not here"}))
+        (fn [base-url]
+          (is (= fixture-position
+                 (receiver/fetch-position!
+                   base-url receiver/default-timeout-ms
+                   {"CF-Access-Client-Id"     "abc123.access"
+                    "CF-Access-Client-Secret" "supersecretvalue"})))
+          (is (= "abc123.access" (get @seen "cf-access-client-id")))
+          (is (= "supersecretvalue"
+                 (get @seen "cf-access-client-secret"))))))))
+
 ;; ---------------------------------------------------------------------
 ;; env-position
 
