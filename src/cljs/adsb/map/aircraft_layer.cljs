@@ -81,11 +81,15 @@
     [adsb.geo :as geo]
     [adsb.map.maplibre :as maplibre]
     [adsb.map.style :as style]
+    [adsb.trails :as trails]
     [re-frame.core :as rf]
     [reagent.core :as r]))
 
 (def ^:const source-id "aircraft")
 (def ^:const layer-id "aircraft")
+
+(def ^:const trail-source-id "aircraft-trails")
+(def ^:const trail-layer-id "aircraft-trails")
 
 (def empty-feature-collection
   {:type "FeatureCollection" :features []})
@@ -95,12 +99,25 @@
   thereafter replaces its data wholesale via `set-source-data!`."
   {:type "geojson" :data empty-feature-collection})
 
+(def trail-source-spec
+  "The trail GeoJSON source, born empty at map load. `lineMetrics true` is
+  REQUIRED: it is what makes MapLibre compute `line-progress` so the
+  trail's `line-gradient` (adsb.map.style) can fade tail-to-head. Every
+  push replaces its data wholesale, exactly like the aircraft source."
+  {:type "geojson" :lineMetrics true :data empty-feature-collection})
+
 (def layer-spec
   "The aircraft symbol layer: a plane silhouette per positioned aircraft,
   rotated by track, coloured by the altitude ramp, enlarged and reddened
   for emergencies, faded when stale. Every knob is data in
   `adsb.map.style` — this is just the wiring."
   (style/aircraft-layer-spec layer-id source-id))
+
+(def trail-layer-spec
+  "The trail line layer: a fading ribbon behind each aircraft. Added BELOW
+  the aircraft layer so the ribbon sits under the target. Style is data in
+  `adsb.map.style`; this is just the wiring."
+  (style/trail-layer-spec trail-layer-id trail-source-id))
 
 ;; ---------------------------------------------------------------------
 ;; The icon assets. We draw the silhouettes ourselves rather than ship a
@@ -212,10 +229,25 @@
   (geo/aircraft-picture->feature-collection (vals picture) at-ms))
 
 (defn- push!
-  "Convert the picture and hand it across the seam. Clojure data in;
-  the seam does the clj->js at the very edge."
-  [m picture]
-  (maplibre/set-source-data! m source-id (picture->feature-collection picture (now-ms))))
+  "Convert the picture and its trail `history` and hand BOTH across the
+  seam — one setData per source. Clojure data in; the seam does the clj->js
+  at the very edge.
+
+  The trail source is driven by the SAME presence decision as the aircraft
+  source: `live-icaos` is exactly the set of icaos that made it into the
+  aircraft FeatureCollection (positioned and not aged out), so a trail is
+  drawn only for an aircraft the layer is currently drawing. When time (a
+  tick) or the server ages an aircraft out, it leaves both collections in
+  the same push — the ribbon never outlives its plane.
+
+  The trail is pushed first so the aircraft push is the LAST setData of the
+  pair, keeping the aircraft FeatureCollection the tail of the seam log."
+  [m history picture]
+  (let [fc         (picture->feature-collection picture (now-ms))
+        live-icaos (into #{} (map #(get-in % [:properties :icao])) (:features fc))
+        trail-fc   (trails/history->trail-feature-collection history live-icaos)]
+    (maplibre/set-source-data! m trail-source-id trail-fc)
+    (maplibre/set-source-data! m source-id fc)))
 
 (defn attach!
   "Wire the aircraft layer onto map `m` (an adsb.map.maplibre/Map). Call
@@ -223,7 +255,8 @@
   `detach!`. Everything waits on the map's load event; frames arriving
   before it are covered by app-db's latest-wins buffering (ns docstring)."
   [m]
-  (let [!state (atom {:disposed? false :track nil :tick nil :picture nil})]
+  (let [!state (atom {:disposed? false :track nil :tick nil
+                      :picture nil :history {}})]
     (maplibre/on-load!
       m
       (fn []
@@ -231,6 +264,11 @@
           ;; Icons first — the layer names them in `icon-image`, and
           ;; MapLibre warns on a layer that references an absent image.
           (register-icons! m)
+          ;; The trail source and layer go in BEFORE the aircraft layer, so
+          ;; the ribbon renders UNDER the plane it trails (add order is z
+          ;; order). Its source carries lineMetrics for the gradient.
+          (maplibre/add-source! m trail-source-id trail-source-spec)
+          (maplibre/add-layer! m trail-layer-spec)
           (maplibre/add-source! m source-id source-spec)
           (maplibre/add-layer! m layer-spec)
           ;; The click contract and its hover affordance, through the
@@ -239,24 +277,32 @@
           (maplibre/on-layer-hover-cursor! m layer-id)
           ;; The hot path: a reaction OUTSIDE any component. Its initial
           ;; run flushes whatever picture already arrived; each re-run is
-          ;; one picture change -> one setData. React never hears of it.
-          ;; It also caches the latest picture in !state so the
-          ;; time-driven tick can re-push it WITHOUT subscribing outside a
-          ;; reactive context (the subscription lives here, in the track).
+          ;; one picture change -> one push (a trail + an aircraft setData).
+          ;; React never hears of it. Each run also folds the new picture
+          ;; into the trail history (adsb.trails/accumulate — append-on-
+          ;; change, capped, departed aircraft dropped) and caches BOTH the
+          ;; picture and the history in !state, so the time-driven tick can
+          ;; re-push them WITHOUT subscribing outside a reactive context
+          ;; (the subscription lives here, in the track).
           (swap! !state assoc :track
                  (r/track!
                    (fn []
-                     (let [picture @(rf/subscribe [:aircraft/picture])]
-                       (swap! !state assoc :picture picture)
-                       (push! m picture)))))
-          ;; The client tick: re-push the cached picture on a coarse
-          ;; interval so silent aircraft keep aging between frames and
-          ;; through a stream stall. Nothing about the picture changed —
+                     (let [picture @(rf/subscribe [:aircraft/picture])
+                           history (trails/accumulate (:history @!state)
+                                                      (vals picture))]
+                       (swap! !state assoc :picture picture :history history)
+                       (push! m history picture)))))
+          ;; The client tick: re-push the cached picture and history on a
+          ;; coarse interval so silent aircraft keep aging between frames
+          ;; and through a stream stall. Nothing about the picture changed —
           ;; only time did — so the fresh now-ms deepens the fade and drops
-          ;; anything past the age-out line (adsb.geo filters it).
+          ;; anything past the age-out line from BOTH collections at once
+          ;; (the trail's live-icaos is re-derived from the freshly aged
+          ;; aircraft FeatureCollection). History is not re-accumulated: an
+          ;; unchanged position would append nothing anyway.
           (swap! !state assoc :tick
                  (set-interval!
-                   (fn [] (push! m (:picture @!state)))
+                   (fn [] (push! m (:history @!state) (:picture @!state)))
                    tick-interval-ms)))))
     !state))
 

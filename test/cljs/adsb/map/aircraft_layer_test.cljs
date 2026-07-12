@@ -28,7 +28,7 @@
 (defn- frame
   [aircraft]
   (let [picture (into {} (map (juxt :aircraft/icao identity)) aircraft)]
-    (js/JSON.stringify (clj->js (wire/picture->wire picture 1720713600000)))))
+    (js/JSON.stringify (clj->js (wire/picture->wire picture nil 1720713600000)))))
 
 ;; ---------------------------------------------------------------------
 ;; The recording fake map. It captures everything crossing the seam —
@@ -57,8 +57,20 @@
 
 (defn- set-data-calls [{:keys [rec]}] (:set-data @rec))
 
+;; A push now hands the seam TWO setData calls — a trail and an aircraft
+;; FeatureCollection. Select by source so a test asserts against the one it
+;; means, independent of push order.
+(defn- source-set-data [fake sid]
+  (filter #(= sid (:source %)) (set-data-calls fake)))
+
+(defn- aircraft-set-data [fake] (source-set-data fake layer/source-id))
+(defn- trail-set-data [fake] (source-set-data fake layer/trail-source-id))
+
 (defn- last-features [fake]
-  (get-in (last (set-data-calls fake)) [:data :features]))
+  (get-in (last (aircraft-set-data fake)) [:data :features]))
+
+(defn- last-trail-features [fake]
+  (get-in (last (trail-set-data fake)) [:data :features]))
 
 (defn- feature-by-icao [features icao]
   (some #(when (= icao (get-in % [:properties :icao])) %) features))
@@ -72,15 +84,18 @@
           handle (layer/attach! m)]
       (fire-load! fake)
 
-      (testing "load adds the source and the neutral layer, once"
-        (is (= {layer/source-id layer/source-spec} (:sources @rec)))
-        (is (= [layer/layer-spec] (:layers @rec))))
+      (testing "load adds both sources and both layers, trail beneath aircraft"
+        (is (= {layer/source-id       layer/source-spec
+                layer/trail-source-id layer/trail-source-spec}
+               (:sources @rec)))
+        (is (= [layer/trail-layer-spec layer/layer-spec] (:layers @rec))
+            "the trail layer is added first, so it renders under the plane"))
 
       (rf/dispatch [:stream/received (frame [fixtures/ups-2717
                                              fixtures/never-positioned])])
       (r/flush) ;; reaction propagation rides Reagent's batch
 
-      (let [{:keys [source data]} (last (set-data-calls fake))
+      (let [{:keys [source data]} (last (aircraft-set-data fake))
             features (:features data)]
         (testing "one FeatureCollection into the aircraft source"
           (is (= layer/source-id source))
@@ -203,7 +218,7 @@
       (fire-load! fake)
 
       (testing "load flushes exactly once, with the LATEST picture — no replay"
-        (is (= 1 (count (set-data-calls fake))))
+        (is (= 1 (count (aircraft-set-data fake))))
         (is (= #{(:aircraft/icao fixtures/squawking-7700)}
                (into #{} (map #(get-in % [:properties :icao]))
                      (last-features fake)))
@@ -221,13 +236,13 @@
       (fire-load! fake)
       (rf/dispatch [:stream/received (frame [fixtures/ups-2717])])
       (r/flush)
-      (let [pushes-while-attached (count (set-data-calls fake))]
+      (let [pushes-while-attached (count (aircraft-set-data fake))]
         (is (= 2 pushes-while-attached) "the load flush, then one per frame")
 
         (layer/detach! handle)
         (rf/dispatch [:stream/received (frame [fixtures/squawking-7700])])
         (r/flush)
-        (is (= pushes-while-attached (count (set-data-calls fake)))
+        (is (= pushes-while-attached (count (aircraft-set-data fake)))
             "after detach!, picture changes no longer reach the map")))))
 
 (deftest detach-before-load-never-touches-the-map
@@ -293,6 +308,97 @@
             (is (= [:tick-id] @!cleared))))))))
 
 ;; ---------------------------------------------------------------------
+;; adsb-6wd.1: THE TRAIL SOURCE. A second GeoJSON source + line layer,
+;; born at load with lineMetrics so its gradient can fade tail-to-head, and
+;; fed one setData per push alongside the aircraft source. The trail is a
+;; client-session accumulation (adsb.trails); here we prove it reaches the
+;; map, follows a moving aircraft, and vanishes when the aircraft does.
+
+(defn- moving-frame
+  "One frame with `fixtures/ups-2717` nudged to (lat, lon)."
+  [lat lon]
+  (frame [(assoc fixtures/ups-2717
+                 :aircraft/position {:geo/lat lat :geo/lon lon})]))
+
+(deftest trail-source-and-layer-are-born-at-load-with-line-metrics
+  (rf-test/run-test-sync
+    (let [{:keys [m rec] :as fake} (recording-map)
+          handle (layer/attach! m)]
+      (fire-load! fake)
+      (testing "the trail source exists and carries lineMetrics for the gradient"
+        (is (= layer/trail-source-spec
+               (get (:sources @rec) layer/trail-source-id)))
+        (is (true? (:lineMetrics layer/trail-source-spec))))
+      (testing "its line layer is added below the aircraft symbol layer"
+        (is (= [layer/trail-layer-spec layer/layer-spec] (:layers @rec))))
+      (layer/detach! handle))))
+
+(deftest a-moving-aircraft-accumulates-a-multi-point-trail
+  (rf-test/run-test-sync
+    (let [{:keys [m] :as fake} (recording-map)
+          handle (layer/attach! m)
+          icao   (:aircraft/icao fixtures/ups-2717)]
+      (fire-load! fake)
+      (doseq [[lat lon] [[27.0 -83.0] [27.1 -83.0] [27.2 -83.0]]]
+        (rf/dispatch [:stream/received (moving-frame lat lon)])
+        (r/flush))
+      (let [trail (feature-by-icao (last-trail-features fake) icao)]
+        (testing "three frames at three positions yield a 3-point LineString,
+                  oldest first, in [lon lat] order"
+          (is (= "LineString" (get-in trail [:geometry :type])))
+          (is (= [[-83.0 27.0] [-83.0 27.1] [-83.0 27.2]]
+                 (get-in trail [:geometry :coordinates])))))
+      (testing "a stationary re-report appends nothing — the trail holds at 3"
+        (rf/dispatch [:stream/received (moving-frame 27.2 -83.0)])
+        (r/flush)
+        (is (= 3 (count (get-in (feature-by-icao (last-trail-features fake) icao)
+                                [:geometry :coordinates])))))
+      (layer/detach! handle))))
+
+(deftest an-aged-out-aircraft-leaves-no-trail
+  (rf-test/run-test-sync
+    (let [{:keys [m] :as fake} (recording-map)
+          !tick  (atom nil)]
+      (with-redefs [layer/set-interval!   (fn [f _ms] (reset! !tick f) :tick-id)
+                    layer/clear-interval! (fn [_id] nil)]
+        (let [handle (layer/attach! m)
+              icao   (:aircraft/icao fixtures/ups-2717)
+              heard  (fn [lat] (assoc fixtures/ups-2717
+                                      :aircraft/seen-at-ms 0
+                                      :aircraft/position {:geo/lat lat :geo/lon -83.0}))]
+          (fire-load! fake)
+          (with-redefs [layer/now-ms (constantly 70000)]
+            (rf/dispatch [:stream/received (frame [(heard 27.0)])])
+            (r/flush)
+            (rf/dispatch [:stream/received (frame [(heard 27.1)])])
+            (r/flush))
+          (testing "while present, the moving aircraft has a two-point trail"
+            (is (= 2 (count (get-in (feature-by-icao (last-trail-features fake) icao)
+                                    [:geometry :coordinates])))))
+          (testing "a tick past the age-out line drops the aircraft AND its
+                    trail in the same push — the ribbon never outlives the plane"
+            (with-redefs [layer/now-ms (constantly 400000)]
+              (@!tick))
+            (is (empty? (last-features fake)))
+            (is (empty? (last-trail-features fake))))
+          (layer/detach! handle))))))
+
+(deftest detach-stops-trail-updates
+  (rf-test/run-test-sync
+    (let [{:keys [m] :as fake} (recording-map)
+          handle (layer/attach! m)]
+      (fire-load! fake)
+      (rf/dispatch [:stream/received (moving-frame 27.0 -83.0)])
+      (r/flush)
+      (let [trail-pushes (count (trail-set-data fake))]
+        (is (pos? trail-pushes) "the trail source was fed while attached")
+        (layer/detach! handle)
+        (rf/dispatch [:stream/received (moving-frame 27.1 -83.0)])
+        (r/flush)
+        (is (= trail-pushes (count (trail-set-data fake)))
+            "after detach!, the trail source is no longer touched")))))
+
+;; ---------------------------------------------------------------------
 ;; THE CENTERPIECE PROOF: mount the real shell, push N picture updates
 ;; through re-frame, and the map component's render and mount counts do
 ;; not move while setData is called once per update. The aircraft never
@@ -318,7 +424,7 @@
         (fire-load! fake)
 
         (let [renders-at-mount @!renders
-              pushes-at-load (count (set-data-calls fake))]
+              pushes-at-load (count (aircraft-set-data fake))]
           (is (= 1 @!mounts) "one map, created once")
           (is (= 1 renders-at-mount) "the map component rendered once, at mount")
           (is (= 1 pushes-at-load) "load flushed the (empty) current picture")
@@ -332,7 +438,7 @@
             (r/flush))
 
           (testing "N ticks: N setData calls, ZERO additional Reagent work"
-            (is (= (+ pushes-at-load n) (count (set-data-calls fake)))
+            (is (= (+ pushes-at-load n) (count (aircraft-set-data fake)))
                 "every picture change reached the GPU path")
             (is (= renders-at-mount @!renders)
                 "the render count never moved — aircraft bypass React")
@@ -342,6 +448,6 @@
             (rdom/unmount-component-at-node node)
             (rf/dispatch [:stream/received (frame [fixtures/squawking-7700])])
             (r/flush)
-            (is (= (+ pushes-at-load n) (count (set-data-calls fake)))
+            (is (= (+ pushes-at-load n) (count (aircraft-set-data fake)))
                 "no push after unmount"))))
       (.remove node))))

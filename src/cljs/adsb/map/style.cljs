@@ -135,6 +135,45 @@
 (def ^:const halo-width 1.0)
 
 ;; ---------------------------------------------------------------------
+;; Trails — the fading ribbon each aircraft leaves behind (adsb-6wd.1).
+;; DATA: re-skin here. The trail is deliberately a single NEUTRAL grey with
+;; a spatial alpha gradient, NOT the altitude ramp — history should read as
+;; a quiet echo, never compete with the live target's altitude colour. The
+;; design pass (adsb-bvi.5) may choose to recolour it to follow the ramp.
+
+(def ^:const trail-rgb
+  "The trail's colour as bare `r, g, b` channels — the cool unknown-grey
+  family. Bare so the gradient can vary only the alpha around it." "170, 178, 189")
+
+(def ^:const trail-width
+  "Stroke width of the trail line, in px. Thinner than the icon so the
+  ribbon supports the target without crowding it." 2.0)
+
+(def ^:const trail-head-opacity
+  "Alpha at the HEAD of the trail — the newest point, nearest the aircraft.
+  The tail fades to fully transparent; this is the strongest the ribbon
+  ever gets, kept below 1 so even the freshest history reads as secondary
+  to the live icon." 0.7)
+
+(defn- trail-rgba
+  "A trail colour at `alpha` (0..1), as a MapLibre-legible rgba string."
+  [alpha]
+  (str "rgba(" trail-rgb ", " alpha ")"))
+
+(defn trail-gradient-expression
+  "The trail's fade, as a `line-gradient` over `line-progress` — MapLibre's
+  0..1 position along the line. Because the ring is oldest-first, progress 0
+  is the tail (fully transparent) and progress 1 the head (`trail-head-
+  opacity`), so the ribbon dissolves behind the aircraft. `line-gradient`
+  needs `lineMetrics true` on the source (set where the source is defined);
+  the same expression applies to every trail, which is exactly the uniform
+  tail-to-head fade we want."
+  []
+  ["interpolate" ["linear"] ["line-progress"]
+   0.0 (trail-rgba 0)
+   1.0 (trail-rgba trail-head-opacity)])
+
+;; ---------------------------------------------------------------------
 ;; Expressions — pure functions returning MapLibre expression vectors.
 ;; These are the styling contract the layer paints with; the style_test
 ;; asserts their shape directly, because they ARE data.
@@ -229,3 +268,19 @@
             :icon-opacity    (icon-opacity-expression)
             :icon-halo-color halo-color
             :icon-halo-width halo-width}})
+
+(defn trail-layer-spec
+  "The MapLibre LINE-layer spec for the aircraft trails on `layer-id` over
+  `source-id`. One LineString per aircraft (adsb.trails), stroked at
+  `trail-width`, faded tail-to-head by `trail-gradient-expression`. Rounded
+  cap and join so a turning trail bends cleanly. The layer must be added
+  BELOW the aircraft symbol layer so the ribbon sits under the target, and
+  its source must carry `lineMetrics true` for `line-gradient` to resolve."
+  [layer-id source-id]
+  {:id     layer-id
+   :type   "line"
+   :source source-id
+   :layout {:line-cap  "round"
+            :line-join "round"}
+   :paint  {:line-width    trail-width
+            :line-gradient (trail-gradient-expression)}})
