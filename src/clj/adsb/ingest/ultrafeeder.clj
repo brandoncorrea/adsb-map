@@ -6,7 +6,13 @@
   validated (see docs/validation-boundaries.md).
 
   Stateless per poll: open!/close! are no-ops. A future SBS/Beast Source
-  holds a socket instead; this one just issues a GET."
+  holds a socket instead; this one just issues a GET.
+
+  Payload-level metadata (the top-level cumulative `messages` counter)
+  rides a side-channel, not the batch: fetch! stores it in a metadata atom
+  the Source exposes through adsb.ingest.source/Metadata, so the per-poll
+  message count reaches adsb.stats without churning the transport-agnostic
+  poll loop or the domain (adsb-6wd.4)."
   (:require [adsb.ingest.coerce :as coerce]
             [adsb.ingest.source :as source]
             [cheshire.core :as json]
@@ -15,15 +21,16 @@
 (def ^:private aircraft-json-path "/data/aircraft.json")
 (def ^:const default-timeout-ms 5000)
 
-(defn- parse-batch
-  "The `aircraft` array of an aircraft.json body, coerced to domain
-  aircraft. cheshire parses to keyword keys, which is the vocabulary
-  ->aircraft-batch expects."
+(defn- parse-payload
+  "An aircraft.json body split into the coerced aircraft batch and the
+  payload-level metadata we keep (the cumulative `messages` counter).
+  cheshire parses to keyword keys, which is the vocabulary
+  ->aircraft-batch expects. `messages` is absent on feeders that do not
+  report it — then it is nil and the rate is simply unknown."
   [body]
-  (-> body
-      (json/parse-string true)
-      :aircraft
-      coerce/->aircraft-batch))
+  (let [{:keys [aircraft messages]} (json/parse-string body true)]
+    {:batch    (coerce/->aircraft-batch aircraft)
+     :metadata {:messages messages}}))
 
 (defn- get-text! [url opts]
   (-> {:url    url
@@ -34,10 +41,13 @@
       deref))
 
 (defn- fetch-batch!
-  "GET aircraft.json once and return the coerced batch, or throw ex-info
-  the poll loop can turn into feeder status. A request error (the feeder is
-  down) and a non-200 status are both failures."
-  [base-url timeout-ms]
+  "GET aircraft.json once and return the coerced batch, recording the
+  payload's metadata (the cumulative `messages` counter) in `metadata` as
+  a side effect, or throw ex-info the poll loop can turn into feeder
+  status. A request error (the feeder is down) and a non-200 status are
+  both failures — the metadata is left untouched on failure, so a stale
+  count is never mistaken for a fresh one."
+  [base-url timeout-ms metadata]
   (let [url (str base-url aircraft-json-path)
         {:keys [status body error]} (get-text! url {:timeout timeout-ms})]
     (cond
@@ -50,19 +60,24 @@
                       {:type ::unexpected-status :status status :url url}))
 
       :else
-      (parse-batch body))))
+      (let [{:keys [batch] parsed-metadata :metadata} (parse-payload body)]
+        (reset! metadata parsed-metadata)
+        batch))))
 
-(defrecord UltrafeederSource [base-url timeout-ms]
+(defrecord UltrafeederSource [base-url timeout-ms metadata]
   source/Source
   (open! [this] this)
-  (fetch! [_] (fetch-batch! base-url timeout-ms))
-  (close! [this] this))
+  (fetch! [_] (fetch-batch! base-url timeout-ms metadata))
+  (close! [this] this)
+  source/Metadata
+  (last-metadata [_] @metadata))
 
 (defn ->source
   "A Source polling `base-url`/data/aircraft.json. `base-url` should be the
-  validated feeder URL (adsb.ingest.config/validate-feeder-url)."
+  validated feeder URL (adsb.ingest.config/validate-feeder-url). The
+  metadata atom starts empty and is filled by the first successful fetch!."
   ([base-url] (->source base-url default-timeout-ms))
-  ([base-url timeout-ms] (->UltrafeederSource base-url timeout-ms)))
+  ([base-url timeout-ms] (->UltrafeederSource base-url timeout-ms (atom nil))))
 
 (comment
   (source/fetch! (->source "http://dietpi.local:8100")))

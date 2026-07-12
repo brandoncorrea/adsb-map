@@ -21,6 +21,22 @@
   #{:icao :callsign :lat :lon :altitude :on-ground :squawk
     :ground-speed :track :baro-rate :seen-at :position-suspect :mlat})
 
+(def ^:private stats-wire-keys
+  "Every key stats->wire may emit — the documented allowlist. Two scalars,
+  no position, no counts (the browser derives those)."
+  #{:max-range-km :message-rate})
+
+(def ^:private server-stats
+  "A server stats map (adsb.stats) as picture->wire receives it — counts
+  included, to prove they are dropped, and a receiver-relative field
+  hypothetically smuggled in, to prove the allowlist excludes it."
+  {:stats/aircraft-count   5
+   :stats/positioned-count 3
+   :stats/max-range-km     312
+   :stats/message-rate     148
+   :stats/receiver-lat     27.94
+   :stats/receiver-lon     -82.45})
+
 (deftest aircraft->wire
   (testing "projects the happy-path aircraft onto flat unqualified keys"
     (is (= {:icao         "abc0e4"
@@ -74,16 +90,39 @@
 
   (testing "the whole cast, through the real pipeline, emits only
             allowlisted keys"
-    (let [{:keys [aircraft]} (wire/picture->wire picture captured-at-ms)]
+    (let [{:keys [aircraft]} (wire/picture->wire picture server-stats
+                                                 captured-at-ms)]
       (is (seq aircraft))
       (is (every? wire-keys (mapcat keys aircraft))))))
 
+(deftest stats->wire-allowlist
+  (testing "only the two documented scalars survive — counts and any
+            receiver-relative field are dropped by construction"
+    (let [wire-stats (wire/stats->wire server-stats)]
+      (is (= {:max-range-km 312 :message-rate 148} wire-stats))
+      (is (every? stats-wire-keys (keys wire-stats)))
+      (is (not (contains? wire-stats :aircraft-count)))
+      (is (not (contains? wire-stats :positioned-count)))))
+
+  (testing "absent scalars are omitted, never zeroed"
+    (is (= {:message-rate 148}
+           (wire/stats->wire {:stats/message-rate 148})))
+    (is (= {:max-range-km 312}
+           (wire/stats->wire {:stats/max-range-km 312})))
+    (is (= {} (wire/stats->wire nil))
+        "no stats at all yields an empty map, not defaulted numbers")))
+
 (deftest picture->wire-envelope
-  (testing "the frame envelope carries the build instant and every
-            aircraft in the picture"
-    (let [{:keys [at aircraft]} (wire/picture->wire picture captured-at-ms)]
+  (testing "the frame envelope carries the build instant, the stats map,
+            and every aircraft in the picture"
+    (let [{:keys [at stats aircraft]} (wire/picture->wire picture server-stats
+                                                          captured-at-ms)]
       (is (= captured-at-ms at))
-      (is (= (count picture) (count aircraft))))))
+      (is (= {:max-range-km 312 :message-rate 148} stats))
+      (is (= (count picture) (count aircraft)))))
+
+  (testing "a nil stats argument yields an empty stats map"
+    (is (= {} (:stats (wire/picture->wire picture nil captured-at-ms))))))
 
 (deftest wire-round-trip
   (testing "a domain aircraft survives the round trip, minus the
@@ -95,6 +134,18 @@
 
   (testing "a decoded frame envelope becomes the picture again, keyed
             by icao"
-    (let [envelope (wire/picture->wire picture captured-at-ms)]
+    (let [envelope (wire/picture->wire picture server-stats captured-at-ms)]
       (is (= (update-vals picture #(dissoc % :aircraft/rssi))
-             (wire/wire->picture envelope))))))
+             (wire/wire->picture envelope)))))
+
+  (testing "the stats scalars survive the round trip, minus the counts
+            and receiver-relative fields the wire never carried"
+    (let [envelope (wire/picture->wire picture server-stats captured-at-ms)]
+      (is (= (select-keys server-stats
+                          [:stats/max-range-km :stats/message-rate])
+             (wire/wire->stats envelope)))))
+
+  (testing "an envelope with no stats decodes to an empty stats map"
+    (is (= {} (wire/wire->stats (wire/picture->wire picture nil
+                                                    captured-at-ms))))
+    (is (= {} (wire/wire->stats {})))))

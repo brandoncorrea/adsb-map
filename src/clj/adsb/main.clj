@@ -13,16 +13,21 @@
 
   The receiver position (adsb.ingest.receiver) is resolved once here at
   boot and lives only in this composition path — closed over by the
-  poll callback's range gate, never stored in state, never serialized
-  to the wire, never logged (privacy: adsb-nqf.3 / adsb-kbm.2)."
+  poll callback's range gate AND by the broadcast stats fn (which
+  measures max range from it), never stored in state, never serialized
+  to the wire, never logged (privacy: adsb-nqf.3 / adsb-kbm.2). The
+  stats fn emits only the scalar max range, not the position it measured
+  from (adsb.stats)."
   (:require [adsb.http.server :as server]
             [adsb.ingest.config :as config]
             [adsb.ingest.plausibility :as plausibility]
             [adsb.ingest.poll :as poll]
             [adsb.ingest.receiver :as receiver]
             [adsb.ingest.replay :as replay]
+            [adsb.ingest.source :as source]
             [adsb.ingest.ultrafeeder :as ultrafeeder]
             [adsb.state :as state]
+            [adsb.stats :as stats]
             [adsb.stream.broadcast :as broadcast]
             [clojure.string :as str]
             [clojure.tools.logging :as log])
@@ -87,7 +92,9 @@
        feeder's receiver.json, else nil — range gate disabled)
     3. poll the source at ~1 Hz through the range gate into the store
     4. broadcast the picture over SSE; the broadcast tick doubles as
-       the age-out cadence (its picture fn is adsb.state/age-out!)
+       the age-out cadence (its picture fn is adsb.state/age-out!) and
+       computes the session stats (adsb.stats) from the receiver
+       position and the source's message-count side-channel
     5. serve HTTP with real feeder status on /healthz and the stream
        on /api/stream
 
@@ -99,10 +106,21 @@
   (let [[source feeder-url] (build-source! config)
         receiver-position (receiver/resolve-position! {:env      env
                                                        :base-url feeder-url})
+        accumulator       (stats/create)
         poller            (poll/start!
                             {:source    source
                              :on-batch! #(ingest-batch! receiver-position %)})
-        broadcaster       (broadcast/start! {:picture state/age-out!})
+        broadcaster       (broadcast/start!
+                            {:picture state/age-out!
+                             :stats   (fn [picture now-ms]
+                                        (stats/compute!
+                                          accumulator
+                                          {:picture           picture
+                                           :receiver-position receiver-position
+                                           :now-ms            now-ms
+                                           :messages          (:messages
+                                                                (source/metadata
+                                                                  source))}))})
         http-server       (server/start!
                             {:port           port
                              :feeder-status  #(poll/status poller)

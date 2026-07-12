@@ -18,6 +18,14 @@
                          subscription for the header's status indicator
                          (adsb-dgb.3).
 
+    :stats/session       the session stats decoded from the envelope's
+                         `stats` map (adsb.wire) — the scalar max range and
+                         message rate the server computed. {} before the
+                         first frame and whenever a scalar is unknown; the
+                         :stats/session subscription feeds the numbers-only
+                         readout (adsb.ui.stats), which dashes absent
+                         scalars. Never a position — see adsb.wire.
+
   ## Connection state, honestly (the adsb-2yu.2 mandate)
 
   EventSource already reconnects itself after a transient drop: on such an
@@ -69,14 +77,16 @@
 ;; ---------------------------------------------------------------------
 ;; Decode
 
-(defn data->picture
+(defn data->frame
   "Decode one SSE frame's `data` string (a JSON envelope on the adsb.wire
-  format) into the domain picture, icao -> aircraft. Absent facts stay
-  absent — the codec omits them, it does not default them."
+  format) into the two things app-db holds: {:picture icao -> aircraft,
+  :stats session stats}. Absent facts stay absent — the codec omits them,
+  it does not default them."
   [data]
-  (-> (js/JSON.parse data)
-      (js->clj :keywordize-keys true)
-      wire/wire->picture))
+  (let [envelope (-> (js/JSON.parse data)
+                     (js->clj :keywordize-keys true))]
+    {:picture (wire/wire->picture envelope)
+     :stats   (wire/wire->stats envelope)}))
 
 ;; ---------------------------------------------------------------------
 ;; The connection manager. A stateful JS resource, so it lives outside
@@ -132,6 +142,7 @@
   (fn [{:keys [db]} _]
     {:db (assoc db
                 :aircraft/picture {}
+                :stats/session {}
                 :stream/attempts 0
                 :stream/connection :reconnecting)
      :stream/connect! nil}))
@@ -144,14 +155,16 @@
     {:db (assoc db :stream/connection :live :stream/attempts 0)
      :stream/clear-timer! nil}))
 
-;; A full-picture frame arrived: wholesale-replace the picture. Receiving a
-;; frame is itself proof we are live.
+;; A full-picture frame arrived: wholesale-replace the picture and the
+;; session stats. Receiving a frame is itself proof we are live.
 (rf/reg-event-db
   :stream/received
   (fn [db [_ data]]
-    (assoc db
-           :aircraft/picture (data->picture data)
-           :stream/connection :live)))
+    (let [{:keys [picture stats]} (data->frame data)]
+      (assoc db
+             :aircraft/picture picture
+             :stats/session stats
+             :stream/connection :live))))
 
 ;; An EventSource error. If the browser is still CONNECTING it owns the
 ;; retry — we just reflect :reconnecting. If it is CLOSED the source is dead:
@@ -188,6 +201,15 @@
   :stream/connection
   (fn [db _]
     (get db :stream/connection :reconnecting)))
+
+;; The session stats scalars from the latest frame (adsb.wire):
+;; :stats/max-range-km and :stats/message-rate, each absent until known.
+;; {} before the first frame. The numbers-only readout (adsb.ui.stats)
+;; dashes whatever is absent — never a position, only scalars.
+(rf/reg-sub
+  :stats/session
+  (fn [db _]
+    (get db :stats/session {})))
 
 ;; ---------------------------------------------------------------------
 ;; Boot

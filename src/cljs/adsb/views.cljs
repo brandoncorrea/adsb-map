@@ -9,7 +9,8 @@
     [adsb.ui.alert :as alert]
     [adsb.ui.header :as header]
     [adsb.ui.legend :as legend]
-    [adsb.ui.sidebar :as sidebar]))
+    [adsb.ui.sidebar :as sidebar]
+    [adsb.ui.stats :as stats]))
 
 (defn app-root
   "The shell: a full-viewport map with the chrome floating over it — a thin
@@ -27,6 +28,9 @@
    ;; Corner overlay explaining the colour ramp. Static chrome — reads the
    ;; style constants, derefs nothing (adsb.ui.legend).
    [legend/legend]
+   ;; Numbers-only session readout in the same corner — max range and
+   ;; message rate, both scalars, never a position (adsb.ui.stats).
+   [stats/stats-readout]
    ;; The aircraft roster — the same picture the map reads, as a sortable,
    ;; filterable, click-to-select list (adsb.ui.sidebar).
    [sidebar/sidebar]

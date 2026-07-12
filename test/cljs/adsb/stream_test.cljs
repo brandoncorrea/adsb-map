@@ -20,9 +20,11 @@
   "One SSE frame's `data` string: the full picture built from a list of
   domain aircraft, serialized exactly as the server would (adsb.wire ->
   JSON)."
-  [aircraft]
-  (let [picture (into {} (map (juxt :aircraft/icao identity)) aircraft)]
-    (js/JSON.stringify (clj->js (wire/picture->wire picture 1720713600000)))))
+  ([aircraft] (frame aircraft nil))
+  ([aircraft stats]
+   (let [picture (into {} (map (juxt :aircraft/icao identity)) aircraft)]
+     (js/JSON.stringify
+       (clj->js (wire/picture->wire picture stats 1720713600000))))))
 
 (defn- fake-connection []
   (reify source/Connection
@@ -48,6 +50,28 @@
                 "decoded to namespaced domain keys, not raw wire keys")
             (is (contains? (get pic icao) :aircraft/position)
                 "position round-trips through the shared wire codec")))))))
+
+(deftest stats-land-in-app-db
+  (testing "the envelope's stats scalars decode onto :stats/session, and
+            an absent scalar stays absent"
+    (rf-test/run-test-sync
+      (let [!cbs (atom nil)]
+        (with-redefs [source/connect! (fn [_url cbs] (reset! !cbs cbs) (fake-connection))
+                      stream/schedule-reconnect! (fn [_ms] nil)]
+          (rf/dispatch [:stream/start])
+          ((:on-frame @!cbs)
+           (frame [fixtures/ups-2717] {:stats/max-range-km 312
+                                       :stats/message-rate 148}))
+          (is (= {:stats/max-range-km 312 :stats/message-rate 148}
+                 @(rf/subscribe [:stats/session]))
+              "both scalars land, namespaced")
+
+          ;; A later frame with no max range (receiver position gone):
+          ;; the scalar drops out, never zeroes.
+          ((:on-frame @!cbs)
+           (frame [fixtures/ups-2717] {:stats/message-rate 90}))
+          (is (= {:stats/message-rate 90} @(rf/subscribe [:stats/session]))
+              "absent max range is omitted, not defaulted"))))))
 
 (deftest update-replaces-wholesale
   (testing "an update is a full picture, never a merge: a dropped aircraft is gone"

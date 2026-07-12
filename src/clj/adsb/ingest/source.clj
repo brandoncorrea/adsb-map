@@ -29,6 +29,29 @@
     "Release the feed's resources. A no-op for stateless HTTP polling.
     Called once after the last fetch!."))
 
+(defprotocol Metadata
+  "An OPTIONAL side-channel for payload-level metadata a Source observed on
+  its last fetch! — facts that belong to the whole payload, not to any one
+  aircraft, and so never enter the coerced batch (which would churn every
+  consumer). The ultrafeeder payload's cumulative `messages` counter is the
+  first such fact; adsb.stats differences it into a rate.
+
+  A Source updates this behind fetch! (an atom it owns) and exposes the
+  latest here; the poll loop that drives fetch! stays oblivious. Sources
+  with no payload metadata (the fixture-replay Source) simply do not
+  implement this protocol."
+  (last-metadata [source]
+    "The payload-level metadata from the most recent fetch!, e.g.
+    {:messages n}, or nil/empty when none has been seen."))
+
+(defn metadata
+  "The Source's latest payload metadata, or nil when the Source exposes
+  none — a uniform accessor so callers need not know which Sources carry a
+  side-channel."
+  [source]
+  (when (satisfies? Metadata source)
+    (last-metadata source)))
+
 (defn fn-source
   "A Source backed by a plain fetch fn, for tests and REPL work. open! and
   close! are no-ops. Proves the protocol seam holds without a socket or an

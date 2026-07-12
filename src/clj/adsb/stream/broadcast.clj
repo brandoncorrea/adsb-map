@@ -43,13 +43,14 @@
 ;; Frames
 
 (defn- picture-frame!
-  "One full-picture SSE frame as of now-ms. The ! is the frame-id
-  counter: snapshot and update frames share it, so ids increase across
-  the whole stream."
-  [{:stream/keys [frame-id]} event-name picture now-ms]
+  "One full-picture SSE frame as of now-ms, carrying the session `stats`
+  (adsb.stats, or nil). The ! is the frame-id counter: snapshot and update
+  frames share it, so ids increase across the whole stream."
+  [{:stream/keys [frame-id]} event-name picture stats now-ms]
   (sse/event-frame event-name
                    (swap! frame-id inc)
-                   (json/generate-string (wire/picture->wire picture now-ms))))
+                   (json/generate-string
+                     (wire/picture->wire picture stats now-ms))))
 
 ;; ---------------------------------------------------------------------
 ;; The registry and the slow-consumer policy
@@ -82,14 +83,20 @@
 (defn- broadcast-picture!
   "One tick: obtain the picture as of now — the injected fn runs even
   with no audience, because in production it is also the age-out
-  sweep — then fan the update out to whoever is listening."
-  [{:stream/keys [picture clients] :as broadcaster}]
+  sweep — compute the session stats and cache them for the next connect's
+  snapshot, then fan the update out to whoever is listening. Stats are
+  computed ONLY here, on the single broadcast thread, so their
+  accumulator (adsb.stats) has one writer; connect! reuses the cache
+  rather than recomputing off-thread."
+  [{:stream/keys [picture stats last-stats clients] :as broadcaster}]
   (let [now-ms          (System/currentTimeMillis)
-        current-picture (picture now-ms)]
+        current-picture (picture now-ms)
+        current-stats   (stats current-picture now-ms)]
+    (reset! last-stats current-stats)
     (when (seq @clients)
       (broadcast! broadcaster
                   (picture-frame! broadcaster update-event
-                                  current-picture now-ms)))))
+                                  current-picture current-stats now-ms)))))
 
 (defn- broadcast-heartbeat! [broadcaster]
   (broadcast! broadcaster (sse/comment-frame "hb")))
@@ -103,13 +110,14 @@
   the registry for the ticks that follow. The registry entry is removed
   by on-close (the browser went away) or by a failed send
   (drop-and-close)."
-  [{:stream/keys [picture] :as broadcaster} request]
+  [{:stream/keys [picture last-stats] :as broadcaster} request]
   (http-kit/as-channel
     request
     {:on-open  (fn [channel]
                  (let [now-ms (System/currentTimeMillis)
                        frame  (picture-frame! broadcaster snapshot-event
-                                              (picture now-ms) now-ms)]
+                                              (picture now-ms) @last-stats
+                                              now-ms)]
                    (when (and (http-kit/send! channel {:status  200
                                                        :headers sse/headers}
                                               false)
@@ -149,19 +157,25 @@
     :picture       REQUIRED — fn of now-ms returning the picture
                    (icao -> aircraft) to put on the wire. Production
                    injects adsb.state/age-out! (see the ns docstring).
+    :stats         fn of [picture now-ms] returning the session stats map
+                   (adsb.stats) for the frame, or nil. Called only on the
+                   tick; defaults to (constantly nil) — no stats.
     :interval-ms   update tick period (default 1000, ~1 Hz)
     :heartbeat-ms  heartbeat comment period (default 15000)
 
   Returns a broadcaster to hand to connect!, client-count, and stop!."
-  [{:keys [picture interval-ms heartbeat-ms]
-    :or   {interval-ms  default-interval-ms
+  [{:keys [picture stats interval-ms heartbeat-ms]
+    :or   {stats        (constantly nil)
+           interval-ms  default-interval-ms
            heartbeat-ms default-heartbeat-ms}}]
   (let [executor    (Executors/newSingleThreadScheduledExecutor
                       broadcast-threads)
-        broadcaster {:stream/picture  picture
-                     :stream/clients  (atom #{})
-                     :stream/frame-id (atom 0)
-                     :stream/executor executor}]
+        broadcaster {:stream/picture    picture
+                     :stream/stats      stats
+                     :stream/last-stats (atom nil)
+                     :stream/clients    (atom #{})
+                     :stream/frame-id   (atom 0)
+                     :stream/executor   executor}]
     (schedule! executor interval-ms #(broadcast-picture! broadcaster))
     (schedule! executor heartbeat-ms #(broadcast-heartbeat! broadcaster))
     broadcaster))

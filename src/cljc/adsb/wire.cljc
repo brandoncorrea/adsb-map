@@ -9,13 +9,28 @@
   ## The format
 
   Every SSE data payload — `snapshot` and `update` events alike — is
-  one envelope carrying the FULL current picture:
+  one envelope carrying the FULL current picture and a small stats map:
 
-      {\"at\": 1720713600000, \"aircraft\": [<wire aircraft> ...]}
+      {\"at\": 1720713600000,
+       \"stats\": {\"max-range-km\": 312, \"message-rate\": 148},
+       \"aircraft\": [<wire aircraft> ...]}
 
   `at` is the epoch-ms instant the frame was built. An update is not a
   delta, so a client treats every frame as a wholesale replacement and
   can never accumulate drift; a reconnect needs no replay.
+
+  `stats` is the session readout the server computes (adsb.stats) — two
+  SCALARS, no position:
+
+      max-range-km   whole-km distance to the furthest aircraft this
+                     antenna has heard this session. A NUMBER reveals no
+                     position; OMITTED when the receiver position is
+                     unavailable (no reference to measure from).
+      message-rate   feeder messages per second, OMITTED when unknown.
+
+  Aircraft counts are NOT on the wire: the browser derives total and
+  positioned counts from the `aircraft` array itself (adsb.ui.header),
+  so duplicating them here would be a second source of truth.
 
   A wire aircraft uses simple, UNqualified kebab-case keys — the same
   choice adsb.geo makes for GeoJSON feature properties, and for the
@@ -51,7 +66,13 @@
   ever reach the wire, so a receiver-relative field that someday appears
   on a domain aircraft is excluded here by construction, not by
   enumeration. :aircraft/rssi is excluded for the same reason — signal
-  strength is a measurement of the receiver, not of the aircraft.")
+  strength is a measurement of the receiver, not of the aircraft.
+
+  The stats map is held to the same discipline: stats->wire is an
+  ALLOWLIST projecting only the two scalars above. max-range-km is a
+  DISTANCE, not a position — a radius reveals no bearing, so no antenna
+  location can be recovered from it. The receiver's coordinates and every
+  receiver-relative field are excluded by construction.")
 
 (defn aircraft->wire
   "Project one domain aircraft onto its wire shape (see the ns
@@ -74,11 +95,26 @@
           position-suspect? (assoc :position-suspect true)
           mlat? (assoc :mlat true)))
 
+(defn stats->wire
+  "Project the server stats (adsb.stats, :stats/-namespaced) onto the
+  envelope's `stats` map. An ALLOWLIST, exactly like aircraft->wire: only
+  the two scalars named in the ns docstring may leave, so a
+  receiver-relative field that someday joins the stats map is excluded
+  here by construction. Absent facts are omitted — no receiver position
+  means no max-range-km, an unknown feeder rate means no message-rate.
+  nil stats yields an empty map."
+  [{:stats/keys [max-range-km message-rate]}]
+  (cond-> {}
+          max-range-km (assoc :max-range-km max-range-km)
+          message-rate (assoc :message-rate message-rate)))
+
 (defn picture->wire
-  "The picture (icao -> aircraft) as one frame envelope, built at
-  `at-ms`. Sent as the connect-time snapshot and as every update."
-  [picture at-ms]
+  "The picture (icao -> aircraft) and the session `stats` as one frame
+  envelope, built at `at-ms`. Sent as the connect-time snapshot and as
+  every update. `stats` is the server stats map (adsb.stats) or nil."
+  [picture stats at-ms]
   {:at       at-ms
+   :stats    (stats->wire stats)
    :aircraft (mapv aircraft->wire (vals picture))})
 
 (defn wire->aircraft
@@ -98,6 +134,16 @@
           seen-at (assoc :aircraft/seen-at-ms seen-at)
           position-suspect (assoc :aircraft/position-suspect? true)
           mlat (assoc :aircraft/mlat? true)))
+
+(defn wire->stats
+  "The inverse projection: a decoded envelope's `stats` map back into the
+  server-stats vocabulary (:stats/-namespaced) the browser subscribes to.
+  Absent keys stay absent — the readout dashes them, never zeroes them."
+  [{:keys [stats]}]
+  (let [{:keys [max-range-km message-rate]} stats]
+    (cond-> {}
+            max-range-km (assoc :stats/max-range-km max-range-km)
+            message-rate (assoc :stats/message-rate message-rate))))
 
 (defn wire->picture
   "A decoded frame envelope back into the domain picture, icao ->

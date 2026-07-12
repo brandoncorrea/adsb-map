@@ -34,11 +34,13 @@
   "A broadcaster plus the real http server on an ephemeral port.
   Updates every 50 ms by default so tests read frames fast; heartbeats
   effectively off unless a test turns them up."
-  [{:keys [picture interval-ms heartbeat-ms]
+  [{:keys [picture stats interval-ms heartbeat-ms]
     :or   {picture      (constantly cast-picture)
+           stats        (constantly nil)
            interval-ms  50
            heartbeat-ms 60000}}]
   (let [broadcaster (broadcast/start! {:picture      picture
+                                       :stats        stats
                                        :interval-ms  interval-ms
                                        :heartbeat-ms heartbeat-ms})
         srv         (server/start!
@@ -123,6 +125,26 @@
           (is (= (count cast-picture)
                  (count (:aircraft (frame-data update-frame)))))
           (is (< (frame-id snapshot) (frame-id update-frame))))
+        (finally
+          (.close reader)
+          (stop-streaming-server! streaming))))))
+
+(deftest stats-ride-the-envelope
+  (testing "the session stats the broadcaster computes on the tick reach
+            both the snapshot and the update frame as the wire scalars"
+    (let [streaming (start-streaming-server!
+                      {:stats (constantly {:stats/max-range-km 312
+                                           :stats/message-rate 148
+                                           ;; counts must NOT reach the wire
+                                           :stats/aircraft-count 5})})
+          reader    (open-stream! (:port streaming))]
+      (try
+        ;; The snapshot serves the cached stats from the first tick, so
+        ;; skip to an update frame to see a freshly computed one.
+        (read-frame! reader)
+        (let [{:keys [stats]} (frame-data (read-frame! reader))]
+          (is (= {:max-range-km 312 :message-rate 148} stats)
+              "only the two scalars, never the counts"))
         (finally
           (.close reader)
           (stop-streaming-server! streaming))))))
