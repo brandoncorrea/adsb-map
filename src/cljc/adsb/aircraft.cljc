@@ -38,6 +38,18 @@
   [{:aircraft/keys [seen-at-ms]} now-ms]
   (> (- now-ms seen-at-ms) age-out-threshold-ms))
 
+(defn observed-at-ms
+  "The absolute instant an ingested aircraft was heard, given the
+  instant its batch was captured. The feeder's seen is seconds-since-
+  last-message at CAPTURE time, so the observation instant is capture
+  minus seen — treating arrival as observation would make a message
+  heard 250 s before capture look fresh. Absent seen pins the
+  observation to the capture itself: the freshest instant we can
+  honestly claim, so an aircraft can only be older than the picture
+  says, never fresher."
+  [{:aircraft/keys [seen-s]} captured-at-ms]
+  (long (- captured-at-ms (* 1000 (or seen-s 0)))))
+
 (defn merge-batch
   "Merge one coerced feeder batch — a full snapshot of what the feeder
   currently tracks, captured at captured-at-ms — into the picture.
@@ -70,20 +82,15 @@
         picture))
 
 (defn- ->observation
-  "Stamp an ingested aircraft with the absolute instant it was heard.
-  The feeder's seen is seconds-since-last-message at CAPTURE time, so
-  the observation instant is capture minus seen — treating arrival as
-  observation would make a message heard 250 s before capture look
-  fresh. Absent seen pins the observation to the capture itself: the
-  freshest instant we can honestly claim, so an aircraft can only be
-  older than the picture says, never fresher. The capture-relative
-  :aircraft/seen-s is dropped — it rots the moment the poll ends;
-  :aircraft/seen-at-ms is its durable form."
-  [{:aircraft/keys [seen-s] :as aircraft} captured-at-ms]
+  "Stamp an ingested aircraft with the absolute instant it was heard
+  (observed-at-ms). The capture-relative :aircraft/seen-s is dropped —
+  it rots the moment the poll ends; :aircraft/seen-at-ms is its
+  durable form."
+  [aircraft captured-at-ms]
   (-> aircraft
       (dissoc :aircraft/seen-s)
       (assoc :aircraft/seen-at-ms
-             (long (- captured-at-ms (* 1000 (or seen-s 0)))))))
+             (observed-at-ms aircraft captured-at-ms))))
 
 (defn- merge-observation
   "One aircraft's step of merge-batch: the new observation wins, except

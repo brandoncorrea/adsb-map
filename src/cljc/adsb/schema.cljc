@@ -75,7 +75,12 @@
    ;; Stamped by adsb.aircraft/merge-batch (capture time minus seen);
    ;; absent on aircraft fresh from ingest.
    [:aircraft/seen-at-ms {:optional true} number?]
-   [:aircraft/rssi {:optional true} number?]])
+   [:aircraft/rssi {:optional true} number?]
+   ;; Set at merge time when a new position implies an impossible jump
+   ;; from the previous observation — the fingerprint of spoofing.
+   ;; Flagged and surfaced, never dropped or clamped; cleared by the
+   ;; next consistent observation (adsb.ingest.plausibility).
+   [:aircraft/position-suspect? {:optional true} :boolean]])
 
 ;; ---------------------------------------------------------------------
 ;; Plausibility — a second, separate layer from schema validity.
@@ -83,7 +88,8 @@
 ;; A schema-valid value can still be physical nonsense (400,000 ft,
 ;; 3,000 kt). An implausible value costs the FIELD, never the aircraft,
 ;; and is never clamped into range. Receiver-range gating and position
-;; jump detection are adsb-nqf.3, not here.
+;; jump detection need more than one field and live in
+;; adsb.ingest.plausibility.
 
 (def ^:const min-plausible-altitude-ft -1500)  ; below-sea-level airports
 

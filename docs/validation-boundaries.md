@@ -167,17 +167,49 @@ decision down:
 
 - **Out of receiver range** (a position further away than physics allows for your
   antenna's horizon) → **drop it.** It didn't come from the sky you can see.
-  (Lands in adsb-nqf.3 — not built yet.)
+  (Built in adsb-nqf.3: `adsb.ingest.plausibility/gate-range`.) The horizon is
+  configurable and defaults to **400 km (~216 nm)** — generous for 1090 MHz, which
+  rarely carries much past 250 nm even under exceptional conditions. The gate is
+  strictly-beyond: a position exactly at the horizon is kept. Position-less
+  aircraft pass; there is nothing to gate.
 - **Absurd altitude or speed** → **drop the field, keep the aircraft.** The rest of
   its data may be fine, and a plane with a garbled altitude is still a plane.
   (Built in adsb-bvi.3: `drop-implausible-fields`.)
 - **Impossible position jump** (400 nm in one second) → **flag it, don't drop it.**
   This is the fingerprint of spoofing, and silently discarding it means you'd never
-  know. Surface it. (Lands in adsb-nqf.3 — not built yet.)
+  know. Surface it. (Built in adsb-nqf.3:
+  `adsb.ingest.plausibility/flag-position-jumps`, composed with the picture merge
+  in `adsb.state/apply-batch!` — the one place the previous observation is
+  available.) A new position implying a sustained speed strictly above **1200 kt**
+  from the aircraft's previous observation sets `:aircraft/position-suspect? true`
+  on the domain aircraft. Clearing rule: the flag is recomputed on every
+  observation, so the next observation consistent with the last stored position
+  clears it; a position-less observation inherits the flag along with the
+  inherited position — a suspect position does not launder itself by falling
+  silent. The 1200 kt threshold deliberately sits above the 1000 kt per-field
+  ceiling so the two layers never disagree about a fast-but-real aircraft.
 
 The temptation is to silently clamp bad values into range. **Don't.** Clamping turns
 "this data is wrong" into "this data is fine," which is the opposite of what a
 boundary is for.
+
+**Where the receiver position comes from** (adsb-nqf.3): resolved **once at poller
+setup** by `adsb.ingest.receiver/resolve-position!`, never per poll. The
+`ADSB_RECEIVER_LAT`/`ADSB_RECEIVER_LON` environment override wins; otherwise the
+feeder's `/data/receiver.json` (readsb serves top-level `lat`/`lon`); otherwise
+**the range gate is disabled** and that is logged exactly once — a feeder that
+cannot say where it is must not cost aircraft blindly. Out-of-range or half-set
+coordinates are rejected, never clamped.
+
+**The receiver position is itself a secret.** It locates a home antenna, and it is
+deliberately hidden from the public site. It lives only inside ingest
+configuration: never attached to a domain aircraft, never stored in the state
+picture, never serialized to the wire, and its coordinates are never logged. The
+feeder's per-aircraft `r_dst`/`r_dir` fields (receiver-relative range and bearing)
+are the same secret wearing an aircraft costume — one aircraft's position plus its
+`r_dst`/`r_dir` locates the antenna exactly — and `adsb.ingest.coerce` is a
+selective copy that never carries them. Tests assert both absences; committed
+fixtures use synthetic receiver coordinates (see `test/resources/README.md`).
 
 ## Boundary 2 — The HTTP API
 

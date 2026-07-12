@@ -113,6 +113,16 @@
            (:aircraft/altitude-ft
              (coerce/->aircraft (assoc cruising-raw :alt_baro -1000)))))))
 
+(deftest receiver-relative-fields-never-copied
+  (testing "r_dst/r_dir — receiver-relative range and bearing, which
+            together with one position locate the antenna exactly —
+            leave no trace on the domain aircraft: coercion is a
+            selective copy, byte-for-byte identical with or without
+            them"
+    (is (= (coerce/->aircraft cruising-raw)
+           (coerce/->aircraft
+             (assoc cruising-raw :r_dst 39.887 :r_dir 231.3))))))
+
 (deftest ->aircraft-batch
   (testing "one malformed entry yields the rest of the batch, not an
             exception"

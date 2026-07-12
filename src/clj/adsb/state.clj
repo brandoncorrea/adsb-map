@@ -1,21 +1,26 @@
 (ns adsb.state
   "The current picture of the sky: one atom holding icao -> aircraft,
   written only by the poll loop (adsb-nqf.1) and read by SSE and the
-  HTTP API. A thin shell — every rule about merging, retention, and
-  aging lives in adsb.aircraft; this namespace only swaps."
-  (:require
-    [adsb.aircraft :as aircraft]
-    [clojure.string :as str]))
+  HTTP API. A thin shell — every rule about merging, retention, aging,
+  and position-jump flagging lives in adsb.aircraft and
+  adsb.ingest.plausibility; this namespace only swaps."
+  (:require [adsb.aircraft :as aircraft]
+            [adsb.ingest.plausibility :as plausibility]
+            [clojure.string :as str]))
 
 (defonce ^:private picture (atom {}))
 
 (defn apply-batch!
-  "Merge one coerced feeder batch into the picture. The poll loop's
-  callback: batch is what adsb.ingest.coerce/->aircraft-batch returns;
+  "Merge one coerced feeder batch into the picture, flagging
+  impossible position jumps against the previous picture — the one
+  place prior state is available (adsb.ingest.plausibility). The poll
+  loop's callback: batch is what adsb.ingest.coerce/->aircraft-batch
+  returns, range-gated at the edge before it gets here;
   captured-at-ms is when the payload was captured. Returns the new
   picture."
   [batch captured-at-ms]
-  (swap! picture aircraft/merge-batch batch captured-at-ms))
+  (swap! picture plausibility/merge-batch-flagging-jumps
+         batch captured-at-ms))
 
 (defn age-out!
   "Drop aircraft silent past the age-out threshold. Returns the new

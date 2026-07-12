@@ -45,3 +45,14 @@ receiver-position fields (no receiver lat/lon appears in `aircraft.json`; the
 "Not observed" means the quirk did not occur during this ten-poll window — the doc's
 claim that it *can* occur stands. Ingest must still handle those cases; this fixture
 alone does not exercise them.
+
+## receiver-sample.json
+
+A `receiver.json` response in the live feeder's exact shape (readsb: top-level
+`lat`/`lon` beside `refresh`/`history`/`version`), verified against the real
+feeder on **2026-07-11** — but with **synthetic coordinates**. The receiver's
+real position is private (see `docs/validation-boundaries.md`); the committed
+`lat`/`lon` are rounded stand-ins in the same general region as the
+aircraft-sample positions, so the range gate behaves realistically in tests
+without locating the antenna. The git hash in `version` is likewise zeroed.
+Do not replace these with real coordinates.
