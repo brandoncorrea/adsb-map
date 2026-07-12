@@ -8,9 +8,10 @@ archived in the notes on `adsb-bvi.5`). The verdict is none of them as drawn:
 **The Sectional's body with Nocturne's pulse**, plus two commissioned
 inventions. This document is self-sufficient; the mockups are flavor only.
 
-Two decisions inside it are *scheduled, not made*: typography (§5) and the
-final proof of the two inventions (§8, §9), each of which needs a prototype
-before it is load-bearing.
+Two decisions inside it were *scheduled, not made*: typography (§5 — now
+SETTLED, picked in-app 2026-07-12, bead `adsb-dgb.10`) and the final proof
+of the two inventions (§8, §9), each of which needed a prototype before it
+was load-bearing.
 
 ---
 
@@ -67,10 +68,16 @@ one table, three media, change them together.
 | Water fill / line | `#C9DCD6` / `#3D5E8C` | `#101823` / `#7FA3D4` |
 | Ink (text, rules, glyph outlines) | `#2C2A24` | `#E9E2CE` |
 | Faded ink (captions, ticks) | `#8B8471` | `#8D96A8` |
-| Aviation magenta (accents, selection) | `#C0447C` | `#E06A9F` |
-| Aero blue (links, water labels) | `#3D5E8C` | `#7FA3D4` |
+| Aviation magenta (accents, selection) | `#A83A63` | `#E77E9B` |
+| Aero blue (links, water labels) | `#36547E` | `#8BA9D6` |
 | Roads | `#A65A2E` at ~0.6 alpha | `#6B5540` at ~0.6 alpha |
 | Emergency red | `#CE2029` | `#FF5A4D` |
+
+*The magenta and aero rows were re-inked 2026-07-12 by the §5 pick — the
+"wine pen" accent variation (bead `adsb-dgb.10`, chosen live in
+`#/preview`). The relationships stand; only the pen pressed deeper. The
+night-edition proof above predates the re-ink and is unaffected: the pen
+rows are chrome accents, not the plate.*
 
 **Aircraft altitude ramp** — *continuous* (Q6a), interpolated through
 chart-native inks, warm (low) → cool (high):
@@ -134,13 +141,54 @@ there, not logic.
 - **Perspective size (§8)** carries altitude-as-instinct — the shadow it
   replaced is recorded there.
 
-## 5. Typography — scheduled, not settled
+## 5. Typography — SETTLED
 
-Q14 was deliberately deferred. Typefaces, modular scale, spacing scale, and
-final palette tuning get a **bake-off against the real layout** (real Stack,
-real map) as its own bead. Until then, build with the mockup's system stacks —
-serif display (Iowan Old Style/Georgia), humanist sans labels, monospace
-data — as *placeholder*, and hold the line: editorial voice, mono for numbers.
+Q14 was deliberately deferred until it could be judged against the real
+layout. The bake-off staged three complete systems on the running app
+(bead `adsb-dgb.10`), the in-app preview let the Overseer browse and MIX
+dimensions independently (`#/preview`, bead `adsb-dgb.11`), and he picked
+from live mixes on 2026-07-12. **The winning mix**
+(`typography=annotation scale=major-13 spacing=compact-4
+palette=wine-pen`), the editorial-serif hypothesis losing to its most
+radical rival:
+
+- **Type system — THE ANNOTATION.** Everything written on the chart is
+  written by one hand, the plotter's: **Space Mono** (OFL; self-hosted
+  woff2s in `resources/public/fonts/`, licensing in `fonts/LICENSE.md`)
+  in regular, bold, and italic. Hierarchy is weight and case, never a
+  change of voice — bold stamps for titles (the header title carries a
+  2px magenta pen underline), caps-tracked bold for block headings (the
+  legend's print in the pen), *italic* for fact labels and captions.
+  Mono numbers are inherently tabular.
+- **Modular scale — major third, 1.25 @ 13px.** Tokens 8.5 / 10.5 / 13 /
+  16 / 20px (`--t-2 … --t2`). Deliberately shallow, true to the system's
+  own thesis — and it spends its size on the DATA rather than the title
+  stamp: captions and mono data print at 10.5px. Caption sizes are
+  per-system, never forced smaller (the dgb.11 lesson: --t-2 captions
+  are legible only in caps-tracked gothic).
+- **Spacing — compact, 4px base.** Tokens 2 / 4 / 8 / 12 / 16px
+  (`--s1 … --s5`); header 36px. The chrome defers to the map (§10): a
+  working chart's margin notes are dense, the mono's own letter-air
+  keeps the tight rhythm readable, and the sky is the whitespace.
+- **Palette — the wine pen.** The §2 hue relationships stand; only the
+  PEN — the chrome's annotation accents — presses deeper. Aviation
+  magenta prints `#A83A63` day / `#E77E9B` night; chrome aero blue
+  steadies to `#36547E` day / `#8BA9D6` night to keep its distance from
+  it (§2 table updated in place, per §2's own tune-in-place rule).
+  Paper, ink, the aircraft altitude ramp, and emergency red move not at
+  all.
+
+**Mechanism:** the winner ships exactly as previewed — the mix's CSS
+custom-property set promoted into `app.css` `:root` in both editions,
+`font-src 'self'` added to the CSP (`adsb-kh4.7`), applied across the
+chrome in the visual pass (`adsb-dgb.5`). The `#/preview` page remains:
+it is the standing fitting room for any future re-skin.
+
+**One consequence left open on purpose:** §3's "serif where the label is
+a *place*" for basemap labels predates this pick and was not part of the
+preview. Whether places keep a serif voice against the mono chrome, or
+the whole chart adopts the plotter's hand, is decided by eye in the
+visual pass (`adsb-dgb.5`).
 
 ## 6. Motion principles
 
