@@ -162,6 +162,7 @@
   (testing "each dimension's default is the §5 winner — the fitting room
             opens on what actually ships (adsb-dgb.5)"
     (is (= {:typography "annotation"
+            :labels     "scribbled"  ; as drawn/shipped; adsb-fon audition
             :scale      "major-13"
             :spacing    "compact-4"
             :palette    "wine-pen"

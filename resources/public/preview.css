@@ -80,6 +80,27 @@
    Annotation won the bake-off (§5) — the app path ships them now, and
    this page inherits them. */
 
+/* Caption-voice audition faces (bead adsb-fon): Space Grotesk is Space
+   Mono's own proportional sibling (Florian Karsten, OFL) — the
+   plotter's printing hand; Inter (Rasmus Andersson, OFL) is the
+   neutral gothic control. See fonts/LICENSE.md. */
+
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/space-grotesk-500.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/inter-600.woff2") format("woff2");
+}
+
 /* ── DIMENSION: edition (the fifth control — manual day/night) ────────
    The chrome variable tables, mirroring app.css / design-direction §2,
    but keyed on the root's data-edition instead of the system scheme so
@@ -363,6 +384,51 @@
 
 .adsb-preview[data-typography="annotation"] .adsb-panel-title {
   letter-spacing: 0.04em;
+}
+
+/* ── DIMENSION: caption voice (bead adsb-fon) ─────────────────────────
+   The Overseer's finding from the pick: italic Title Case captions
+   strain at panel sizes; upper-case sans reads far easier. This
+   dimension swaps the SMALL-LABEL voice independently of the type
+   system — `scribbled` is each system exactly as drawn (no rules), the
+   three `printed` voices are upright caps-tracked at --t-2, the
+   Drafting Room recipe re-cut in three cloths. Placed AFTER the
+   typography blocks on purpose: equal specificity, later wins. */
+
+.adsb-preview[data-labels="printed-mono"] .adsb-fact-label,
+.adsb-preview[data-labels="printed-mono"] .adsb-stack-shelf-label,
+.adsb-preview[data-labels="printed-mono"] .adsb-count-unit,
+.adsb-preview[data-labels="printed-mono"] .adsb-preview-type-caption {
+  font-family: var(--mono);
+  font-style: normal;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em; /* mono is wide already; track lightly */
+  font-size: var(--t-2);
+}
+
+.adsb-preview[data-labels="printed-grotesk"] .adsb-fact-label,
+.adsb-preview[data-labels="printed-grotesk"] .adsb-stack-shelf-label,
+.adsb-preview[data-labels="printed-grotesk"] .adsb-count-unit,
+.adsb-preview[data-labels="printed-grotesk"] .adsb-preview-type-caption {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-style: normal;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: var(--t-2);
+}
+
+.adsb-preview[data-labels="printed-inter"] .adsb-fact-label,
+.adsb-preview[data-labels="printed-inter"] .adsb-stack-shelf-label,
+.adsb-preview[data-labels="printed-inter"] .adsb-count-unit,
+.adsb-preview[data-labels="printed-inter"] .adsb-preview-type-caption {
+  font-family: "Inter", system-ui, sans-serif;
+  font-style: normal;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: var(--t-2);
 }
 
 /* ── Token wiring: the real chrome re-specced in tokens ───────────────

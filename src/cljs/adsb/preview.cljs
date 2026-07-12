@@ -4,11 +4,17 @@
   The typography/scale/spacing/palette pick (adsb-dgb.10) is made by
   BROWSING AND MIXING, not by comparing static plates: this page renders
   the app's REAL chrome — the header, the emergency ribbon, the detail
-  panel, the legend, a Stack excerpt — as specimens under five
+  panel, the legend, a Stack excerpt — as specimens under six
   independently switchable dimensions:
 
     :typography   the three bake-off systems (Marginalia / Drafting
                   Room / The Annotation)
+    :labels       the caption VOICE (bead adsb-fon): scribbled — each
+                  system exactly as drawn — vs three PRINTED voices,
+                  upright caps-tracked small labels in mono, Space
+                  Grotesk, or Inter. Staged on the Overseer's finding
+                  that italic Title Case captions strain at panel
+                  sizes while upper-case sans reads easily
     :scale        modular type scales — the candidates' natives plus
                   their neighbors
     :spacing      spacing scales — 4px airy / 8px strict / compact
@@ -52,7 +58,7 @@
     [reagent.core :as r]))
 
 ;; ---------------------------------------------------------------------
-;; The five dimensions. Vector order is control order; each dimension's
+;; The six dimensions. Vector order is control order; each dimension's
 ;; FIRST option is its default — together they spell the CROWNED MIX
 ;; (§5, picked 2026-07-12 and promoted into app.css by adsb-dgb.5), so
 ;; the page opens on what actually ships and every other option remains
@@ -64,6 +70,12 @@
     :options [["annotation" "The Annotation"]
               ["marginalia" "Marginalia"]
               ["drafting-room" "Drafting Room"]]}
+   {:key     :labels
+    :label   "Captions"
+    :options [["scribbled" "Scribbled (as drawn)"]
+              ["printed-mono" "Printed mono"]
+              ["printed-grotesk" "Printed Grotesk"]
+              ["printed-inter" "Printed Inter"]]}
    {:key     :scale
     :label   "Scale"
     :options [["major-13" "1.25 @ 13px"]

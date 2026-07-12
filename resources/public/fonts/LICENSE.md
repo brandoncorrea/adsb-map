@@ -29,3 +29,19 @@ https://github.com/IBM/plex
 Copyright Google Inc., designed by Colophon Foundry.
 Reserved Font Name "Space Mono". OFL-1.1.
 https://github.com/googlefonts/spacemono
+
+## Space Grotesk
+
+`space-grotesk-500.woff2`
+
+Copyright Florian Karsten Studio; a proportional derivative of Space
+Mono. Reserved Font Name "Space Grotesk". OFL-1.1.
+https://github.com/floriankarsten/space-grotesk
+
+## Inter
+
+`inter-600.woff2`
+
+Copyright The Inter Project Authors, designed by Rasmus Andersson.
+Reserved Font Name "Inter". OFL-1.1.
+https://github.com/rsms/inter
