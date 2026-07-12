@@ -997,7 +997,9 @@ body {
 
   .adsb-margin {
     left: var(--s3);
-    bottom: calc(var(--stack-w) + 40px + var(--s2));
+    /* above the recumbent Stack AND the lifted attribution, which wraps
+       to two lines at phone widths */
+    bottom: calc(var(--stack-w) + 56px + var(--s2));
     max-width: calc(100vw - 2 * var(--s3));
   }
 
