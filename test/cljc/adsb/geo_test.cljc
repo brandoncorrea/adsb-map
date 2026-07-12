@@ -63,6 +63,139 @@
       (is (close? 270 (geo/bearing origin {:geo/lat 0 :geo/lon -1}) 0.01)))))
 
 ;; ---------------------------------------------------------------------
+;; Spherical destination — the dead-reckoning primitive
+
+(deftest destination-known-values
+  (testing "the canonical Movable-Type worked example: 124.8 km on an
+            initial bearing of 96°01′18″ from 53°19′14″N 1°43′47″W lands
+            at 53°11′18″N 0°08′00″E"
+    (let [reached (geo/destination {:geo/lat 53.320556 :geo/lon -1.729722}
+                                   96.021667
+                                   124800)]
+      (is (close? 53.18833 (:geo/lat reached) 0.001))
+      (is (close? 0.13333 (:geo/lon reached) 0.001))))
+
+  (testing "one equator-degree of meters due north or east of the origin
+            is one degree of latitude or longitude"
+    (let [origin {:geo/lat 0 :geo/lon 0}
+          north  (geo/destination origin 0 equator-degree-m)
+          east   (geo/destination origin 90 equator-degree-m)]
+      (is (close? 1 (:geo/lat north) 1e-6))
+      (is (close? 0 (:geo/lon north) 1e-6))
+      (is (close? 0 (:geo/lat east) 1e-6))
+      (is (close? 1 (:geo/lon east) 1e-6))))
+
+  (testing "zero distance goes nowhere"
+    (let [from {:geo/lat 27.961166 :geo/lon -83.975953}]
+      (is (close? 0 (geo/distance from (geo/destination from 97.14 0))
+                  0.001))))
+
+  (testing "destination inverts distance + bearing: going the measured
+            distance on the measured bearing reaches the measured point"
+    (let [from    {:geo/lat 52.205 :geo/lon 0.119}
+          to      {:geo/lat 48.857 :geo/lon 2.351}
+          reached (geo/destination from
+                                   (geo/bearing from to)
+                                   (geo/distance from to))]
+      (is (close? (:geo/lat to) (:geo/lat reached) 1e-6))
+      (is (close? (:geo/lon to) (:geo/lon reached) 1e-6))))
+
+  (testing "crossing the antimeridian normalizes longitude to [-180, 180)"
+    (let [reached (geo/destination {:geo/lat 0 :geo/lon 179.5}
+                                   90
+                                   equator-degree-m)]
+      (is (close? -179.5 (:geo/lon reached) 1e-6)))))
+
+(deftest knots-to-meters-per-second
+  (testing "one knot is one nautical mile per hour"
+    (is (close? 0.514444 (geo/knots->mps 1) 1e-4))
+    (is (close? 231.757 (geo/knots->mps 450.5) 0.01))
+    (is (zero? (geo/knots->mps 0)))))
+
+;; ---------------------------------------------------------------------
+;; Dead reckoning — pure projection between real frames
+
+(def dead-reckoner
+  "A positioned aircraft with everything projection needs: observed at
+  t=0, due east from the origin at 360 kt — a tidy 1852 m every 10 s."
+  {:aircraft/icao "abc0e4"
+   :aircraft/position {:geo/lat 0 :geo/lon 0}
+   :aircraft/ground-speed-kt 360
+   :aircraft/track-deg 90
+   :aircraft/seen-at-ms 0})
+
+(deftest project-aircraft-moves-along-track-at-ground-speed
+  (testing "10 s at 360 kt due east covers one nautical mile, on heading"
+    (let [projected (geo/project-aircraft dead-reckoner 10000)
+          from      (:aircraft/position dead-reckoner)
+          to        (:aircraft/position projected)]
+      (is (close? geo/meters-per-nm (geo/distance from to) 0.01))
+      (is (close? 90 (geo/bearing from to) 0.01))
+      (is (close? 0 (:geo/lat to) 1e-6))))
+
+  (testing "the cruising cast member one second on: ~231.8 m along its
+            97.14° track — the real per-frame glide"
+    (let [heard     (assoc fixtures/ups-2717 :aircraft/seen-at-ms 0)
+          projected (geo/project-aircraft heard 1000)
+          from      (:aircraft/position heard)
+          to        (:aircraft/position projected)]
+      (is (close? 231.757 (geo/distance from to) 0.5))
+      (is (close? 97.14 (geo/bearing from to) 0.1))))
+
+  (testing "only the position changes — every reported fact rides along
+            untouched"
+    (is (= (dissoc (geo/project-aircraft dead-reckoner 10000)
+                   :aircraft/position)
+           (dissoc dead-reckoner :aircraft/position)))))
+
+(deftest project-aircraft-holds-what-it-cannot-honestly-move
+  (testing "no ground speed, no track, no observation instant, or no
+            position: unchanged — absent is not zero"
+    (doseq [missing [:aircraft/ground-speed-kt :aircraft/track-deg
+                     :aircraft/seen-at-ms :aircraft/position]]
+      (let [grounded (dissoc dead-reckoner missing)]
+        (is (= grounded (geo/project-aircraft grounded 10000))
+            (str missing " absent must project nowhere")))))
+
+  (testing "a stale aircraft holds its last real position — a silent
+            plane gliding forever is a lie"
+    (let [barely-fresh aircraft/stale-threshold-ms
+          barely-stale (inc aircraft/stale-threshold-ms)]
+      (is (not= dead-reckoner (geo/project-aircraft dead-reckoner
+                                                    barely-fresh))
+          "at the stale line it still projects")
+      (is (= dead-reckoner (geo/project-aircraft dead-reckoner
+                                                 barely-stale))
+          "one ms past the stale line it holds")))
+
+  (testing "a now-ms before the observation projects nowhere, never
+            backward"
+    (let [heard-later (assoc dead-reckoner :aircraft/seen-at-ms 5000)
+          projected   (geo/project-aircraft heard-later 1000)]
+      (is (close? 0 (geo/distance (:aircraft/position heard-later)
+                                  (:aircraft/position projected))
+                  0.001)))))
+
+(deftest projectable-honesty
+  (let [at-10s 10000]
+    (testing "the full-vector, fresh aircraft is projectable"
+      (is (true? (geo/projectable? dead-reckoner at-10s))))
+
+    (testing "a zero ground speed is a lawful speed, not an absence"
+      (is (true? (geo/projectable?
+                   (assoc dead-reckoner :aircraft/ground-speed-kt 0)
+                   at-10s))))
+
+    (testing "missing vector components, a missing observation instant,
+              a missing position, or staleness ground the projection"
+      (doseq [missing [:aircraft/ground-speed-kt :aircraft/track-deg
+                       :aircraft/seen-at-ms :aircraft/position]]
+        (is (false? (geo/projectable? (dissoc dead-reckoner missing)
+                                      at-10s))))
+      (is (false? (geo/projectable? dead-reckoner
+                                    (inc aircraft/stale-threshold-ms)))))))
+
+;; ---------------------------------------------------------------------
 ;; Bounds
 
 (deftest bounds-box

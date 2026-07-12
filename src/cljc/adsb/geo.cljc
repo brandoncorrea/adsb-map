@@ -15,6 +15,8 @@
 (def ^:const earth-radius-m 6371000)   ; mean radius, the haversine R
 (def ^:const meters-per-km 1000)
 (def ^:const meters-per-nm 1852)       ; the nautical mile is exactly this
+(def ^:const seconds-per-hour 3600)
+(def ^:const millis-per-second 1000)
 
 ;; ---------------------------------------------------------------------
 ;; Great-circle math
@@ -59,6 +61,32 @@
 
 (defn meters->nm [m] (/ m meters-per-nm))
 
+(defn knots->mps
+  "Knots (nautical miles per hour) as meters per second."
+  [knots]
+  (/ (* knots meters-per-nm) seconds-per-hour))
+
+(defn destination
+  "The position `distance-m` meters from `from` along the great circle
+  leaving on initial bearing `bearing-deg` (degrees clockwise from true
+  north) — the standard spherical destination formula, the inverse of
+  `distance` + `bearing`. Longitude is normalized to [-180, 180)."
+  [from bearing-deg distance-m]
+  (let [lat1    (deg->rad (:geo/lat from))
+        lon1    (deg->rad (:geo/lon from))
+        bearing (deg->rad bearing-deg)
+        angular (/ distance-m earth-radius-m)
+        lat2    (Math/asin (+ (* (Math/sin lat1) (Math/cos angular))
+                              (* (Math/cos lat1) (Math/sin angular)
+                                 (Math/cos bearing))))
+        lon2    (+ lon1
+                   (Math/atan2 (* (Math/sin bearing) (Math/sin angular)
+                                  (Math/cos lat1))
+                               (- (Math/cos angular)
+                                  (* (Math/sin lat1) (Math/sin lat2)))))]
+    {:geo/lat (rad->deg lat2)
+     :geo/lon (-> (rad->deg lon2) (+ 540) (mod 360) (- 180))}))
+
 (defn bounds
   "The bounding box enclosing a seq of `{:geo/lat _ :geo/lon _}`
   positions, as `{:geo/min-lat _ :geo/max-lat _ :geo/min-lon _
@@ -72,6 +100,47 @@
        :geo/max-lat (reduce max lats)
        :geo/min-lon (reduce min lons)
        :geo/max-lon (reduce max lons)})))
+
+;; ---------------------------------------------------------------------
+;; Dead reckoning — projecting an aircraft between real frames
+;;
+;; Positions arrive at ~1 Hz; the map draws at ~60. Between real frames
+;; the imperative aircraft layer projects each aircraft forward along
+;; its reported track at its reported ground speed, measured from its
+;; LAST REAL observation instant — pure math over reported facts, never
+;; a substitute for them: the next real frame resets the base. The
+;; projection is honest only while the aircraft is fresh: past the
+;; shared stale threshold it holds its last real position, because a
+;; silent plane gliding forever is a lie.
+
+(defn projectable?
+  "True when dead reckoning may honestly move this aircraft at `now-ms`:
+  it has a position to project from, an observation instant to measure
+  elapsed time from, BOTH ground speed and track (absent is not zero —
+  a missing vector grounds the projection), and it is not yet stale
+  (adsb.aircraft/stale-threshold-ms, the shared domain line)."
+  [{:aircraft/keys [position seen-at-ms ground-speed-kt track-deg]
+    :as aircraft}
+   now-ms]
+  (boolean
+    (and position seen-at-ms ground-speed-kt track-deg
+         (not (aircraft/stale? aircraft now-ms)))))
+
+(defn project-aircraft
+  "The aircraft with its position dead-reckoned forward to `now-ms` —
+  along `:aircraft/track-deg` at `:aircraft/ground-speed-kt` from its
+  last real observation (`:aircraft/seen-at-ms`). Returned unchanged
+  when projection would not be honest (`projectable?`), and a `now-ms`
+  before the observation projects nowhere rather than backward."
+  [aircraft now-ms]
+  (if (projectable? aircraft now-ms)
+    (let [{:aircraft/keys [position seen-at-ms ground-speed-kt track-deg]}
+          aircraft
+          elapsed-s  (/ (max 0 (- now-ms seen-at-ms)) millis-per-second)
+          distance-m (* (knots->mps ground-speed-kt) elapsed-s)]
+      (assoc aircraft
+             :aircraft/position (destination position track-deg distance-m)))
+    aircraft))
 
 ;; ---------------------------------------------------------------------
 ;; Domain aircraft -> GeoJSON
@@ -88,8 +157,6 @@
   "The `:altitude` property for an aircraft on the tarmac — distinct from
   a numeric altitude and distinct from an absent one."
   "ground")
-
-(def ^:const millis-per-second 1000)
 
 (defn- stale-property
   "Staleness as a boolean, judged against wall-clock `now-ms`. nil (and so
