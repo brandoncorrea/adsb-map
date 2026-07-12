@@ -156,7 +156,9 @@ contract.
 
 And know this one, because it will *ruin your afternoon*: **Reagent batches
 re-renders on its own scheduler.** Assert too early and you are looking at the
-previous frame, darling. `reagent.core/flush!` forces it.
+previous frame, darling. `reagent.core/flush` forces it — no bang, that is truly
+its name — and under React 18 even `flush` does not force React's commit, so
+async `findBy`/`waitFor` in your test is still the law.
 
 ### 6. Performance Is a Design Constraint, Not an Afterthought
 
