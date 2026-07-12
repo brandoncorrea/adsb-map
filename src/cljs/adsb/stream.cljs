@@ -26,6 +26,14 @@
                          readout (adsb.ui.stats), which dashes absent
                          scalars. Never a position — see adsb.wire.
 
+    :feeder/status       the feeder's health as the server last reported it
+                         (adsb.wire feeder field): :ok | :down | :starting,
+                         or nil before the first frame or when the server
+                         named no status. This is the RAW server claim; the
+                         header's feeder chip reads the DERIVED :feeder/health
+                         sub (adsb.subs), which additionally knows the claim
+                         is only trustworthy while THIS stream is live.
+
   ## Connection state, honestly (the adsb-2yu.2 mandate)
 
   EventSource already reconnects itself after a transient drop: on such an
@@ -79,14 +87,15 @@
 
 (defn data->frame
   "Decode one SSE frame's `data` string (a JSON envelope on the adsb.wire
-  format) into the two things app-db holds: {:picture icao -> aircraft,
-  :stats session stats}. Absent facts stay absent — the codec omits them,
-  it does not default them."
+  format) into the things app-db holds: {:picture icao -> aircraft, :stats
+  session stats, :feeder feeder status}. Absent facts stay absent — the
+  codec omits them, it does not default them."
   [data]
   (let [envelope (-> (js/JSON.parse data)
                      (js->clj :keywordize-keys true))]
     {:picture (wire/wire->picture envelope)
-     :stats   (wire/wire->stats envelope)}))
+     :stats   (wire/wire->stats envelope)
+     :feeder  (wire/wire->feeder envelope)}))
 
 ;; ---------------------------------------------------------------------
 ;; The connection manager. A stateful JS resource, so it lives outside
@@ -143,6 +152,7 @@
     {:db (assoc db
                 :aircraft/picture {}
                 :stats/session {}
+                :feeder/status nil
                 :stream/attempts 0
                 :stream/connection :reconnecting)
      :stream/connect! nil}))
@@ -160,10 +170,11 @@
 (rf/reg-event-db
   :stream/received
   (fn [db [_ data]]
-    (let [{:keys [picture stats]} (data->frame data)]
+    (let [{:keys [picture stats feeder]} (data->frame data)]
       (assoc db
              :aircraft/picture picture
              :stats/session stats
+             :feeder/status (:feeder/status feeder)
              :stream/connection :live))))
 
 ;; An EventSource error. If the browser is still CONNECTING it owns the
@@ -201,6 +212,15 @@
   :stream/connection
   (fn [db _]
     (get db :stream/connection :reconnecting)))
+
+;; The feeder's health as the server last reported it: :ok | :down |
+;; :starting, or nil before the first frame / when the server named no
+;; status. RAW — the header reads the derived :feeder/health (adsb.subs),
+;; which knows this claim is stale the moment our own stream stops being live.
+(rf/reg-sub
+  :feeder/status
+  (fn [db _]
+    (get db :feeder/status)))
 
 ;; The session stats scalars from the latest frame (adsb.wire):
 ;; :stats/max-range-km and :stats/message-rate, each absent until known.

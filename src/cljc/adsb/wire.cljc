@@ -9,10 +9,12 @@
   ## The format
 
   Every SSE data payload — `snapshot` and `update` events alike — is
-  one envelope carrying the FULL current picture and a small stats map:
+  one envelope carrying the FULL current picture, a small stats map, and
+  the feeder's health:
 
       {\"at\": 1720713600000,
        \"stats\": {\"max-range-km\": 312, \"message-rate\": 148},
+       \"feeder\": {\"status\": \"ok\", \"last-success\": 1720713599000},
        \"aircraft\": [<wire aircraft> ...]}
 
   `at` is the epoch-ms instant the frame was built. An update is not a
@@ -27,6 +29,24 @@
                      position; OMITTED when the receiver position is
                      unavailable (no reference to measure from).
       message-rate   feeder messages per second, OMITTED when unknown.
+
+  `feeder` is the ingest side's health (adsb.ingest.poll/status) — the
+  one thing the picture alone cannot tell the browser. A live stream over
+  a dead feeder looks perfectly healthy while the sky silently ages out,
+  so the feeder's reachability rides every frame:
+
+      status         \"ok\" | \"down\" | \"starting\" — an ALLOWLIST of the
+                     three states (adsb.ingest.poll). A status the wire
+                     does not name is OMITTED, so an internal state that
+                     someday appears cannot leak by construction.
+      last-success   epoch-ms of the last successful poll, OMITTED before
+                     the first one (a :starting feeder has none).
+
+  The feeder's :feeder/last-error is DELIBERATELY off the wire. An
+  internal exception message could carry a path or a hostname
+  (docs/validation-boundaries.md, the feeder is untrusted and so are the
+  strings it provokes), and the browser is owed only WHETHER the feeder is
+  reachable, not why it isn't — status and timestamp, never prose.
 
   Aircraft counts are NOT on the wire: the browser derives total and
   positioned counts from the `aircraft` array itself (adsb.ui.header),
@@ -72,7 +92,14 @@
   ALLOWLIST projecting only the two scalars above. max-range-km is a
   DISTANCE, not a position — a radius reveals no bearing, so no antenna
   location can be recovered from it. The receiver's coordinates and every
-  receiver-relative field are excluded by construction.")
+  receiver-relative field are excluded by construction.
+
+  feeder->wire is the same shape of allowlist: only a named status and a
+  timestamp leave, and the free-form error string — the one field that
+  could carry a leaked path or hostname — is excluded by construction, not
+  by enumeration."
+  (:require
+    [clojure.set :as set]))
 
 (defn aircraft->wire
   "Project one domain aircraft onto its wire shape (see the ns
@@ -108,13 +135,41 @@
           max-range-km (assoc :max-range-km max-range-km)
           message-rate (assoc :message-rate message-rate)))
 
+(def ^:private feeder-status->wire
+  "The feeder-status allowlist: each internal status keyword
+  (adsb.ingest.poll) paired with its wire string. A status not named here
+  never reaches the wire and decodes back to nil — the browser treats an
+  unnamed status as unknown."
+  {:starting "starting"
+   :ok       "ok"
+   :down     "down"})
+
+(def ^:private wire->feeder-status
+  (set/map-invert feeder-status->wire))
+
+(defn feeder->wire
+  "Project the feeder status (adsb.ingest.poll/status, :feeder/-namespaced)
+  onto the envelope's `feeder` map. An ALLOWLIST, exactly like stats->wire:
+  only a named status and the last-success timestamp may leave. The
+  free-form :feeder/last-error is EXCLUDED by construction — it could carry
+  a leaked path or hostname, and the wire owes the browser reachability, not
+  prose (see the ns docstring). An unknown or absent status yields no
+  `status` key; a nil last-success is omitted, never zeroed; nil feeder
+  yields an empty map."
+  [{:feeder/keys [status last-success-ms]}]
+  (cond-> {}
+          (feeder-status->wire status) (assoc :status (feeder-status->wire status))
+          last-success-ms (assoc :last-success last-success-ms)))
+
 (defn picture->wire
-  "The picture (icao -> aircraft) and the session `stats` as one frame
-  envelope, built at `at-ms`. Sent as the connect-time snapshot and as
-  every update. `stats` is the server stats map (adsb.stats) or nil."
-  [picture stats at-ms]
+  "The picture (icao -> aircraft), the session `stats`, and the `feeder`
+  health as one frame envelope, built at `at-ms`. Sent as the connect-time
+  snapshot and as every update. `stats` is the server stats map (adsb.stats)
+  or nil; `feeder` is the feeder status map (adsb.ingest.poll/status) or nil."
+  [picture stats feeder at-ms]
   {:at       at-ms
    :stats    (stats->wire stats)
+   :feeder   (feeder->wire feeder)
    :aircraft (mapv aircraft->wire (vals picture))})
 
 (defn wire->aircraft
@@ -144,6 +199,20 @@
     (cond-> {}
             max-range-km (assoc :stats/max-range-km max-range-km)
             message-rate (assoc :stats/message-rate message-rate))))
+
+(defn wire->feeder
+  "The inverse projection: a decoded envelope's `feeder` map back into the
+  feeder-status vocabulary (:feeder/-namespaced) the browser subscribes to.
+  An unnamed or absent status decodes to nil — the browser (adsb.subs)
+  treats that as unknown, never a stale claim; an absent last-success stays
+  absent. The error string is never present to decode: it never rode the
+  wire."
+  [{:keys [feeder]}]
+  (let [{:keys [status last-success]} feeder
+        status-kw (wire->feeder-status status)]
+    (cond-> {}
+            status-kw (assoc :feeder/status status-kw)
+            last-success (assoc :feeder/last-success-ms last-success))))
 
 (defn wire->picture
   "A decoded frame envelope back into the domain picture, icao ->

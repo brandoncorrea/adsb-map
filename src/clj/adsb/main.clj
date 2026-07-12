@@ -120,7 +120,8 @@
                                            :now-ms            now-ms
                                            :messages          (:messages
                                                                 (source/metadata
-                                                                  source))}))})
+                                                                  source))}))
+                             :feeder  #(poll/status poller)})
         http-server       (server/start!
                             {:port           port
                              :feeder-status  #(poll/status poller)

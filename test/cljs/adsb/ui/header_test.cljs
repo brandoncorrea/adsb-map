@@ -1,8 +1,10 @@
 (ns adsb.ui.header-test
   "The app bar, rendered in a real browser under React Testing Library. Proves
-  the two vital signs are honest: the live counts read the picture and update
-  when it turns over, and the connection chip shows each of the stream's three
-  states with a distinct data-state AND a text label (colour alone is not
+  the vital signs are honest: the live counts read the picture and update when
+  it turns over; the STREAM chip shows each of the stream's three states; the
+  FEEDER chip shows the server's reported feeder health while the stream is
+  live and a neutral unknown when it is not (the unknowable rule). Each chip
+  carries a distinct data-state AND a text label (colour alone is not
   accessible)."
   (:require
     ["@testing-library/react" :as rtl]
@@ -27,6 +29,8 @@
   (fn [db [_ picture]] (assoc db :aircraft/picture picture)))
 (rf/reg-event-db :test/set-connection
   (fn [db [_ status]] (assoc db :stream/connection status)))
+(rf/reg-event-db :test/set-feeder
+  (fn [db [_ status]] (assoc db :feeder/status status)))
 
 ;; A positioned aircraft and a never-positioned one: the total counts both,
 ;; the positioned tally only the first.
@@ -80,10 +84,12 @@
           (.finally done)))))
 
 (deftest connection-indicator-shows-each-state
+  ;; The STREAM chip: :down reads "Disconnected" — it measures the
+  ;; browser-to-server stream, not the feeder (which owns "Feeder down").
   (doseq [[state label] [[:live "Live"]
                          [:reconnecting "Reconnecting"]
-                         [:down "Feeder down"]]]
-    (testing (str "the chip honestly reflects " state)
+                         [:down "Disconnected"]]]
+    (testing (str "the stream chip honestly reflects " state)
       (rf-test/run-test-sync
         (rf/dispatch [:test/set-connection state])
         (render-header!)
@@ -92,3 +98,37 @@
               "a distinct state hook the visual pass can style")
           (is (some? (.getByText rtl/screen label))
               "and a text label — never colour alone"))))))
+
+(deftest feeder-indicator-shows-each-state
+  ;; The FEEDER chip, distinct from the stream chip: while the stream is live
+  ;; it reflects the server's reported feeder health.
+  (doseq [[feeder-status label] [[:ok "Feeder OK"]
+                                 [:starting "Feeder starting"]
+                                 [:down "Feeder down"]]]
+    (testing (str "the feeder chip honestly reflects " feeder-status)
+      (rf-test/run-test-sync
+        (rf/dispatch [:test/set-connection :live])
+        (rf/dispatch [:test/set-feeder feeder-status])
+        (render-header!)
+        (let [chip (.getByTestId rtl/screen "feeder-indicator")]
+          (is (= (name feeder-status) (.getAttribute chip "data-state"))
+              "a distinct state hook, separate from the stream chip")
+          (is (some? (.getByText rtl/screen label))
+              "and a text label — never colour alone"))))))
+
+(deftest feeder-indicator-is-unknown-when-stream-not-live
+  ;; The unknowable rule: a feeder claim only means something while the stream
+  ;; is live. When the stream is not live the feeder chip shows a neutral
+  ;; :unknown rather than a stale :ok/:down.
+  (doseq [stream-state [:reconnecting :down]]
+    (testing (str "a stale feeder claim is suppressed while the stream is "
+                  stream-state)
+      (rf-test/run-test-sync
+        (rf/dispatch [:test/set-connection stream-state])
+        (rf/dispatch [:test/set-feeder :ok])   ; a claim from before the drop
+        (render-header!)
+        (let [chip (.getByTestId rtl/screen "feeder-indicator")]
+          (is (= "unknown" (.getAttribute chip "data-state"))
+              "the stale ok is not asserted")
+          (is (some? (.getByText rtl/screen "Feeder unknown"))
+              "the chip reads unknown, not a stale claim"))))))

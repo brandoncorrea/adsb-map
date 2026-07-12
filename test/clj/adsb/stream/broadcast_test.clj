@@ -34,13 +34,15 @@
   "A broadcaster plus the real http server on an ephemeral port.
   Updates every 50 ms by default so tests read frames fast; heartbeats
   effectively off unless a test turns them up."
-  [{:keys [picture stats interval-ms heartbeat-ms]
+  [{:keys [picture stats feeder interval-ms heartbeat-ms]
     :or   {picture      (constantly cast-picture)
            stats        (constantly nil)
+           feeder       (constantly nil)
            interval-ms  50
            heartbeat-ms 60000}}]
   (let [broadcaster (broadcast/start! {:picture      picture
                                        :stats        stats
+                                       :feeder       feeder
                                        :interval-ms  interval-ms
                                        :heartbeat-ms heartbeat-ms})
         srv         (server/start!
@@ -145,6 +147,30 @@
         (let [{:keys [stats]} (frame-data (read-frame! reader))]
           (is (= {:max-range-km 312 :message-rate 148} stats)
               "only the two scalars, never the counts"))
+        (finally
+          (.close reader)
+          (stop-streaming-server! streaming))))))
+
+(deftest feeder-status-rides-the-envelope
+  (testing "the feeder status the broadcaster reads reaches both the snapshot
+            and the update frame as the wire status + timestamp, and the
+            internal error detail never leaves"
+    (let [streaming (start-streaming-server!
+                      {:feeder (constantly
+                                 {:feeder/status          :down
+                                  :feeder/last-success-ms 1720713599000
+                                  :feeder/last-error
+                                  "connect timed out: dietpi.local:8100"})})
+          reader    (open-stream! (:port streaming))]
+      (try
+        (let [snapshot (read-frame! reader)
+              update-f (read-frame! reader)]
+          (doseq [frame [snapshot update-f]]
+            (is (= {:status "down" :last-success 1720713599000}
+                   (:feeder (frame-data frame)))
+                "status and timestamp, nothing more")
+            (is (not (str/includes? (frame-json frame) "dietpi.local"))
+                "the error string — a leak risk — never reaches the wire")))
         (finally
           (.close reader)
           (stop-streaming-server! streaming))))))

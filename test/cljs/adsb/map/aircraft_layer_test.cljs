@@ -29,7 +29,8 @@
 (defn- frame
   [aircraft]
   (let [picture (into {} (map (juxt :aircraft/icao identity)) aircraft)]
-    (js/JSON.stringify (clj->js (wire/picture->wire picture nil 1720713600000)))))
+    (js/JSON.stringify
+      (clj->js (wire/picture->wire picture nil nil 1720713600000)))))
 
 ;; ---------------------------------------------------------------------
 ;; The recording fake map. It captures everything crossing the seam —

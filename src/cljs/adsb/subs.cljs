@@ -34,6 +34,24 @@
     (when icao
       (get picture icao))))
 
+;; The feeder chip's presentation health — distinct from the stream chip's.
+;; The server reports the feeder as :ok/:down/:starting on every frame
+;; (adsb.wire, :feeder/status), but that claim only means anything while OUR
+;; stream to the server is LIVE. The moment the stream is not live we stop
+;; receiving fresh feeder status at all, so the last claim is going stale by
+;; the second; asserting a stale :ok over a dead stream is exactly the lie
+;; this feature exists to prevent. So when the stream is not :live the feeder
+;; is UNKNOWABLE and we derive :unknown — a neutral state the chip shows in
+;; place of a stale claim. nil (no frame yet, even while live) is :unknown too.
+(rf/reg-sub
+  :feeder/health
+  :<- [:feeder/status]
+  :<- [:stream/connection]
+  (fn [[feeder-status stream-connection] _]
+    (if (= :live stream-connection)
+      (or feeder-status :unknown)
+      :unknown)))
+
 ;; Every aircraft in the current picture squawking a distress code, ordered
 ;; stably by icao so the emergency ribbon never reshuffles under the reader
 ;; between frames. Derived from the same :aircraft/picture the map and

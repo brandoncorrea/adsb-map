@@ -44,13 +44,14 @@
 
 (defn- picture-frame!
   "One full-picture SSE frame as of now-ms, carrying the session `stats`
-  (adsb.stats, or nil). The ! is the frame-id counter: snapshot and update
-  frames share it, so ids increase across the whole stream."
-  [{:stream/keys [frame-id]} event-name picture stats now-ms]
+  (adsb.stats, or nil) and the `feeder` health (adsb.ingest.poll/status, or
+  nil). The ! is the frame-id counter: snapshot and update frames share it,
+  so ids increase across the whole stream."
+  [{:stream/keys [frame-id]} event-name picture stats feeder now-ms]
   (sse/event-frame event-name
                    (swap! frame-id inc)
                    (json/generate-string
-                     (wire/picture->wire picture stats now-ms))))
+                     (wire/picture->wire picture stats feeder now-ms))))
 
 ;; ---------------------------------------------------------------------
 ;; The registry and the slow-consumer policy
@@ -87,8 +88,10 @@
   snapshot, then fan the update out to whoever is listening. Stats are
   computed ONLY here, on the single broadcast thread, so their
   accumulator (adsb.stats) has one writer; connect! reuses the cache
-  rather than recomputing off-thread."
-  [{:stream/keys [picture stats last-stats clients] :as broadcaster}]
+  rather than recomputing off-thread. The feeder status is a plain read of
+  the poller's atom, safe from any thread, so it is read fresh per frame
+  rather than cached."
+  [{:stream/keys [picture stats feeder last-stats clients] :as broadcaster}]
   (let [now-ms          (System/currentTimeMillis)
         current-picture (picture now-ms)
         current-stats   (stats current-picture now-ms)]
@@ -96,7 +99,8 @@
     (when (seq @clients)
       (broadcast! broadcaster
                   (picture-frame! broadcaster update-event
-                                  current-picture current-stats now-ms)))))
+                                  current-picture current-stats (feeder)
+                                  now-ms)))))
 
 (defn- broadcast-heartbeat! [broadcaster]
   (broadcast! broadcaster (sse/comment-frame "hb")))
@@ -110,14 +114,14 @@
   the registry for the ticks that follow. The registry entry is removed
   by on-close (the browser went away) or by a failed send
   (drop-and-close)."
-  [{:stream/keys [picture last-stats] :as broadcaster} request]
+  [{:stream/keys [picture last-stats feeder] :as broadcaster} request]
   (http-kit/as-channel
     request
     {:on-open  (fn [channel]
                  (let [now-ms (System/currentTimeMillis)
                        frame  (picture-frame! broadcaster snapshot-event
                                               (picture now-ms) @last-stats
-                                              now-ms)]
+                                              (feeder) now-ms)]
                    (when (and (http-kit/send! channel {:status  200
                                                        :headers sse/headers}
                                               false)
@@ -160,18 +164,24 @@
     :stats         fn of [picture now-ms] returning the session stats map
                    (adsb.stats) for the frame, or nil. Called only on the
                    tick; defaults to (constantly nil) — no stats.
+    :feeder        thunk returning the feeder status map
+                   (adsb.ingest.poll/status) for the frame, or nil. Read
+                   fresh per frame (a plain atom read, thread-safe);
+                   defaults to (constantly nil) — no feeder health.
     :interval-ms   update tick period (default 1000, ~1 Hz)
     :heartbeat-ms  heartbeat comment period (default 15000)
 
   Returns a broadcaster to hand to connect!, client-count, and stop!."
-  [{:keys [picture stats interval-ms heartbeat-ms]
+  [{:keys [picture stats feeder interval-ms heartbeat-ms]
     :or   {stats        (constantly nil)
+           feeder       (constantly nil)
            interval-ms  default-interval-ms
            heartbeat-ms default-heartbeat-ms}}]
   (let [executor    (Executors/newSingleThreadScheduledExecutor
                       broadcast-threads)
         broadcaster {:stream/picture    picture
                      :stream/stats      stats
+                     :stream/feeder     feeder
                      :stream/last-stats (atom nil)
                      :stream/clients    (atom #{})
                      :stream/frame-id   (atom 0)

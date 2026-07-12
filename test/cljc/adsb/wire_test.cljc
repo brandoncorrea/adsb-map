@@ -26,6 +26,19 @@
   no position, no counts (the browser derives those)."
   #{:max-range-km :message-rate})
 
+(def ^:private feeder-wire-keys
+  "Every key feeder->wire may emit — the documented allowlist. A named
+  status and a timestamp; never the internal error string."
+  #{:status :last-success})
+
+(def ^:private server-feeder
+  "A feeder status map (adsb.ingest.poll/status) as picture->wire receives
+  it — carrying the free-form :feeder/last-error, to prove the allowlist
+  drops it (an error message could leak a path or hostname)."
+  {:feeder/status          :down
+   :feeder/last-success-ms 1720713599000
+   :feeder/last-error      "connect timed out: dietpi.local:8100"})
+
 (def ^:private server-stats
   "A server stats map (adsb.stats) as picture->wire receives it — counts
   included, to prove they are dropped, and a receiver-relative field
@@ -91,7 +104,7 @@
   (testing "the whole cast, through the real pipeline, emits only
             allowlisted keys"
     (let [{:keys [aircraft]} (wire/picture->wire picture server-stats
-                                                 captured-at-ms)]
+                                                 server-feeder captured-at-ms)]
       (is (seq aircraft))
       (is (every? wire-keys (mapcat keys aircraft))))))
 
@@ -112,17 +125,61 @@
     (is (= {} (wire/stats->wire nil))
         "no stats at all yields an empty map, not defaulted numbers")))
 
+(deftest feeder->wire-allowlist
+  (testing "only the named status and the timestamp survive — the free-form
+            error string is dropped by construction (it could leak a path)"
+    (let [wire-feeder (wire/feeder->wire server-feeder)]
+      (is (= {:status "down" :last-success 1720713599000} wire-feeder))
+      (is (every? feeder-wire-keys (keys wire-feeder)))
+      (is (not (contains? wire-feeder :last-error)))))
+
+  (testing "each named status maps to its wire string"
+    (is (= "ok" (:status (wire/feeder->wire {:feeder/status :ok}))))
+    (is (= "starting" (:status (wire/feeder->wire {:feeder/status :starting}))))
+    (is (= "down" (:status (wire/feeder->wire {:feeder/status :down})))))
+
+  (testing "a status not on the allowlist yields no status key"
+    (is (= {} (wire/feeder->wire {:feeder/status :exploded})))
+    (is (not (contains? (wire/feeder->wire {:feeder/status :exploded})
+                        :status))))
+
+  (testing "absent facts are omitted, never zeroed"
+    (is (= {:status "starting"}
+           (wire/feeder->wire {:feeder/status :starting}))
+        "a starting feeder has no last-success yet")
+    (is (= {} (wire/feeder->wire nil))
+        "no feeder status at all yields an empty map")))
+
+(deftest wire->feeder-decode
+  (testing "the wire status string decodes back to its keyword"
+    (is (= {:feeder/status :ok}
+           (wire/wire->feeder {:feeder {:status "ok"}})))
+    (is (= {:feeder/status :down :feeder/last-success-ms 1720713599000}
+           (wire/wire->feeder {:feeder {:status "down"
+                                        :last-success 1720713599000}}))))
+
+  (testing "an unnamed or absent status decodes to nil (unknown), never a
+            guess"
+    (is (= {} (wire/wire->feeder {:feeder {:status "exploded"}})))
+    (is (= {} (wire/wire->feeder {:feeder {}})))
+    (is (= {} (wire/wire->feeder {})))))
+
 (deftest picture->wire-envelope
-  (testing "the frame envelope carries the build instant, the stats map,
-            and every aircraft in the picture"
-    (let [{:keys [at stats aircraft]} (wire/picture->wire picture server-stats
-                                                          captured-at-ms)]
+  (testing "the frame envelope carries the build instant, the stats map, the
+            feeder map, and every aircraft in the picture"
+    (let [{:keys [at stats feeder aircraft]}
+          (wire/picture->wire picture server-stats server-feeder
+                              captured-at-ms)]
       (is (= captured-at-ms at))
       (is (= {:max-range-km 312 :message-rate 148} stats))
+      (is (= {:status "down" :last-success 1720713599000} feeder))
       (is (= (count picture) (count aircraft)))))
 
-  (testing "a nil stats argument yields an empty stats map"
-    (is (= {} (:stats (wire/picture->wire picture nil captured-at-ms))))))
+  (testing "nil stats and nil feeder arguments each yield an empty map"
+    (let [{:keys [stats feeder]} (wire/picture->wire picture nil nil
+                                                     captured-at-ms)]
+      (is (= {} stats))
+      (is (= {} feeder)))))
 
 (deftest wire-round-trip
   (testing "a domain aircraft survives the round trip, minus the
@@ -134,18 +191,33 @@
 
   (testing "a decoded frame envelope becomes the picture again, keyed
             by icao"
-    (let [envelope (wire/picture->wire picture server-stats captured-at-ms)]
+    (let [envelope (wire/picture->wire picture server-stats server-feeder
+                                       captured-at-ms)]
       (is (= (update-vals picture #(dissoc % :aircraft/rssi))
              (wire/wire->picture envelope)))))
 
   (testing "the stats scalars survive the round trip, minus the counts
             and receiver-relative fields the wire never carried"
-    (let [envelope (wire/picture->wire picture server-stats captured-at-ms)]
+    (let [envelope (wire/picture->wire picture server-stats server-feeder
+                                       captured-at-ms)]
       (is (= (select-keys server-stats
                           [:stats/max-range-km :stats/message-rate])
              (wire/wire->stats envelope)))))
 
   (testing "an envelope with no stats decodes to an empty stats map"
-    (is (= {} (wire/wire->stats (wire/picture->wire picture nil
+    (is (= {} (wire/wire->stats (wire/picture->wire picture nil nil
                                                     captured-at-ms))))
-    (is (= {} (wire/wire->stats {})))))
+    (is (= {} (wire/wire->stats {}))))
+
+  (testing "the feeder status survives the round trip, minus the error string
+            the wire never carried"
+    (let [envelope (wire/picture->wire picture server-stats server-feeder
+                                       captured-at-ms)]
+      (is (= {:feeder/status          :down
+              :feeder/last-success-ms 1720713599000}
+             (wire/wire->feeder envelope)))))
+
+  (testing "an envelope with no feeder decodes to an empty feeder map"
+    (is (= {} (wire/wire->feeder (wire/picture->wire picture nil nil
+                                                     captured-at-ms))))
+    (is (= {} (wire/wire->feeder {})))))

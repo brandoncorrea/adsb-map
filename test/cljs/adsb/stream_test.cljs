@@ -20,11 +20,12 @@
   "One SSE frame's `data` string: the full picture built from a list of
   domain aircraft, serialized exactly as the server would (adsb.wire ->
   JSON)."
-  ([aircraft] (frame aircraft nil))
-  ([aircraft stats]
+  ([aircraft] (frame aircraft nil nil))
+  ([aircraft stats] (frame aircraft stats nil))
+  ([aircraft stats feeder]
    (let [picture (into {} (map (juxt :aircraft/icao identity)) aircraft)]
      (js/JSON.stringify
-       (clj->js (wire/picture->wire picture stats 1720713600000))))))
+       (clj->js (wire/picture->wire picture stats feeder 1720713600000))))))
 
 (defn- fake-connection []
   (reify source/Connection
@@ -72,6 +73,49 @@
            (frame [fixtures/ups-2717] {:stats/message-rate 90}))
           (is (= {:stats/message-rate 90} @(rf/subscribe [:stats/session]))
               "absent max range is omitted, not defaulted"))))))
+
+(deftest feeder-status-lands-in-app-db
+  (testing "the envelope's feeder status decodes onto :feeder/status, and an
+            absent status stays nil (unknown)"
+    (rf-test/run-test-sync
+      (let [!cbs (atom nil)]
+        (with-redefs [source/connect! (fn [_url cbs] (reset! !cbs cbs) (fake-connection))
+                      stream/schedule-reconnect! (fn [_ms] nil)]
+          (rf/dispatch [:stream/start])
+          ((:on-frame @!cbs)
+           (frame [fixtures/ups-2717] nil {:feeder/status          :ok
+                                           :feeder/last-success-ms 1720713599000}))
+          (is (= :ok @(rf/subscribe [:feeder/status]))
+              "the reported status lands, as a keyword")
+          (is (= :ok @(rf/subscribe [:feeder/health]))
+              "and the derived health agrees while the stream is live")
+
+          ;; A later frame the server sends with no named status: the raw
+          ;; status drops to nil and the derived health goes :unknown.
+          ((:on-frame @!cbs) (frame [fixtures/ups-2717]))
+          (is (nil? @(rf/subscribe [:feeder/status]))
+              "an absent status is nil, never a stale keyword")
+          (is (= :unknown @(rf/subscribe [:feeder/health]))))))))
+
+(deftest feeder-health-is-unknowable-off-a-live-stream
+  (testing "a feeder claim is only trustworthy while the stream is live: once
+            the stream drops, the derived health goes :unknown rather than
+            asserting a stale :ok"
+    (rf-test/run-test-sync
+      (let [!cbs (atom nil)]
+        (with-redefs [source/connect! (fn [_url cbs] (reset! !cbs cbs) (fake-connection))
+                      stream/schedule-reconnect! (fn [_ms] nil)]
+          (rf/dispatch [:stream/start])
+          ((:on-open @!cbs))
+          ((:on-frame @!cbs) (frame [fixtures/ups-2717] nil {:feeder/status :ok}))
+          (is (= :ok @(rf/subscribe [:feeder/health])) "live: the claim stands")
+
+          ;; The stream drops repeatedly and goes :down; the last feeder claim
+          ;; is now stale, so the derived health must not keep asserting it.
+          (dotimes [_ 4] ((:on-error @!cbs) :closed))
+          (is (= :down @(rf/subscribe [:stream/connection])))
+          (is (= :unknown @(rf/subscribe [:feeder/health]))
+              "a stale :ok over a dead stream is suppressed"))))))
 
 (deftest update-replaces-wholesale
   (testing "an update is a full picture, never a merge: a dropped aircraft is gone"
