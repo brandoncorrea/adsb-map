@@ -330,12 +330,28 @@ In order, because risk fronts the queue:
    selection panel, NOTAM strip (stamped tab, zero motion), compass-pencil
    selection ring (a map marker that draws itself in), legend + stats as
    the margin column, the Stack re-tokened, easing per §6, and the label
-   voice decided (§3). **Still owed: the §7 map annotations** — the red-pen
-   double ellipse, the MAYDAY stamp, and the off-screen edge arrow — filed
-   as their own bead rather than half-shipped here.
-6. ~~File separate prototype beads~~ **Done — and both verdicts are in**:
+   voice decided (§3).
+6. ~~**Still owed: the §7 map annotations.**~~ **Done (adsb-bb1)** — the
+   red-pen double ellipse, the MAYDAY stamp, and the off-screen edge arrow
+   ship in `adsb.map.emergency`, filed as their own bead rather than
+   half-shipped inside the chrome pass. Reviewed on the chart by the
+   Overseer, 2026-07-12. They follow the selection ring's pattern —
+   MapLibre markers driven by a `track!` outside React, so the chart's
+   annotations never cost a render — and they *compose with* the GeoJSON
+   layer's large red glyph rather than replacing it. Two constraints the
+   code holds and this document should not lose: the stamp's copy comes
+   from `adsb.ui.alert/emergency-words`, the same source the NOTAM strip
+   prints, **so chart and chrome can never disagree about what is
+   happening**; and the edge arrow, when clicked, fires the ordinary
+   `[:aircraft/select icao]` contract — it opens the index card and moves
+   the camera **not one inch** (Q13c).
+7. ~~File separate prototype beads~~ **Done — and both verdicts are in**:
    the instinct channel is perspective size (§8, shadow rejected); the Stack
    (§9) is built and load-bearing.
-7. ~~File the typography bake-off bead~~ **Done — picked and shipped**:
+8. ~~File the typography bake-off bead~~ **Done — picked and shipped**:
    the §5 mix is live in `app.css`; the `#/preview` fitting room was
    cleared out after the picks (in git history if ever needed again).
+
+**Nothing in this section is outstanding.** The direction as written is the
+direction as built; where the two disagreed, the disagreement is recorded
+above rather than quietly reconciled.
