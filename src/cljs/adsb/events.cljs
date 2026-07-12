@@ -39,6 +39,30 @@
     (dissoc db :aircraft/selected-icao)))
 
 ;; ---------------------------------------------------------------------
+;; Aircraft hover — selection's transient sibling.
+;;
+;; Same trick, lighter lifecycle: an ICAO STRING under :aircraft/hovered-icao
+;; while the pointer rests on an aircraft's tick in the Stack (adsb.ui.stack),
+;; cleared the moment it leaves. Unlike selection it is never pruned by
+;; :ui/tick — mouse-out clears it, and every reader joins it against the live
+;; picture anyway, so a dangling hover resolves to nothing rather than a lie.
+;;
+;; The map layer does not consume this yet: highlighting the hovered aircraft
+;; ON the map (feature-state or a highlight property) is a later wave — the
+;; state and the contract land here first so that wave has something settled
+;; to read. See the follow-up note on bead adsb-dgb.9.
+
+(rf/reg-event-db
+  :aircraft/hover
+  (fn [db [_ icao]]
+    (assoc db :aircraft/hovered-icao icao)))
+
+(rf/reg-event-db
+  :aircraft/clear-hover
+  (fn [db _]
+    (dissoc db :aircraft/hovered-icao)))
+
+;; ---------------------------------------------------------------------
 ;; The coarse UI clock tick (adsb.ui.aircraft-panel/start-clock!).
 ;;
 ;; It carries `now-ms` as an argument — the clock stays at the UI edge and

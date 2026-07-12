@@ -1,6 +1,63 @@
-/* App shell — NEUTRAL PLACEHOLDER styling only.
-   The design direction (adsb-bvi.5) is not chosen; this commits to none of
-   the proposed looks. Full-viewport map, a minimal header bar, nothing more. */
+/* App shell — THE SECTIONAL, day & night (docs/design-direction.md).
+   The chrome is chart marginalia: paper panels, ink rules, mono data.
+
+   ── The custom-properties layer (adsb-dgb.7) ────────────────────────
+   Every colour the chrome uses is a variable below, defined twice: the
+   day edition on :root, the night edition under prefers-color-scheme.
+   This is the CSS half of the two-edition mechanism; the MapLibre half
+   (basemap + aircraft ink) lives in adsb.map.theme / adsb.map.basemap /
+   adsb.map.style, keyed off the SAME media query. The hexes mirror the
+   §2 palette table — change them together, in both places.
+
+   Typography is the §5 PLACEHOLDER system stack (serif display, mono
+   data); the bake-off bead settles it later. */
+
+:root {
+  --paper:        #F5EFDF; /* map paper (also the pre-tile backdrop) */
+  --paper-chrome: #FBF6E8; /* panels, header — a lighter leaf */
+  --paper-veil:   rgba(251, 246, 232, 0.92); /* panel over the chart */
+  --paper-halo:   rgba(251, 246, 232, 0.7);  /* hairline halos on paper */
+  --ink:          #2C2A24;
+  --faded-ink:    #8B8471;
+  --contour:      #D9C99F;
+  --magenta:      #C0447C;
+  --aero:         #3D5E8C;
+  --emergency:    #CE2029;
+  --on-emergency: #FBF3E4; /* text on the emergency red */
+  --alt-ground:   #8A8374; /* aircraft states — mirror adsb.map.style */
+  --alt-unknown:  #9A937F;
+  --ok:           #5F7F3F; /* connection: live */
+  --warn:         #B07A24; /* connection: reconnecting */
+  --rule:         rgba(44, 42, 36, 0.3);   /* hairline ink rules */
+  --rule-strong:  rgba(44, 42, 36, 0.5);
+  --rule-faint:   rgba(44, 42, 36, 0.08);
+  --serif: "Iowan Old Style", "Palatino", Georgia, serif;
+  --sans:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper:        #151B26;
+    --paper-chrome: #1B2330;
+    --paper-veil:   rgba(27, 35, 48, 0.92);
+    --paper-halo:   rgba(27, 35, 48, 0.7);
+    --ink:          #E9E2CE;
+    --faded-ink:    #8D96A8;
+    --contour:      #2E3A49;
+    --magenta:      #E06A9F;
+    --aero:         #7FA3D4;
+    --emergency:    #FF5A4D;
+    --on-emergency: #1C1210;
+    --alt-ground:   #6E7686;
+    --alt-unknown:  #7C8494;
+    --ok:           #8FBF6F;
+    --warn:         #D9A648;
+    --rule:         rgba(233, 226, 206, 0.3);
+    --rule-strong:  rgba(233, 226, 206, 0.5);
+    --rule-faint:   rgba(233, 226, 206, 0.08);
+  }
+}
 
 html,
 body,
@@ -10,7 +67,9 @@ body,
 }
 
 body {
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--sans);
+  background: var(--paper); /* the paper shows before the first tile */
+  color: var(--ink);
 }
 
 /* The shell fills the viewport; the map is its full-bleed background. */
@@ -23,9 +82,11 @@ body {
 .adsb-map {
   position: absolute;
   inset: 0;
+  background: var(--paper); /* the chart's own paper while tiles load */
 }
 
-/* Thin header bar floating over the map. Placeholder chrome only. */
+/* Thin header bar floating over the map — the chart's title block:
+   paper, one ink rule, serif title, mono vitals. */
 .adsb-header {
   position: absolute;
   top: 0;
@@ -37,27 +98,32 @@ body {
   gap: 16px;
   height: 44px;
   padding: 0 16px;
-  background: rgba(20, 22, 26, 0.85);
-  color: #f5f6f7;
+  background: var(--paper-chrome);
+  border-bottom: 1px solid var(--ink);
+  color: var(--ink);
   font-size: 13px;
+  box-sizing: border-box;
 }
 
 .adsb-title {
-  font-size: 15px;
+  font-family: var(--serif);
+  font-size: 16px;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
 }
 
 /* Live vital signs. The counts sit next to the title; the connection chip is
    pushed to the far right so the map's health is always in the same place. */
 .adsb-counts {
-  color: #cdd2d8;
+  color: var(--faded-ink);
+  font-family: var(--mono);
+  font-size: 12px;
 }
 
 .adsb-count-total,
 .adsb-count-positioned {
   font-weight: 600;
-  color: #f5f6f7;
+  color: var(--ink);
 }
 
 .adsb-count-sep {
@@ -65,14 +131,16 @@ body {
 }
 
 .adsb-clock {
-  color: #aab2bd;
+  color: var(--faded-ink);
+  font-family: var(--mono);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
 }
 
 /* Connection chip — distinct per state (a dot colour AND a text label; colour
    alone is not accessible), pushed right. :down is a filled red alarm so a
-   frozen map cannot read as a live one. */
+   frozen map cannot read as a live one. Drawn like a stamped chart note. */
 .adsb-conn {
   margin-left: auto;
   display: inline-flex;
@@ -83,6 +151,9 @@ body {
   font-weight: 600;
   line-height: 1.4;
   border: 1px solid transparent;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
 }
 
 .adsb-conn-dot {
@@ -90,29 +161,30 @@ body {
   height: 8px;
   border-radius: 50%;
   background: currentColor;
+  border: 1px solid var(--rule-strong);
+  box-sizing: border-box;
   flex: none;
 }
 
 .adsb-conn-live {
-  color: #3ddc84;
-  background: rgba(61, 220, 132, 0.12);
-  border-color: rgba(61, 220, 132, 0.4);
+  color: var(--ok);
+  border-color: var(--rule);
 }
 
 .adsb-conn-reconnecting {
-  color: #f0b429;
-  background: rgba(240, 180, 41, 0.12);
-  border-color: rgba(240, 180, 41, 0.4);
+  color: var(--warn);
+  border-color: var(--warn);
 }
 
 .adsb-conn-down {
-  color: #fff;
-  background: #d21e1e;
-  border-color: #ff5a5a;
+  color: var(--on-emergency);
+  background: var(--emergency);
+  border-color: var(--emergency);
 }
 
-/* Altitude legend — a corner overlay, tucked bottom-left, out of the header's
-   way. Static chrome; every swatch is painted from an adsb.map.style constant. */
+/* Altitude legend — chart-key marginalia, tucked bottom-left, out of the
+   header's way. Every swatch is painted from the adsb.map.style palette of
+   the CURRENT edition (adsb.ui.legend derefs the theme ratom). */
 .adsb-legend {
   position: absolute;
   left: 16px;
@@ -122,19 +194,20 @@ body {
   gap: 20px;
   max-width: calc(100vw - 32px);
   padding: 10px 14px;
-  background: rgba(20, 22, 26, 0.85);
-  color: #f5f6f7;
-  border-radius: 6px;
+  background: var(--paper-veil);
+  color: var(--ink);
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
   font-size: 12px;
 }
 
 .adsb-legend-heading {
   margin: 0 0 6px;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #aab2bd;
+  letter-spacing: 0.08em;
+  color: var(--faded-ink);
 }
 
 .adsb-legend-list {
@@ -148,134 +221,33 @@ body {
   align-items: center;
   gap: 8px;
   line-height: 1.7;
+  font-family: var(--mono);
+  font-size: 11px;
 }
 
 .adsb-legend-swatch {
   width: 14px;
   height: 14px;
-  border-radius: 3px;
+  border-radius: 2px;
   flex: none;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+  box-shadow: inset 0 0 0 1px var(--rule);
 }
 
 .adsb-legend-label {
   white-space: nowrap;
 }
 
-/* Aircraft roster — a scrollable list docked top-right, below the header, over
-   the map. NEUTRAL PLACEHOLDER only: structure and legibility, no committed
-   look. The visual pass is bead adsb-dgb.5. */
-.adsb-sidebar {
-  position: absolute;
-  top: 44px;
-  right: 0;
-  bottom: 0;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  width: 260px;
-  max-width: 80vw;
-  background: rgba(20, 22, 26, 0.85);
-  color: #f5f6f7;
-  font-size: 13px;
-}
-
-.adsb-sidebar-header {
-  padding: 8px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.adsb-sidebar-count {
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.adsb-sidebar-sort,
-.adsb-sidebar-filters {
-  display: flex;
-  gap: 6px;
-  padding: 8px 12px;
-}
-
-.adsb-sort-btn,
-.adsb-filter-btn {
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  background: transparent;
-  color: #cdd2d8;
-  font: inherit;
-  cursor: pointer;
-}
-
-.adsb-sort-btn-active,
-.adsb-filter-btn-active {
-  color: #14161a;
-  background: #f5f6f7;
-  border-color: #f5f6f7;
-  font-weight: 600;
-}
-
-.adsb-sidebar-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  overflow-y: auto;
-  flex: 1;
-}
-
-.adsb-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  cursor: pointer;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.adsb-row:hover {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.adsb-row-selected {
-  background: rgba(255, 255, 255, 0.14);
-}
-
-.adsb-row-call {
-  font-weight: 600;
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.adsb-row-alt,
-.adsb-row-speed {
-  font-variant-numeric: tabular-nums;
-  color: #cdd2d8;
-}
-
-.adsb-row-badges {
-  display: inline-flex;
-  gap: 4px;
-}
-
-.adsb-sidebar-empty {
-  padding: 12px;
-  color: #aab2bd;
-}
-
-/* Emergency ribbon — the loudest chrome the app owns (adsb-dgb.4). Sits
-   directly under the 44px header, spanning the shell, so an active distress
-   squawk is impossible to miss. Every emergency STACKS as its own row rather
-   than cycling behind a timer. NEUTRAL PLACEHOLDER: an unmissable red is
-   functional, not the final look (visual pass adsb-dgb.5). */
+/* Emergency ribbon — the loudest chrome the app owns (adsb-dgb.4): the
+   NOTAM strip of the direction (§7). Sits directly under the 44px header,
+   spanning the shell, so an active distress squawk is impossible to miss.
+   Every emergency STACKS as its own row rather than cycling behind a
+   timer. Ink does not blink — red, plain language, no strobe. */
 .adsb-alerts {
   position: absolute;
   top: 44px;
   left: 0;
-  right: 260px;             /* clear of the roster docked top-right */
-  z-index: 2;               /* above the map and the sidebar's top edge */
+  right: 76px;              /* clear of the Stack on the right edge */
+  z-index: 2;               /* above the map and the Stack's top edge */
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -289,17 +261,19 @@ body {
   width: 100%;
   padding: 8px 16px;
   border: none;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.35);
-  background: #c81e1e;
-  color: #fff;
+  border-bottom: 1px solid var(--rule);
+  background: var(--emergency);
+  color: var(--on-emergency);
   font: inherit;
+  font-family: var(--mono);
   font-size: 13px;
   text-align: left;
   cursor: pointer;
+  box-sizing: border-box;
 }
 
 .adsb-alert:hover {
-  background: #e02424;
+  filter: brightness(1.08);
 }
 
 .adsb-alert-name {
@@ -324,17 +298,19 @@ body {
 .adsb-badge {
   display: inline-block;
   padding: 1px 6px;
-  border-radius: 3px;
+  border-radius: 2px;
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
-  background: rgba(255, 255, 255, 0.14);
-  color: #f5f6f7;
+  background: transparent;
+  border: 1px solid var(--rule);
+  color: var(--faded-ink);
 }
 
 .adsb-badge-emergency {
-  background: #c81e1e;
-  color: #fff;
+  background: var(--emergency);
+  border-color: var(--emergency);
+  color: var(--on-emergency);
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
@@ -344,3 +320,311 @@ body {
   flex-wrap: wrap;
   gap: 4px;
 }
+
+/* =====================================================================
+   THE STACK (adsb-dgb.9) — BEGIN BOUNDED SECTION
+   The live flight-level ruler on the map's edge (design direction §9).
+   The ruler's FILL is painted inline by adsb.ui.stack from the same
+   adsb.map.style altitude stops the map uses — never duplicated here.
+   Each tick/graduation carries its place on the ALTITUDE AXIS as the
+   unitless --alt-pct custom property; this stylesheet maps that axis to
+   `bottom` (desktop, vertical) or `left` (phone, horizontal) — same DOM,
+   same semantics, rotated geometry (Q9c). Ink/paper come from the
+   custom-properties layer above, so the Stack prints in both editions
+   (adsb-dgb.7) without knowing the theme exists.
+   ===================================================================== */
+
+.adsb-stack {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: 76px;
+  padding: 12px 8px 8px;
+  background: var(--paper-veil);
+  border-left: 1px solid var(--rule);
+  color: var(--ink);
+  overflow: visible;                       /* labels spill onto the chart */
+  box-sizing: border-box;
+}
+
+/* The ruler column — the gradient fill (inline style) with the airborne
+   ticks and flight-level graduations positioned along it. */
+.adsb-stack-ruler {
+  position: relative;
+  flex: 1;
+  width: 22px;
+  margin-left: auto;                       /* labels live to its left */
+  border: 1px solid var(--rule-strong);
+}
+
+/* Flight-level graduations — dashed ink rules across the fill. */
+.adsb-stack-grad {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--alt-pct, 0) * 1%);
+  border-top: 1px dashed var(--rule-strong);
+  pointer-events: none;
+}
+
+.adsb-stack-grad-label {
+  position: absolute;
+  right: calc(100% + 5px);
+  transform: translateY(-50%);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: var(--faded-ink);
+  white-space: nowrap;
+}
+
+/* A tick — one aircraft, at its true altitude. `bottom` (and `left` on
+   phone) TRANSITIONS at just under the 1 Hz feeder cadence, so a
+   climbing aircraft's tick drifts up the ruler instead of jumping. */
+.adsb-stack-tick {
+  cursor: pointer;
+  transition: bottom 0.9s linear, left 0.9s linear;
+}
+
+.adsb-stack-tick:focus-visible {
+  outline: 2px solid var(--magenta);
+  outline-offset: 1px;
+}
+
+/* Airborne: an ink bar across the ruler with a hairline paper halo so it
+   survives every band of the gradient. Centered on its altitude. */
+.adsb-stack-ruler .adsb-stack-tick {
+  position: absolute;
+  left: -3px;
+  right: -3px;
+  height: 3px;
+  bottom: calc(var(--alt-pct, 0) * 1%);
+  transform: translateY(50%);
+  background: var(--ink);
+  box-shadow: 0 0 0 1px var(--paper-halo);
+}
+
+.adsb-stack-ruler .adsb-stack-tick:hover {
+  height: 5px;
+  z-index: 2;
+}
+
+/* Selected: the magenta accent, prominent. */
+.adsb-stack-tick-selected {
+  z-index: 2;
+}
+
+.adsb-stack-ruler .adsb-stack-tick-selected {
+  height: 5px;
+  background: var(--magenta);
+  box-shadow: 0 0 0 1px var(--paper-veil);
+}
+
+/* Emergency: red, hatched, pinned prominent — ink that never blinks (§7). */
+.adsb-stack-tick-emergency {
+  z-index: 3;
+}
+
+.adsb-stack-ruler .adsb-stack-tick-emergency {
+  height: 7px;
+  background: repeating-linear-gradient(
+    45deg,
+    var(--emergency) 0,
+    var(--emergency) 3px,
+    var(--paper-veil) 3px,
+    var(--paper-veil) 5px
+  );
+  box-shadow: 0 0 0 1px var(--emergency);
+}
+
+/* The name beside a tick — shown on hover, selection, and always for an
+   emergency. Identity lives on the Stack; the map stays glyphs-only. */
+.adsb-stack-tick-label {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 1px 5px;
+  background: var(--paper-chrome);
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--ink);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.adsb-stack-tick-emergency .adsb-stack-tick-label {
+  background: var(--emergency);
+  border-color: var(--emergency);
+  color: var(--on-emergency);
+  font-weight: 700;
+}
+
+/* The shelves at the ruler's foot: the surface band (ground cluster) and
+   the small holding area for aircraft that never reported an altitude —
+   absent is not zero, so they are placed NOWHERE on the scale. */
+.adsb-stack-shelf {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  min-height: 16px;
+  margin-top: 8px;
+  padding: 4px 4px 4px 6px;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+}
+
+.adsb-stack-shelf-label {
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  color: var(--faded-ink);
+  margin-right: 2px;
+}
+
+/* MapLibre pins its attribution to the map's bottom-right — under the
+   Stack. Attribution must stay readable (OpenFreeMap's terms flow through
+   it), so the control corner shifts clear of the ruler instead of hiding
+   beneath it; the phone rule below lifts it above the recumbent Stack. */
+.maplibregl-ctrl-bottom-right {
+  right: 76px;
+}
+
+/* Shelf ticks cluster as dots — grouped, never ranked. */
+.adsb-stack-shelf .adsb-stack-tick {
+  position: relative;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--alt-ground);
+  box-shadow: 0 0 0 1px var(--paper-halo);
+}
+
+.adsb-stack-unknown .adsb-stack-tick {
+  background: var(--alt-unknown);
+}
+
+.adsb-stack-shelf .adsb-stack-tick-selected {
+  background: var(--magenta);
+}
+
+.adsb-stack-shelf .adsb-stack-tick-emergency {
+  background: var(--emergency);
+  box-shadow: 0 0 0 1px var(--emergency), 0 0 0 2px var(--paper-veil);
+}
+
+.adsb-stack-shelf .adsb-stack-tick-label {
+  right: auto;
+  top: auto;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+}
+
+/* Phone: the ruler lies down along the bottom edge — identical semantics,
+   rotated geometry. --stack-axis flips the gradient; --alt-pct maps to
+   `left` instead of `bottom`. Neither stage degrades (Q9c). */
+@media (max-width: 640px) {
+  .adsb-stack {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    height: 76px;
+    flex-direction: row;
+    align-items: stretch;
+    padding: 22px 10px 8px;
+    border-left: none;
+    border-top: 1px solid var(--rule);
+  }
+
+  .adsb-stack-ruler {
+    --stack-axis: to right;
+    flex: 1;
+    width: auto;
+    height: 22px;
+    margin-left: 0;
+    align-self: flex-end;
+  }
+
+  .adsb-stack-grad {
+    left: calc(var(--alt-pct, 0) * 1%);
+    right: auto;
+    top: 0;
+    bottom: 0;
+    border-top: none;
+    border-left: 1px dashed var(--rule-strong);
+  }
+
+  .adsb-stack-grad-label {
+    right: auto;
+    left: 0;
+    top: auto;
+    bottom: calc(100% + 3px);
+    transform: none;
+  }
+
+  .adsb-stack-ruler .adsb-stack-tick {
+    left: calc(var(--alt-pct, 0) * 1%);
+    right: auto;
+    top: -3px;
+    bottom: -3px;
+    width: 3px;
+    height: auto;
+    transform: translateX(-50%);
+  }
+
+  .adsb-stack-ruler .adsb-stack-tick:hover {
+    height: auto;
+    width: 5px;
+  }
+
+  .adsb-stack-ruler .adsb-stack-tick-selected {
+    height: auto;
+    width: 5px;
+  }
+
+  .adsb-stack-ruler .adsb-stack-tick-emergency {
+    height: auto;
+    width: 7px;
+  }
+
+  .adsb-stack-tick-label {
+    right: auto;
+    top: auto;
+    left: 50%;
+    bottom: calc(100% + 6px);
+    transform: translateX(-50%);
+  }
+
+  .adsb-stack-shelf {
+    margin-top: 0;
+    margin-left: 8px;
+    min-width: 34px;
+    align-content: center;
+  }
+
+  /* The bottom edge is the Stack's now: the map attribution and the
+     legend both step up out of its lane. */
+  .maplibregl-ctrl-bottom-right {
+    right: 0;
+    bottom: 76px;
+  }
+
+  .adsb-legend {
+    bottom: 132px;          /* above the Stack AND the lifted attribution */
+  }
+}
+
+/* =====================================================================
+   THE STACK — END BOUNDED SECTION
+   ===================================================================== */

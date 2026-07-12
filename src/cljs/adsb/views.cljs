@@ -9,7 +9,7 @@
     [adsb.ui.alert :as alert]
     [adsb.ui.header :as header]
     [adsb.ui.legend :as legend]
-    [adsb.ui.sidebar :as sidebar]
+    [adsb.ui.stack :as stack]
     [adsb.ui.stats :as stats]))
 
 (defn app-root
@@ -31,8 +31,9 @@
    ;; Numbers-only session readout in the same corner — max range and
    ;; message rate, both scalars, never a position (adsb.ui.stats).
    [stats/stats-readout]
-   ;; The aircraft roster — the same picture the map reads, as a sortable,
-   ;; filterable, click-to-select list (adsb.ui.sidebar).
-   [sidebar/sidebar]
+   ;; The Stack — the live altitude ruler on the map's edge, replacing the
+   ;; sidebar outright (design direction §9: there is no list). Ticks at
+   ;; true altitudes, hover-to-highlight, click-to-select (adsb.ui.stack).
+   [stack/stack]
    ;; Renders nothing until an aircraft is selected (adsb.ui.aircraft-panel).
    [aircraft-panel/aircraft-panel]])

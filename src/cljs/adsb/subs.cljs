@@ -15,6 +15,15 @@
   (fn [db _]
     (:aircraft/selected-icao db)))
 
+;; The hovered aircraft's icao, or nil — set while the pointer rests on a
+;; tick in the Stack (adsb.ui.stack), cleared on mouse-out. Stored as an
+;; identity for the same reason selection is. The map layer will consume
+;; this in a later wave to light the hovered aircraft on the chart.
+(rf/reg-sub
+  :aircraft/hovered-icao
+  (fn [db _]
+    (:aircraft/hovered-icao db)))
+
 ;; The coarse UI wall clock (ms), stamped by :ui/tick. nil before the first
 ;; tick — the panel then dashes seen-age rather than inventing one.
 (rf/reg-sub
@@ -55,7 +64,7 @@
 ;; Every aircraft in the current picture squawking a distress code, ordered
 ;; stably by icao so the emergency ribbon never reshuffles under the reader
 ;; between frames. Derived from the same :aircraft/picture the map and
-;; sidebar read — one source of truth, filtered by the domain predicate,
+;; the Stack read — one source of truth, filtered by the domain predicate,
 ;; never a second copy of the sky. Empty (and so the ribbon is absent) when
 ;; the sky is calm.
 (rf/reg-sub

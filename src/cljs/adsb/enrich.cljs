@@ -38,8 +38,8 @@
 
   Lookups (`:enrich/record`) are pure and NEVER fetch — a subscription with a
   side effect is a bug. Fetching is driven by `:enrich/ensure`, which the
-  detail panel dispatches for the selected aircraft. The sidebar reads only
-  what is already cached, so listing hundreds of rows costs no network."
+  detail panel dispatches for the selected aircraft. Everything else reads
+  only what is already cached, so a busy sky costs no network."
   (:require
     [clojure.string :as str]
     [re-frame.core :as rf]))
@@ -162,8 +162,8 @@
 ;; ---------------------------------------------------------------------
 ;; Subscriptions.
 
-;; The whole shard cache — the sidebar subscribes once and does a pure
-;; record-for lookup per row, rather than one subscription per aircraft.
+;; The whole shard cache — a listing surface subscribes once and does a
+;; pure record-for lookup per entry, not one subscription per aircraft.
 (rf/reg-sub
   :enrich/shards
   (fn [db _]
