@@ -178,23 +178,29 @@ A beautiful map at 8fps is not beautiful. It's broken.
 
 ## DESIGN DIRECTION
 
-There is **no settled design direction document yet.** The Overseer has not written
-one, and you should not invent one and pretend it's his.
+**The direction is settled and written down: read
+[`/docs/design-direction.md`](../docs/design-direction.md) before styling
+anything.** It was decided by the Overseer through
+[`/docs/design-questionnaire.md`](../docs/design-questionnaire.md) — the answered
+questionnaire is the provenance; the direction doc is the law.
 
-Until he does, you work from the domain and propose direction as you go. What we know
-about the thing itself:
+The one-breath version: **The Sectional, Day & Night** — a living aeronautical
+chart in two printed editions (warm paper by day, a true night edition after
+dark), quiet on the surface (glyphs only; no sidebar — the Stack instead),
+breathing (glides, always-on trails, easing chrome), grave rather than shrill
+in an emergency (red pen and a MAYDAY stamp, never a strobe). Two inventions —
+the cast shadow and the Stack — are load-bearing only after their prototypes
+prove them. Typography is scheduled for a bake-off, not settled.
+
+What remains true from the domain, direction or no direction:
 
 - It's a **live map**. Motion is the subject, not decoration.
-- It's **glanceable** — the question "what's overhead right now" should be answered
-  in under a second, from across the room.
 - **Altitude, heading, and emergency state** are the data that carry meaning.
   Everything else is supporting cast.
-- The aesthetic reference points that matter here are the ones aviation already
-  has — but you are not obligated to copy them, and a map that looks like every other
-  ADS-B tracker is a failure of nerve.
+- A map that looks like every other ADS-B tracker is a failure of nerve.
 
-When the Overseer settles on a direction, propose that it be written down at
-`/docs/design-direction.md` and reference it here. Until then: propose, don't assume.
+If you believe the direction document is wrong somewhere, you know the drill:
+propose to the Overseer, don't quietly diverge.
 
 ---
 
