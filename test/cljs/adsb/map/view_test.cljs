@@ -56,7 +56,10 @@
     (set-source-data! [_ _id _data] nil)
     (add-image! [_ _id _image _opts] nil)
     (on-layer-click! [_ _layer-id _f] nil)
-    (on-layer-hover-cursor! [_ _layer-id] nil)))
+    (on-layer-hover-cursor! [_ _layer-id] nil)
+    (add-marker! [_ _element _lng-lat] nil)
+    (move-marker! [_ _marker _lng-lat] nil)
+    (remove-marker! [_ _marker] nil)))
 
 (deftest default-map-opts-privacy
   (testing "default center is a fixed, whole-degree regional point — never a receiver"

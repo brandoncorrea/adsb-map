@@ -158,25 +158,35 @@
     (preview/set-dimension! :edition "day")
     (is (= :day @theme/!theme) "and day flips it straight back")))
 
+(deftest the-page-opens-on-the-crowned-mix
+  (testing "each dimension's default is the §5 winner — the fitting room
+            opens on what actually ships (adsb-dgb.5)"
+    (is (= {:typography "annotation"
+            :scale      "major-13"
+            :spacing    "compact-4"
+            :palette    "wine-pen"
+            :edition    "day"}
+           preview/default-mix))))
+
 (deftest clicking-an-option-switches-the-live-page
   (rf/dispatch-sync [:preview/seed])
   (render-page!)
-  (is (= "marginalia" (.getAttribute (root-el) "data-typography"))
-      "the page opens on the default")
-  (.click rtl/fireEvent (.getByTestId rtl/screen "opt:typography:annotation"))
+  (is (= "annotation" (.getAttribute (root-el) "data-typography"))
+      "the page opens on the default — the crowned mix")
+  (.click rtl/fireEvent (.getByTestId rtl/screen "opt:typography:marginalia"))
   (async done
     (-> (rtl/waitFor
           (fn []
-            (when-not (= "annotation"
+            (when-not (= "marginalia"
                          (.getAttribute (root-el) "data-typography"))
               (throw (js/Error. "root not re-stamped yet")))))
         (.then (fn [_]
-                 (is (= "annotation"
+                 (is (= "marginalia"
                         (.getAttribute (root-el) "data-typography"))
                      "a click re-stamps the live page root")
                  (is (= "true" (.getAttribute
                                  (.getByTestId
-                                   rtl/screen "opt:typography:annotation")
+                                   rtl/screen "opt:typography:marginalia")
                                  "aria-pressed"))
                      "and the pressed state follows the pick")))
         (.catch (fn [e] (is false (str "the click never landed: " e))))

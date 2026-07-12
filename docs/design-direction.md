@@ -67,7 +67,7 @@ one table, three media, change them together.
 | Contour lines | `#D9C99F` | `#2E3A49` |
 | Water fill / line | `#C9DCD6` / `#3D5E8C` | `#101823` / `#7FA3D4` |
 | Ink (text, rules, glyph outlines) | `#2C2A24` | `#E9E2CE` |
-| Faded ink (captions, ticks) | `#8B8471` | `#8D96A8` |
+| Faded ink (captions, ticks) | `#6E6A58` | `#8D96A8` |
 | Aviation magenta (accents, selection) | `#A83A63` | `#E77E9B` |
 | Aero blue (links, water labels) | `#36547E` | `#8BA9D6` |
 | Roads | `#A65A2E` at ~0.6 alpha | `#6B5540` at ~0.6 alpha |
@@ -78,6 +78,14 @@ one table, three media, change them together.
 `#/preview`). The relationships stand; only the pen pressed deeper. The
 night-edition proof above predates the re-ink and is unaffected: the pen
 rows are chrome accents, not the plate.*
+
+*One value tuned in place by the visual pass (`adsb-dgb.5`), under this
+section's own rule: day faded ink deepened `#8B8471` → `#6E6A58` — the §5
+mono captions print at 10.5px and the old ink sat at 3.4:1 against the
+chrome paper; the new one reads 5.0:1 and keeps the dusty-khaki
+relationship. Applied across all three media. (The chip greens/ambers in
+app.css — `--ok`/`--warn`, not table rows — were contrast-tuned the same
+day.)*
 
 **Aircraft altitude ramp** — *continuous* (Q6a), interpolated through
 chart-native inks, warm (low) → cool (high):
@@ -104,7 +112,8 @@ rgb `233,226,206`, head opacity ≤ 0.5 on paper.
 - The direction **customizes the style JSON, not the provider**: derive
   day-chart and night-chart variants of Liberty by recoloring its layers to
   the §2 palette — water, landcover/landuse, roads, boundaries, labels
-  (serif where the label is a *place*, per the eventual §5 bake-off).
+  (**the whole chart writes in the plotter's mono hand** — the §5 open
+  call, decided by eye in `adsb-dgb.5`; verdict below).
 - **Richly rendered** (Q4c): coastline/water, major roads, place labels, and
   terrain (Q5 a–d) all speak. Terrain feel comes from tinting Liberty's
   landcover/hillshade layers to the paper-and-contour palette; true contour
@@ -124,6 +133,23 @@ rgb `233,226,206`, head opacity ≤ 0.5 on paper.
   keep the runtime transform while Liberty is stable; if upstream churns,
   vendor a build-time-generated pair of style JSONs produced from the same
   palette maps — the palettes stay the single source of truth either way.
+- **Label voice — DECIDED by eye (`adsb-dgb.5`, 2026-07-12):** the whole
+  chart adopts the plotter's mono hand. Both candidates were rendered
+  live over the re-inked plate at replay density, both editions — serif
+  places (Source Serif 4 against the mono chrome) and all-mono — and the
+  serif whisper lost: it is a beautiful atlas voice, but it reads as a
+  second author lettering someone else's plate, and it is the voice that
+  already lost the §5 bake-off. One hand everywhere is The Annotation's
+  own thesis, and it makes the chart unmistakably ours. Liberty's
+  weight/italic hierarchy survives verbatim (Bold stays the capitals'
+  stamp, Italic stays water's whisper). **Mechanism:** OpenFreeMap's
+  glyph server hosts only Noto Sans, so the chart carries its own glyphs
+  — SDF PBF ranges generated from the same OFL Space Mono files the
+  chrome ships (`resources/public/glyphs/`, provenance in its README);
+  `edition-style` re-points the style's `glyphs` endpoint and re-letters
+  every symbol layer, shields included (a stack the endpoint does not
+  host 404s, and a tile whose symbol bucket cannot resolve glyphs never
+  finishes — fills and all).
 
 ## 4. Aircraft styling
 
@@ -184,11 +210,11 @@ custom-property set promoted into `app.css` `:root` in both editions,
 chrome in the visual pass (`adsb-dgb.5`). The `#/preview` page remains:
 it is the standing fitting room for any future re-skin.
 
-**One consequence left open on purpose:** §3's "serif where the label is
-a *place*" for basemap labels predates this pick and was not part of the
-preview. Whether places keep a serif voice against the mono chrome, or
-the whole chart adopts the plotter's hand, is decided by eye in the
-visual pass (`adsb-dgb.5`).
+**The one consequence left open — now closed:** whether basemap places
+kept a serif voice against the mono chrome, or the whole chart adopted
+the plotter's hand, was decided by eye in the visual pass — **the whole
+chart writes in the plotter's hand.** Verdict, reasoning, and mechanism
+in §3's label-voice bullet.
 
 ## 6. Motion principles
 
@@ -276,20 +302,25 @@ a profile view of the sky beside the plan view of it.
 
 In order, because risk fronts the queue:
 
-1. **Night edition first.** The dark chart is the direction's biggest risk
-   (Q2c). Recolor Liberty into the night palette (§2/§3) and *look at it*
-   before anything else is styled. If night paper can't be beautiful, the
-   palette gets renegotiated — early, not late.
-2. **Day edition** recolor of Liberty; wire `prefers-color-scheme` switching.
-3. **Re-skin `src/cljs/adsb/map/style.cljs`:** altitude stops, ground /
-   unknown / emergency colors, halo to paper, trail rgb + head opacity per
-   edition. Semantics (stale fade, mlat demotion, emergency override) do not
-   change.
-4. **Ink silhouette** SDF icon to replace the functional glyph.
-5. **Chrome:** chart title-block header, index-card selection panel, NOTAM
-   strip, edge-arrow, selection ring, easing per §6.
+1. ~~**Night edition first.**~~ **Done (adsb-dgb.7)** — proved in the
+   running app before anything else was styled.
+2. ~~**Day edition**~~ **Done (adsb-dgb.7)** — both editions ship,
+   switched by `prefers-color-scheme`.
+3. ~~**Re-skin `src/cljs/adsb/map/style.cljs`**~~ **Done (adsb-dgb.7)** —
+   semantics unchanged, palettes per edition.
+4. ~~**Ink silhouette**~~ **Done** — the SDF plan-view silhouette ships
+   (drawn at load, tinted by the ramp; the non-directional dot stays for
+   track-less targets).
+5. **Chrome — done in the pass itself (adsb-dgb.5):** chart title-block
+   header (36px, mono vitals, the pen-underlined title stamp), index-card
+   selection panel, NOTAM strip (stamped tab, zero motion), compass-pencil
+   selection ring (a map marker that draws itself in), legend + stats as
+   the margin column, the Stack re-tokened, easing per §6, and the label
+   voice decided (§3). **Still owed: the §7 map annotations** — the red-pen
+   double ellipse, the MAYDAY stamp, and the off-screen edge arrow — filed
+   as their own bead rather than half-shipped here.
 6. ~~File separate prototype beads~~ **Done — and both verdicts are in**:
    the instinct channel is perspective size (§8, shadow rejected); the Stack
    (§9) is built and load-bearing.
-7. ~~File the typography bake-off bead~~ **Done — pick pending** on the
-   in-app `#/preview` pages (adsb-dgb.10).
+7. ~~File the typography bake-off bead~~ **Done — picked and shipped**:
+   the §5 mix is live in `app.css`; `#/preview` remains the fitting room.

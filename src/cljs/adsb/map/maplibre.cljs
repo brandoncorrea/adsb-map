@@ -46,7 +46,18 @@
     "Show a pointer cursor while the mouse is over a feature in
     `layer-id`, and restore the default on the way out — the affordance
     that says these planes are clickable. Self-contained in the seam;
-    tests need only know it was wired."))
+    tests need only know it was wired.")
+  (add-marker! [this element lng-lat]
+    "Pin DOM `element` to the map at `lng-lat` ([lng lat]) so it rides
+    the chart through pans and zooms. Returns a marker handle for
+    `move-marker!`/`remove-marker!`. The selection ring (adsb.map.selection)
+    is the one client: a single low-churn marker, never the aircraft —
+    hundreds of DOM markers at 1 Hz would be the crawl the GeoJSON layer
+    exists to avoid.")
+  (move-marker! [this marker lng-lat]
+    "Move `marker` (an `add-marker!` handle) to `lng-lat` ([lng lat]).")
+  (remove-marker! [this marker]
+    "Remove `marker` (an `add-marker!` handle) from the map."))
 
 (deftype MapLibreMap [^js gl-map]
   Map
@@ -77,7 +88,15 @@
       (.on gl-map "mouseenter" layer-id
            (fn [_e] (set! (.-cursor canvas-style) "pointer")))
       (.on gl-map "mouseleave" layer-id
-           (fn [_e] (set! (.-cursor canvas-style) ""))))))
+           (fn [_e] (set! (.-cursor canvas-style) "")))))
+  (add-marker! [_ element lng-lat]
+    (-> (maplibre/Marker. #js {:element element})
+        (.setLngLat (clj->js lng-lat))
+        (.addTo gl-map)))
+  (move-marker! [_ marker lng-lat]
+    (.setLngLat ^js marker (clj->js lng-lat)))
+  (remove-marker! [_ marker]
+    (.remove ^js marker)))
 
 (defn create!
   "Construct a real MapLibre map inside `container` (a DOM node) with `opts`

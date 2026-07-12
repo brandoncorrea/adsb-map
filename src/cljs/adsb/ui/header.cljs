@@ -82,7 +82,10 @@
   [picture]
   (let [total      (count picture)
         positioned (count (filter aircraft/positioned? (vals picture)))]
-    [:span.adsb-counts {:data-testid "aircraft-counts"}
+    ;; :title carries the units when the phone stylesheet hides the unit
+    ;; words to keep the 36px title block from overflowing (app.css).
+    [:span.adsb-counts {:data-testid "aircraft-counts"
+                        :title       "aircraft · positioned"}
      [:span.adsb-count-total {:data-testid "count-total"} total]
      [:span.adsb-count-unit " aircraft"]
      [:span.adsb-count-sep " · "]

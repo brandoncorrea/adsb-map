@@ -1,8 +1,8 @@
 (ns adsb.views
-  "The app shell — the root Reagent tree everything else lands on. A minimal
-  header bar over a full-viewport map. Styling here is a NEUTRAL PLACEHOLDER:
-  the design direction (adsb-bvi.5) is not chosen yet, so this commits to none
-  of the proposed looks — just structure and a home for future chrome."
+  "The app shell — the root Reagent tree everything else lands on. A thin
+  chart-title-block header over a full-viewport map, with the marginalia
+  floating around it. Dressed in The Sectional (docs/design-direction.md)
+  by the visual pass (adsb-dgb.5); the look itself lives in app.css."
   (:require
     [adsb.map.view :as map-view]
     [adsb.ui.aircraft-panel :as aircraft-panel]
@@ -25,12 +25,15 @@
    ;; nothing when the sky is calm (adsb.ui.alert).
    [alert/alert-ribbon]
    [map-view/map-view]
-   ;; Corner overlay explaining the colour ramp. Static chrome — reads the
-   ;; style constants, derefs nothing (adsb.ui.legend).
-   [legend/legend]
-   ;; Numbers-only session readout in the same corner — max range and
-   ;; message rate, both scalars, never a position (adsb.ui.stats).
-   [stats/stats-readout]
+   ;; The margin column, bottom-left: the session stats chip over the map
+   ;; key — chart marginalia sharing one corner so neither crowds the plot.
+   [:div.adsb-margin
+    ;; Numbers-only session readout — max range and message rate, both
+    ;; scalars, never a position (adsb.ui.stats).
+    [stats/stats-readout]
+    ;; Overlay explaining the colour ramp. Static chrome — reads the
+    ;; style constants per edition (adsb.ui.legend).
+    [legend/legend]]
    ;; The Stack — the live altitude ruler on the map's edge, replacing the
    ;; sidebar outright (design direction §9: there is no list). Ticks at
    ;; true altitudes, hover-to-highlight, click-to-select (adsb.ui.stack).

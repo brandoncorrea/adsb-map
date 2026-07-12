@@ -33,9 +33,10 @@
   :general); the human copy is presentation and lives here, shared with the
   sidebar and detail-panel badges.
 
-  Styling is a NEUTRAL PLACEHOLDER — an unmissable red is functional, not a
-  final look (the visual pass is adsb-dgb.5). Class names are the re-skin
-  hooks."
+  Dressed by the visual pass (adsb-dgb.5) as the direction's NOTAM strip
+  (§7): a red field under the header with a stamped NOTAM tab beside the
+  rows — grave, drawn once, and it NEVER blinks (app.css owns the look;
+  no animation touches anything under .adsb-alerts)."
   (:require
     [adsb.aircraft :as aircraft]
     [re-frame.core :as rf]))
@@ -107,5 +108,10 @@
             :aria-label  "Emergency aircraft"
             :data-testid "alert-ribbon"
             :on-click    on-alert-click!}
-           (for [a alerts]
-             ^{:key (:aircraft/icao a)} [alert-item a])])))))
+           ;; The stamped NOTAM tab — decoration for the sighted reader
+           ;; (the strip's form), hidden from assistive tech, which gets
+           ;; each row's full aria-label sentence instead.
+           [:span.adsb-alert-stamp {:aria-hidden true} "NOTAM"]
+           (into [:div.adsb-alert-rows]
+                 (for [a alerts]
+                   ^{:key (:aircraft/icao a)} [alert-item a]))])))))

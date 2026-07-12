@@ -9,31 +9,97 @@
    adsb.map.style, keyed off the SAME media query. The hexes mirror the
    §2 palette table — change them together, in both places.
 
-   Typography is the §5 PLACEHOLDER system stack (serif display, mono
-   data); the bake-off bead settles it later. */
+   ── Typography & scale — SETTLED (§5, adsb-dgb.10) ──────────────────
+   The crowned mix, promoted verbatim from the #/preview fitting room:
+
+     typography  THE ANNOTATION — one hand for everything written on
+                 the chart, the plotter's: Space Mono (OFL, self-hosted
+                 below; licensing in fonts/LICENSE.md). Hierarchy is
+                 weight and case, never a change of voice — bold stamps
+                 for titles (the header title carries the 2px magenta
+                 pen underline), caps-tracked bold for block headings,
+                 italic for fact labels and captions. Mono numbers are
+                 inherently tabular.
+     scale       major third, 1.25 @ 13px — tokens --t-2 … --t2.
+                 Deliberately shallow; the size is spent on the DATA.
+     spacing     compact, 4px base — tokens --s1 … --s5, header 36px.
+                 The chrome defers to the map; the sky is the whitespace.
+     palette     the wine pen — §2's hue relationships with the PEN
+                 pressed deeper (--magenta / --aero below).
+
+   CSP note: production needs `font-src 'self'` (adsb.http.security,
+   tracked as adsb-kh4.7) before the faces load behind the strict policy;
+   the shadow dev server on :8080 serves them without ceremony. */
+
+@font-face {
+  font-family: "Space Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/space-mono-400.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Space Mono";
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/space-mono-400i.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Space Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/space-mono-700.woff2") format("woff2");
+}
 
 :root {
+  /* §5 type tokens — major third, 1.25 @ 13px. */
+  --t-2: 8.5px;
+  --t-1: 10.5px;
+  --t0:  13px;
+  --t1:  16px;
+  --t2:  20px;
+
+  /* §5 spacing tokens — compact, 4px base. */
+  --s1: 2px;
+  --s2: 4px;
+  --s3: 8px;
+  --s4: 12px;
+  --s5: 16px;
+  --header-h: 36px;
+
+  /* The Stack's footprint on the map edge (right on desktop, bottom on
+     phone) — the header, ribbon, and attribution all clear it by this. */
+  --stack-w: 76px;
+
   --paper:        #F5EFDF; /* map paper (also the pre-tile backdrop) */
   --paper-chrome: #FBF6E8; /* panels, header — a lighter leaf */
   --paper-veil:   rgba(251, 246, 232, 0.92); /* panel over the chart */
   --paper-halo:   rgba(251, 246, 232, 0.7);  /* hairline halos on paper */
   --ink:          #2C2A24;
-  --faded-ink:    #8B8471;
+  --faded-ink:    #6E6A58; /* tuned from §2's #8B8471 for caption contrast */
   --contour:      #D9C99F;
-  --magenta:      #C0447C;
-  --aero:         #3D5E8C;
+  --magenta:      #A83A63; /* the wine pen (§5) */
+  --aero:         #36547E;
   --emergency:    #CE2029;
   --on-emergency: #FBF3E4; /* text on the emergency red */
   --alt-ground:   #8A8374; /* aircraft states — mirror adsb.map.style */
   --alt-unknown:  #9A937F;
-  --ok:           #5F7F3F; /* connection: live */
-  --warn:         #B07A24; /* connection: reconnecting */
+  --ok:           #55722F; /* connection: live (contrast-tuned) */
+  --warn:         #8F6318; /* connection: reconnecting (contrast-tuned) */
   --rule:         rgba(44, 42, 36, 0.3);   /* hairline ink rules */
   --rule-strong:  rgba(44, 42, 36, 0.5);
   --rule-faint:   rgba(44, 42, 36, 0.08);
-  --serif: "Iowan Old Style", "Palatino", Georgia, serif;
-  --sans:  system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --mono:  ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* One hand (§5): every family variable is the plotter's mono. The
+     three names survive for the #/preview fitting room, which re-points
+     them per candidate. */
+  --mono:  "Space Mono", ui-monospace, Menlo, Consolas, monospace;
+  --serif: var(--mono);
+  --sans:  var(--mono);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -45,8 +111,8 @@
     --ink:          #E9E2CE;
     --faded-ink:    #8D96A8;
     --contour:      #2E3A49;
-    --magenta:      #E06A9F;
-    --aero:         #7FA3D4;
+    --magenta:      #E77E9B; /* the wine pen, night print (§5) */
+    --aero:         #8BA9D6;
     --emergency:    #FF5A4D;
     --on-emergency: #1C1210;
     --alt-ground:   #6E7686;
@@ -59,6 +125,54 @@
   }
 }
 
+/* ── Motion (§6) ──────────────────────────────────────────────────────
+   The chrome breathes, quietly: panels settle in under 200ms ease-out,
+   the live dots breathe (never blink), the selection ring draws itself
+   in. The EMERGENCY treatment spends zero motion (§7) — nothing under
+   .adsb-alerts or any -emergency class animates, ever. */
+
+@keyframes adsb-settle {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes adsb-breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+
+/* The compass-pencil ring drawing itself in (§4): the dashes grow from
+   nothing (both dasharrays sum to 7 of the circle's pathLength 70, so
+   ten dashes press into place) while the offset sweeps them a step
+   around — a pencil dragged once along a compass. Ink stays put after. */
+@keyframes adsb-ring-draw {
+  from {
+    stroke-dasharray: 0 7;
+    stroke-dashoffset: 10;
+    opacity: 0.2;
+  }
+  to {
+    stroke-dasharray: 3.2 3.8;
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .adsb-panel,
+  .adsb-selection-ring circle,
+  .adsb-conn-live .adsb-conn-dot,
+  .adsb-feeder-ok .adsb-feeder-dot {
+    animation: none;
+  }
+
+  .adsb-stack-tick {
+    transition: none;
+  }
+}
+
 html,
 body,
 #app {
@@ -67,7 +181,8 @@ body,
 }
 
 body {
-  font-family: var(--sans);
+  font-family: var(--mono);
+  font-size: var(--t0);
   background: var(--paper); /* the paper shows before the first tile */
   color: var(--ink);
 }
@@ -85,8 +200,10 @@ body {
   background: var(--paper); /* the chart's own paper while tiles load */
 }
 
-/* Thin header bar floating over the map — the chart's title block:
-   paper, one ink rule, serif title, mono vitals. */
+/* ── The header — the chart's title block ─────────────────────────────
+   36px (--header-h) of instrument: the title stamped in bold under the
+   magenta pen underline, mono vitals, the two health chips pinned right
+   so the map's health is always in the same place. One ink rule below. */
 .adsb-header {
   position: absolute;
   top: 0;
@@ -95,35 +212,40 @@ body {
   z-index: 1;
   display: flex;
   align-items: center;
-  gap: 16px;
-  height: 44px;
-  padding: 0 16px;
+  gap: var(--s4);
+  height: var(--header-h);
+  padding: 0 var(--s4);
   background: var(--paper-chrome);
   border-bottom: 1px solid var(--ink);
   color: var(--ink);
-  font-size: 13px;
+  font-size: var(--t0);
   box-sizing: border-box;
 }
 
 .adsb-title {
-  font-family: var(--serif);
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--t1);
+  font-weight: 700;
   letter-spacing: 0.04em;
+  line-height: 1;
+  border-bottom: 2px solid var(--magenta); /* the plotter's pen (§5) */
+  padding-bottom: 1px;
 }
 
-/* Live vital signs. The counts sit next to the title; the connection chip is
-   pushed to the far right so the map's health is always in the same place. */
+/* Live vital signs. The counts sit next to the title; the two health
+   chips are pushed to the far right. */
 .adsb-counts {
   color: var(--faded-ink);
-  font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--t-1);
 }
 
 .adsb-count-total,
 .adsb-count-positioned {
-  font-weight: 600;
+  font-weight: 700;
   color: var(--ink);
+}
+
+.adsb-count-unit {
+  font-style: italic; /* fact labels speak in italic (§5) */
 }
 
 .adsb-count-sep {
@@ -132,38 +254,48 @@ body {
 
 .adsb-clock {
   color: var(--faded-ink);
-  font-family: var(--mono);
-  font-size: 12px;
+  font-size: var(--t-1);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.02em;
 }
 
-/* Connection chip — distinct per state (a dot colour AND a text label; colour
-   alone is not accessible), pushed right. :down is a filled red alarm so a
-   frozen map cannot read as a live one. Drawn like a stamped chart note. */
-.adsb-conn {
-  margin-left: auto;
+/* Health chips — stream and feeder, each distinct per state (a dot
+   colour AND a text label; colour alone is not accessible). Drawn as
+   stamped chart notes: squared, hairline-ruled, mono. :down is a filled
+   red alarm so a frozen map cannot read as a live one. */
+.adsb-conn,
+.adsb-feeder {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-weight: 600;
+  gap: var(--s2);
+  padding: var(--s1) var(--s3);
+  border-radius: 2px;
+  font-weight: 700;
   line-height: 1.4;
   border: 1px solid transparent;
-  font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--t-1);
   letter-spacing: 0.04em;
 }
 
-.adsb-conn-dot {
-  width: 8px;
-  height: 8px;
+.adsb-conn {
+  margin-left: auto;
+}
+
+.adsb-conn-dot,
+.adsb-feeder-dot {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: currentColor;
   border: 1px solid var(--rule-strong);
   box-sizing: border-box;
   flex: none;
+}
+
+/* The healthy dots breathe — ambient life, never a blink (§6). */
+.adsb-conn-live .adsb-conn-dot,
+.adsb-feeder-ok .adsb-feeder-dot {
+  animation: adsb-breathe 3.2s ease-in-out infinite;
 }
 
 .adsb-conn-live {
@@ -182,32 +314,65 @@ body {
   border-color: var(--emergency);
 }
 
-/* Altitude legend — chart-key marginalia, tucked bottom-left, out of the
-   header's way. Every swatch is painted from the adsb.map.style palette of
-   the CURRENT edition (adsb.ui.legend derefs the theme ratom). */
-.adsb-legend {
+.adsb-feeder-ok {
+  color: var(--ok);
+  border-color: var(--rule);
+}
+
+.adsb-feeder-starting {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.adsb-feeder-unknown {
+  color: var(--faded-ink);
+  border-color: var(--rule);
+}
+
+.adsb-feeder-down {
+  color: var(--on-emergency);
+  background: var(--emergency);
+  border-color: var(--emergency);
+}
+
+/* ── The margin column — legend and stats, chart-key marginalia ──────
+   Tucked bottom-left, out of the header's way: the session stats chip
+   over the map key, both on paper veils. */
+.adsb-margin {
   position: absolute;
-  left: 16px;
-  bottom: 16px;
+  left: var(--s5);
+  bottom: var(--s5);
   z-index: 1;
   display: flex;
-  gap: 20px;
-  max-width: calc(100vw - 32px);
-  padding: 10px 14px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s2);
+  max-width: calc(100vw - var(--stack-w) - 2 * var(--s5));
+}
+
+/* The legend — a chart margin table. Every swatch is painted from the
+   adsb.map.style palette of the CURRENT edition (adsb.ui.legend derefs
+   the theme ratom). */
+.adsb-legend {
+  display: flex;
+  gap: var(--s5);
+  padding: var(--s3) var(--s4);
   background: var(--paper-veil);
   color: var(--ink);
   border: 1px solid var(--rule-strong);
   border-radius: 2px;
-  font-size: 12px;
+  font-size: var(--t-1);
+  box-sizing: border-box;
 }
 
+/* Block headings print in the pen: caps-tracked bold magenta (§5). */
 .adsb-legend-heading {
-  margin: 0 0 6px;
-  font-size: 10px;
-  font-weight: 600;
+  margin: 0 0 var(--s2);
+  font-size: var(--t-2);
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--faded-ink);
+  letter-spacing: 0.1em;
+  color: var(--magenta);
 }
 
 .adsb-legend-list {
@@ -219,15 +384,14 @@ body {
 .adsb-legend-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s3);
   line-height: 1.7;
-  font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--t-1);
 }
 
 .adsb-legend-swatch {
-  width: 14px;
-  height: 14px;
+  width: 13px;
+  height: 13px;
   border-radius: 2px;
   flex: none;
   box-shadow: inset 0 0 0 1px var(--rule);
@@ -237,43 +401,101 @@ body {
   white-space: nowrap;
 }
 
-/* Emergency ribbon — the loudest chrome the app owns (adsb-dgb.4): the
-   NOTAM strip of the direction (§7). Sits directly under the 44px header,
-   spanning the shell, so an active distress squawk is impossible to miss.
-   Every emergency STACKS as its own row rather than cycling behind a
-   timer. Ink does not blink — red, plain language, no strobe. */
+/* The session stats readout — two scalars on a small paper chip. */
+.adsb-stats {
+  display: flex;
+  gap: var(--s4);
+  padding: var(--s1) var(--s3);
+  background: var(--paper-veil);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  font-size: var(--t-1);
+  box-sizing: border-box;
+}
+
+.adsb-stats-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+.adsb-stats-label {
+  font-style: italic;
+  color: var(--faded-ink);
+}
+
+.adsb-stats-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── The NOTAM strip (§7) — the loudest chrome the app owns ──────────
+   Sits directly under the header, spanning the shell, while ANY
+   aircraft squawks distress. Every emergency STACKS as its own row
+   rather than cycling behind a timer. Grave, drawn once: red field,
+   plain mono language, a stamped NOTAM tab — and ZERO motion. Ink does
+   not blink. */
 .adsb-alerts {
   position: absolute;
-  top: 44px;
+  top: var(--header-h);
   left: 0;
-  right: 76px;              /* clear of the Stack on the right edge */
-  z-index: 2;               /* above the map and the Stack's top edge */
+  right: var(--stack-w);      /* clear of the Stack on the right edge */
+  z-index: 3;                 /* above the map, the panel, the Stack */
+  display: flex;
+  align-items: stretch;
+  background: var(--emergency);
+  color: var(--on-emergency);
+  border-bottom: 1px solid var(--rule-strong);
+  max-width: 100%;
+}
+
+.adsb-alert-stamp {
+  align-self: center;
+  flex: none;
+  margin: 0 0 0 var(--s4);
+  padding: var(--s1) var(--s2);
+  border: 1px solid var(--on-emergency);
+  border-radius: 1px;
+  font-size: var(--t-2);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.adsb-alert-rows {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  max-width: 100%;
+  flex: 1;
+  min-width: 0;
 }
 
 .adsb-alert {
   display: flex;
   align-items: baseline;
-  gap: 12px;
+  gap: var(--s4);
   width: 100%;
-  padding: 8px 16px;
+  padding: var(--s3) var(--s4);
   border: none;
-  border-bottom: 1px solid var(--rule);
-  background: var(--emergency);
+  border-bottom: 1px solid color-mix(in srgb, var(--on-emergency) 30%, transparent);
+  background: transparent;
   color: var(--on-emergency);
   font: inherit;
-  font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--t0);
   text-align: left;
   cursor: pointer;
   box-sizing: border-box;
 }
 
+.adsb-alert:last-child {
+  border-bottom: none;
+}
+
 .adsb-alert:hover {
   filter: brightness(1.08);
+}
+
+.adsb-alert:focus-visible {
+  outline: 2px solid var(--on-emergency);
+  outline-offset: -3px;
 }
 
 .adsb-alert-name {
@@ -283,24 +505,118 @@ body {
 
 .adsb-alert-squawk {
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .adsb-alert-meaning {
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  font-size: var(--t-1);
   opacity: 0.9;
 }
 
-/* Status badges — small flags on rows and in the detail panel. The emergency
-   badge is the only one with a committed colour, because it is the only one
-   that means someone is in danger. */
+/* ── The detail panel — the index card (§4) ──────────────────────────
+   Chart marginalia for one selected aircraft: a paper card under the
+   header, clear of the Stack — ink rule under the title, italic fact
+   labels, mono data, em-dashes for facts the sky never reported. It
+   settles in (§6); it never crowds the plot. */
+.adsb-panel {
+  position: absolute;
+  top: calc(var(--header-h) + var(--s3));
+  right: calc(var(--stack-w) + var(--s3));
+  z-index: 2;
+  width: 288px;
+  background: var(--paper-veil);
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  box-shadow: 2px 2px 0 var(--rule-faint);
+  color: var(--ink);
+  box-sizing: border-box;
+  animation: adsb-settle 180ms ease-out;
+}
+
+.adsb-panel-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+  padding: var(--s3) var(--s3) var(--s2);
+  border-bottom: 1px solid var(--ink);
+}
+
+.adsb-panel-title {
+  font-size: var(--t1);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  overflow-wrap: anywhere; /* a hostile callsign must not shear the card */
+}
+
+.adsb-panel-close {
+  background: none;
+  border: none;
+  padding: 0 var(--s1);
+  color: var(--faded-ink);
+  font: inherit;
+  font-size: var(--t1);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.adsb-panel-close:hover {
+  color: var(--ink);
+}
+
+.adsb-panel-close:focus-visible {
+  outline: 2px solid var(--magenta);
+  outline-offset: 1px;
+}
+
+.adsb-panel-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  padding: var(--s2) var(--s3) 0;
+}
+
+.adsb-panel-facts {
+  padding: var(--s2) var(--s3) var(--s3);
+}
+
+.adsb-fact {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s1) 0;
+  border-bottom: 1px dotted var(--rule-faint);
+}
+
+.adsb-fact:last-child {
+  border-bottom: none;
+}
+
+.adsb-fact-label {
+  font-style: italic; /* the annotation's caption voice (§5) */
+  color: var(--faded-ink);
+  font-size: var(--t-1);
+}
+
+.adsb-fact-value {
+  text-align: right;
+  font-size: var(--t-1);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* Status badges — small flags on rows and in the detail panel. The
+   emergency badge is the only one with a committed colour, because it
+   is the only one that means someone is in danger. */
 .adsb-badge {
   display: inline-block;
-  padding: 1px 6px;
+  padding: 1px var(--s2);
   border-radius: 2px;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--t-1);
+  font-weight: 700;
   white-space: nowrap;
   background: transparent;
   border: 1px solid var(--rule);
@@ -315,10 +631,30 @@ body {
   letter-spacing: 0.03em;
 }
 
-.adsb-panel-badges {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+/* ── The selection mark — the compass-pencil ring (§4) ───────────────
+   A dashed magenta ring around the selected aircraft, drawn as a map
+   marker (adsb.map.selection) so it rides the chart, not the screen.
+   It draws itself in once per selection and then holds still. */
+.adsb-selection-ring {
+  width: 44px;
+  height: 44px;
+  pointer-events: none; /* the plane beneath stays clickable */
+}
+
+.adsb-selection-ring svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.adsb-selection-ring circle {
+  fill: none;
+  stroke: var(--magenta);
+  stroke-width: 1.6px;
+  stroke-linecap: round;
+  stroke-dasharray: 3.2 3.8; /* of pathLength 70 — ten pencil dashes */
+  animation: adsb-ring-draw 420ms ease-out;
 }
 
 /* =====================================================================
@@ -336,14 +672,14 @@ body {
 
 .adsb-stack {
   position: absolute;
-  top: 44px;
+  top: var(--header-h);
   right: 0;
   bottom: 0;
   z-index: 1;
   display: flex;
   flex-direction: column;
-  width: 76px;
-  padding: 12px 8px 8px;
+  width: var(--stack-w);
+  padding: var(--s4) var(--s3) var(--s3);
   background: var(--paper-veil);
   border-left: 1px solid var(--rule);
   color: var(--ink);
@@ -375,7 +711,7 @@ body {
   position: absolute;
   right: calc(100% + 5px);
   transform: translateY(-50%);
-  font-size: 9px;
+  font-size: var(--t-2);
   letter-spacing: 0.04em;
   font-variant-numeric: tabular-nums;
   color: var(--faded-ink);
@@ -448,16 +784,22 @@ body {
   right: calc(100% + 8px);
   top: 50%;
   transform: translateY(-50%);
-  padding: 1px 5px;
+  padding: 1px var(--s2);
   background: var(--paper-chrome);
   border: 1px solid var(--rule-strong);
   border-radius: 2px;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: var(--t-1);
   line-height: 1.5;
   color: var(--ink);
   white-space: nowrap;
   pointer-events: none;
+}
+
+.adsb-stack-tick-selected .adsb-stack-tick-label {
+  border-color: var(--magenta);
+  color: var(--magenta);
+  font-weight: 700;
 }
 
 .adsb-stack-tick-emergency .adsb-stack-tick-label {
@@ -477,17 +819,18 @@ body {
   align-items: center;
   gap: 3px;
   min-height: 16px;
-  margin-top: 8px;
-  padding: 4px 4px 4px 6px;
+  margin-top: var(--s3);
+  padding: var(--s2) var(--s2) var(--s2) var(--s2);
   border: 1px solid var(--rule);
   border-radius: 2px;
 }
 
 .adsb-stack-shelf-label {
-  font-size: 8px;
+  font-size: var(--t-2);
+  font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--faded-ink);
-  margin-right: 2px;
+  margin-right: var(--s1);
 }
 
 /* MapLibre pins its attribution to the map's bottom-right — under the
@@ -495,7 +838,7 @@ body {
    it), so the control corner shifts clear of the ruler instead of hiding
    beneath it; the phone rule below lifts it above the recumbent Stack. */
 .maplibregl-ctrl-bottom-right {
-  right: 76px;
+  right: var(--stack-w);
 }
 
 /* Shelf ticks cluster as dots — grouped, never ranked. */
@@ -539,10 +882,10 @@ body {
     right: 0;
     bottom: 0;
     width: auto;
-    height: 76px;
+    height: var(--stack-w);
     flex-direction: row;
     align-items: stretch;
-    padding: 22px 10px 8px;
+    padding: 22px 10px var(--s3);
     border-left: none;
     border-top: 1px solid var(--rule);
   }
@@ -608,23 +951,58 @@ body {
 
   .adsb-stack-shelf {
     margin-top: 0;
-    margin-left: 8px;
+    margin-left: var(--s3);
     min-width: 34px;
     align-content: center;
   }
 
   /* The bottom edge is the Stack's now: the map attribution and the
-     legend both step up out of its lane. */
+     margin column both step up out of its lane. */
   .maplibregl-ctrl-bottom-right {
     right: 0;
-    bottom: 76px;
-  }
-
-  .adsb-legend {
-    bottom: 132px;          /* above the Stack AND the lifted attribution */
+    bottom: var(--stack-w);
   }
 }
 
 /* =====================================================================
    THE STACK — END BOUNDED SECTION
    ===================================================================== */
+
+/* ── Phone (Q9c: a designed stance, not a degradation) ───────────────
+   The header holds its 36px: the clock and the counts' unit words step
+   aside (the numbers stay), the chips keep their labels. The NOTAM
+   strip spans the full width (the Stack is on the bottom edge now); the
+   index card spans the width under the header; the margin column steps
+   above the recumbent Stack and the lifted attribution. */
+@media (max-width: 640px) {
+  .adsb-header {
+    gap: var(--s3);
+    padding: 0 var(--s3);
+  }
+
+  .adsb-clock,
+  .adsb-count-unit {
+    display: none;
+  }
+
+  .adsb-alerts {
+    right: 0;
+  }
+
+  .adsb-panel {
+    left: var(--s3);
+    right: var(--s3);
+    width: auto;
+  }
+
+  .adsb-margin {
+    left: var(--s3);
+    bottom: calc(var(--stack-w) + 40px + var(--s2));
+    max-width: calc(100vw - 2 * var(--s3));
+  }
+
+  .adsb-legend {
+    gap: var(--s4);
+    padding: var(--s2) var(--s3);
+  }
+}

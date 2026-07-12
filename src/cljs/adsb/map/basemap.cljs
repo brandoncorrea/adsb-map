@@ -55,9 +55,9 @@
     :water-outline "rgba(61, 94, 140, 0.5)"  ; coastline pen, quiet
     :water-line    "#3D5E8C"              ; rivers — aero blue
     :ink           "#2C2A24"              ; place-name ink
-    :faded-ink     "#8B8471"              ; captions, POIs, boundaries
-    :magenta       "#C0447C"              ; aviation magenta — airports
-    :aero          "#3D5E8C"              ; water labels
+    :faded-ink     "#6E6A58"              ; captions, POIs, boundaries (§2, contrast-tuned)
+    :magenta       "#A83A63"              ; the wine pen (§5) — airports
+    :aero          "#36547E"              ; water labels — §5 chrome aero
     :road          "rgba(166, 90, 46, 0.6)" ; sectional road sienna
     :road-casing   "#F5EFDF"              ; roads are single ink strokes
     :rail          "#D9C99F"              ; rail hatching, quiet
@@ -77,8 +77,8 @@
     :water-line    "#7FA3D4"
     :ink           "#E9E2CE"              ; night ink — warm cream
     :faded-ink     "#8D96A8"
-    :magenta       "#E06A9F"
-    :aero          "#7FA3D4"
+    :magenta       "#E77E9B"              ; the wine pen, night print (§5)
+    :aero          "#8BA9D6"              ; §5 chrome aero, night print
     ;; PROVED in the running prototype (adsb-dgb.7): the §2 ink #6B5540
     ;; printed full-strength glows like filament against the night paper
     ;; at z7 road density — the same ~0.6 alpha the day edition always
@@ -92,6 +92,54 @@
     :aeroway-line  "#8D96A8"
     :label-halo    "#151B26"
     :hide-decor?   true}})                ; sprite decor glares on dark stock
+
+;; ---------------------------------------------------------------------
+;; The chart's written hand (§3/§5). Liberty labels everything in Noto
+;; Sans from OpenFreeMap's glyph server — a generic web-map gothic, not
+;; our artifact, and the server hosts nothing else (probed: no serif, no
+;; mono). So the chart carries its own glyphs: SDF ranges generated from
+;; the same OFL faces the chrome ships (resources/public/glyphs/, built
+;; from resources/public/fonts/ — see fonts/LICENSE.md), served
+;; same-origin, and every symbol layer is re-pointed at them.
+;;
+;; THE §5 OPEN CALL, DECIDED BY EYE (adsb-dgb.5): the whole chart
+;; adopts the plotter's mono hand. Both candidates were rendered over
+;; the re-inked Liberty at replay density — serif places (Source Serif 4
+;; against the mono chrome) and all-mono — and the serif whisper lost:
+;; against a mono header, a mono Stack, and mono marginalia, serif
+;; places read as a second author annotating someone else's chart,
+;; while Space Mono places read as the same plotter lettering the plate
+;; he annotates. One hand everywhere is The Annotation's own thesis.
+;; Liberty's weight/italic hierarchy survives verbatim: Bold stays the
+;; capitals' stamp, Italic stays water and states' whisper.
+
+(def ^:const glyphs-url
+  "The self-hosted glyph endpoint the edition styles point at."
+  "/glyphs/{fontstack}/{range}.pbf")
+
+(def label-fonts
+  "Liberty's Noto stacks -> the plotter's hand, weight for weight. An
+  unrecognized font passes through unchanged (and would 404 against our
+  glyph server — loudly missing beats quietly wrong if upstream drifts)."
+  {"Noto Sans Regular" "Space Mono Regular"
+   "Noto Sans Bold"    "Space Mono Bold"
+   "Noto Sans Italic"  "Space Mono Italic"})
+
+(defn refont-layer
+  "A symbol layer re-lettered in the chart's hand via `label-fonts`.
+  Non-symbol layers and layers without a text-font pass through.
+  EVERY text-font must be re-pointed, shields included: the style has
+  ONE glyphs endpoint, so a stack ours does not host 404s — and a tile
+  whose symbol bucket cannot resolve its glyphs never finishes, taking
+  its fills and roads down with it (proven the hard way in this bead's
+  verification: day-edition shields kept Noto and most land tiles
+  wedged blank)."
+  [layer]
+  (if (and (= "symbol" (:type layer))
+           (get-in layer [:layout :text-font]))
+    (update-in layer [:layout :text-font]
+               (fn [fonts] (mapv #(get label-fonts % %) fonts)))
+    layer))
 
 ;; ---------------------------------------------------------------------
 
@@ -223,8 +271,13 @@
 
 (defn edition-style
   "The full style JSON (Clojure data, as fetched) printed in `theme`'s
-  edition: every layer re-inked through `recolor-layer`, everything else
-  — sources, glyphs, sprite, and the attribution they carry — untouched."
+  edition: every layer re-inked through `recolor-layer` and re-lettered
+  through `refont-layer`, the glyph endpoint re-pointed at the chart's
+  own hand; everything else — sources, sprite, and the attribution they
+  carry — untouched."
   [style theme]
   (let [palette (get editions theme (:day editions))]
-    (update style :layers #(mapv (partial recolor-layer palette) %))))
+    (-> style
+        (assoc :glyphs glyphs-url)
+        (update :layers
+                #(mapv (comp refont-layer (partial recolor-layer palette)) %)))))

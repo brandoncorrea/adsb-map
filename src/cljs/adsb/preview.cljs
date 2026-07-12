@@ -53,30 +53,32 @@
 
 ;; ---------------------------------------------------------------------
 ;; The five dimensions. Vector order is control order; each dimension's
-;; FIRST option is its default — together they spell the direction doc's
-;; own §5 hypothesis, so the page opens on the status quo ante.
+;; FIRST option is its default — together they spell the CROWNED MIX
+;; (§5, picked 2026-07-12 and promoted into app.css by adsb-dgb.5), so
+;; the page opens on what actually ships and every other option remains
+;; browsable for the next re-skin.
 
 (def dimensions
   [{:key     :typography
     :label   "Typography"
-    :options [["marginalia" "Marginalia"]
-              ["drafting-room" "Drafting Room"]
-              ["annotation" "The Annotation"]]}
+    :options [["annotation" "The Annotation"]
+              ["marginalia" "Marginalia"]
+              ["drafting-room" "Drafting Room"]]}
    {:key     :scale
     :label   "Scale"
-    :options [["fourth-13" "1.333 @ 13px"]
+    :options [["major-13" "1.25 @ 13px"]
+              ["fourth-13" "1.333 @ 13px"]
               ["third-12" "1.2 @ 12px"]
-              ["major-12" "1.25 @ 12px"]
-              ["major-13" "1.25 @ 13px"]]}
+              ["major-12" "1.25 @ 12px"]]}
    {:key     :spacing
     :label   "Spacing"
-    :options [["airy-4" "4px airy"]
-              ["strict-8" "8px strict"]
-              ["compact-4" "compact"]]}
+    :options [["compact-4" "compact"]
+              ["airy-4" "4px airy"]
+              ["strict-8" "8px strict"]]}
    {:key     :palette
     :label   "Palette"
-    :options [["settled" "Sectional (settled)"]
-              ["wine-pen" "Wine pen"]
+    :options [["wine-pen" "Wine pen"]
+              ["settled" "Sectional (settled)"]
               ["plum-pen" "Plum pen"]]}
    {:key     :edition
     :label   "Edition"

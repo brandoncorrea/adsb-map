@@ -68,7 +68,19 @@
     (rf-test/run-test-sync
       (rf/dispatch [:test/set-picture (by-icao [fixtures/squawking-7700])])
       (render-ribbon!)
-      (is (= "alert" (.getAttribute (.getByTestId rtl/screen "alert-ribbon") "role"))))))
+      (is (= "alert" (.getAttribute (.getByTestId rtl/screen "alert-ribbon") "role")))))
+
+  (testing "the strip is a NOTAM (design direction §7): the stamped tab is
+            drawn for the sighted reader and hidden from assistive tech,
+            which hears each row's aria-label sentence instead"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [fixtures/squawking-7700])])
+      (render-ribbon!)
+      (let [stamp (.querySelector (.getByTestId rtl/screen "alert-ribbon")
+                                  ".adsb-alert-stamp")]
+        (is (some? stamp) "the NOTAM stamp is on the strip")
+        (is (= "NOTAM" (.-textContent stamp)))
+        (is (= "true" (.getAttribute stamp "aria-hidden")))))))
 
 (deftest the-sky-is-calm-so-the-ribbon-is-absent
   (testing "no distress squawk in the picture — the banner renders nothing"

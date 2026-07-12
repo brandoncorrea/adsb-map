@@ -48,12 +48,17 @@
      :paint {:line-color "#9e9cab"}}
     {:id "highway-shield-us-interstate" :type "symbol"
      :source-layer "transportation_name"
-     :layout {:icon-image "us-interstate"}}
+     :layout {:icon-image "us-interstate" :text-font ["Noto Sans Regular"]}}
     {:id "label_city" :type "symbol" :source-layer "place"
+     :layout {:text-font ["Noto Sans Regular"]}
+     :paint {:text-color "#333344" :text-halo-color "#ffffff"}}
+    {:id "label_city_capital" :type "symbol" :source-layer "place"
+     :layout {:text-font ["Noto Sans Bold"]}
      :paint {:text-color "#333344" :text-halo-color "#ffffff"}}
     {:id "airport" :type "symbol" :source-layer "aerodrome_label"
      :paint {:text-color "#666666" :text-halo-color "#ffffff"}}
     {:id "water_name_point_label" :type "symbol" :source-layer "water_name"
+     :layout {:text-font ["Noto Sans Italic"]}
      :paint {:text-color "#4444aa" :text-halo-color "#ffffff"}}
     {:id "poi_r1" :type "symbol" :source-layer "poi"
      :paint {:text-color "#665544" :text-halo-color "#ffffff"}}
@@ -133,6 +138,26 @@
     (testing "a layer the taxonomy does not know keeps Liberty's own paint"
       (is (= (layer-by-id mini-liberty "somebody_elses_future_layer")
              (layer-by-id night "somebody_elses_future_layer"))))))
+
+(deftest the-chart-writes-in-its-own-hand
+  (let [day  (printed :day)
+        font (fn [id] (get-in (layer-by-id day id) [:layout :text-font]))]
+    (testing "the glyph endpoint is the chart's own, same-origin"
+      (is (= basemap/glyphs-url (:glyphs day)))
+      (is (= basemap/glyphs-url (:glyphs (printed :night)))))
+    (testing "labels re-letter into the plotter's hand, weight for weight —
+              Liberty's own bold/italic hierarchy survives verbatim"
+      (is (= ["Space Mono Regular"] (font "label_city")))
+      (is (= ["Space Mono Bold"] (font "label_city_capital")))
+      (is (= ["Space Mono Italic"] (font "water_name_point_label"))))
+    (testing "shields re-letter too — the style has ONE glyph endpoint, and
+              a stack it does not host wedges every tile that needs it,
+              fills and all (proven in this bead's verification)"
+      (is (= ["Space Mono Regular"] (font "highway-shield-us-interstate"))))
+    (testing "a font the mapping does not know passes through unchanged"
+      (is (= {:layout {:text-font ["Comic Serif Heavy"]} :type "symbol" :id "x"}
+             (basemap/refont-layer {:layout {:text-font ["Comic Serif Heavy"]}
+                                    :type "symbol" :id "x"}))))))
 
 (deftest an-unknown-theme-defaults-to-the-day-print
   (is (= (printed :day) (basemap/edition-style mini-liberty :sepia))

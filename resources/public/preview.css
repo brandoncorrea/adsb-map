@@ -76,29 +76,9 @@
   src: url("/fonts/plex-mono-600.woff2") format("woff2");
 }
 
-@font-face {
-  font-family: "Space Mono";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/fonts/space-mono-400.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "Space Mono";
-  font-style: italic;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/fonts/space-mono-400i.woff2") format("woff2");
-}
-
-@font-face {
-  font-family: "Space Mono";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("/fonts/space-mono-700.woff2") format("woff2");
-}
+/* Space Mono's @font-face declarations moved to app.css when The
+   Annotation won the bake-off (§5) — the app path ships them now, and
+   this page inherits them. */
 
 /* ── DIMENSION: edition (the fifth control — manual day/night) ────────
    The chrome variable tables, mirroring app.css / design-direction §2,
@@ -225,7 +205,8 @@
 }
 
 .adsb-preview[data-spacing="compact-4"] {
-  --s1: 2px; --s2: 4px; --s3: 8px; --s4: 12px; --s5: 20px;
+  /* the crowned spacing — kept identical to the shipped app.css tokens */
+  --s1: 2px; --s2: 4px; --s3: 8px; --s4: 12px; --s5: 16px;
   --header-h: 36px;
 }
 
@@ -367,6 +348,7 @@
 }
 
 .adsb-preview[data-typography="annotation"] .adsb-fact-label,
+.adsb-preview[data-typography="annotation"] .adsb-count-unit,
 .adsb-preview[data-typography="annotation"] .adsb-preview-type-caption {
   font-style: italic;
   font-weight: 400;
@@ -374,10 +356,25 @@
   letter-spacing: 0;
 }
 
+.adsb-preview[data-typography="annotation"] .adsb-conn,
+.adsb-preview[data-typography="annotation"] .adsb-feeder {
+  border-radius: 2px; /* stamped chart notes, as shipped */
+}
+
+.adsb-preview[data-typography="annotation"] .adsb-panel-title {
+  letter-spacing: 0.04em;
+}
+
 /* ── Token wiring: the real chrome re-specced in tokens ───────────────
    app.css sizes the chrome in settled px; inside the preview the same
    selectors read the scale and spacing tokens instead, which is what
-   makes every dimension bite the REAL components, not a facsimile. */
+   makes every dimension bite the REAL components, not a facsimile.
+
+   Since the visual pass (adsb-dgb.5) dressed app.css in the WINNING
+   candidate's voice, the base wiring below also RESETS the annotation's
+   signature moves (the pen underline, the magenta headings, the italic
+   captions, the squared chips) so the other candidates still render as
+   themselves; the annotation block re-applies its own. */
 
 .adsb-preview .adsb-header {
   position: static;
@@ -385,6 +382,31 @@
   gap: var(--s4);
   padding: 0 var(--s4);
   font-size: var(--t0);
+}
+
+.adsb-preview .adsb-title {
+  border-bottom: none;
+  padding-bottom: 0;
+  font-weight: 600;
+  letter-spacing: normal;
+}
+
+.adsb-preview .adsb-legend-heading {
+  color: var(--faded-ink);
+}
+
+.adsb-preview .adsb-fact-label,
+.adsb-preview .adsb-count-unit {
+  font-style: normal;
+}
+
+.adsb-preview .adsb-conn,
+.adsb-preview .adsb-panel-title {
+  letter-spacing: normal;
+}
+
+.adsb-preview .adsb-conn {
+  border-radius: 999px; /* the bake-off's baseline pill */
 }
 
 .adsb-preview .adsb-title  { font-family: var(--serif); font-size: var(--t1); }

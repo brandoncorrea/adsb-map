@@ -22,6 +22,7 @@
     [adsb.map.aircraft-layer :as aircraft-layer]
     [adsb.map.basemap :as basemap]
     [adsb.map.maplibre :as maplibre]
+    [adsb.map.selection :as selection]
     [adsb.map.theme :as theme]
     [reagent.core :as r]))
 
@@ -99,6 +100,7 @@
   (let [!container (atom nil)
         !map       (atom nil)
         !aircraft  (atom nil)
+        !ring      (atom nil)
         !raw-style (atom nil)
         !unwatch   (atom nil)
         !disposed  (atom false)]
@@ -106,8 +108,14 @@
               (let [style (basemap/edition-style @!raw-style th)
                     m     (maplibre/create! @!container (default-map-opts style))]
                 (reset! !map m)
-                (reset! !aircraft (aircraft-layer/attach! m th))))
+                (reset! !aircraft (aircraft-layer/attach! m th))
+                ;; The selection ring rides the same lifecycle: ring and
+                ;; map are created and torn down together (adsb.map.selection).
+                (reset! !ring (selection/attach! m))))
             (unmount-map! []
+              (when-let [ring @!ring]
+                (selection/detach! @!map ring)
+                (reset! !ring nil))
               (when-let [layer @!aircraft]
                 (aircraft-layer/detach! layer)
                 (reset! !aircraft nil))
