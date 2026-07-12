@@ -11,7 +11,26 @@
 
 (def ^:const feeder-url-env "ADSB_ULTRAFEEDER_URL")
 
+(def ^:const source-env
+  "Selects the ingest Source. Unset (or anything but \"replay\") is the
+  live ultrafeeder, which requires ADSB_ULTRAFEEDER_URL."
+  "ADSB_SOURCE")
+
+(def ^:const replay-source
+  "The ADSB_SOURCE value that swaps the live feeder for the recorded
+  fixture (adsb.ingest.replay) — bb dev with no feeder reachable, and no
+  feeder URL required."
+  "replay")
+
 (def ^:private allowed-schemes #{"http" "https"})
+
+(defn replay-source?
+  "True when ADSB_SOURCE selects the fixture-replay Source instead of the
+  live ultrafeeder. Case- and whitespace-insensitive; nil (the default)
+  is false, so the live feeder — and its required, validated URL —
+  remains the default."
+  [source]
+  (= replay-source (some-> source str/trim str/lower-case)))
 
 (defn- fail! [detail]
   (throw (ex-info (str feeder-url-env " " detail)

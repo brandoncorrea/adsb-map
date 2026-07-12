@@ -40,6 +40,11 @@
     (let [env {"ADSB_RECEIVER_LAT" "27.9"}]
       (is (= env (:env (main/env->config env)))))))
 
+(deftest env->config-captures-source
+  (testing "ADSB_SOURCE is captured so start! can pick the ingest Source"
+    (is (= "replay" (:source (main/env->config {"ADSB_SOURCE" "replay"}))))
+    (is (nil? (:source (main/env->config {}))))))
+
 (deftest start-validates-the-feeder-url
   (testing "boot fails loudly, naming the env var, when the feeder url
             is missing"
@@ -92,3 +97,24 @@
       (finally
         (main/stop! system)
         (state/clear!)))))
+
+(deftest replay-mode-boots-without-a-feeder
+  (testing "ADSB_SOURCE=replay boots with no feeder URL — the whole point
+            is bb dev off the home network — and healthz turns ok once
+            the fixture is polled into the picture"
+    (let [system (main/start! {:port   0
+                               :source "replay"
+                               :env    {}})
+          port   (http-kit/server-port (:system/server system))
+          ok?    (fn [] (= "ok" (:feeder-status
+                                  (:json (get-json port "/healthz")))))]
+      (try
+        (loop [tries 40]
+          (when (and (pos? tries) (not (ok?)))
+            (Thread/sleep 100)
+            (recur (dec tries))))
+        (testing "the replayed fixture reaches, so feeder-status is ok"
+          (is (ok?)))
+        (finally
+          (main/stop! system)
+          (state/clear!))))))

@@ -47,3 +47,13 @@
 (deftest rejects-unparseable-url
   (testing "a syntactically invalid URL is rejected, not thrown raw"
     (is (map? (rejection "http://bad host/with spaces")))))
+
+(deftest replay-source-selection
+  (testing "ADSB_SOURCE=replay selects the fixture-replay Source, case-
+            and whitespace-insensitively"
+    (doseq [value ["replay" "REPLAY" "  replay  "]]
+      (is (config/replay-source? value) (str "should select replay: " value))))
+  (testing "unset (the default) and any other value keep the live feeder"
+    (doseq [value [nil "" "ultrafeeder" "live"]]
+      (is (not (config/replay-source? value))
+          (str "should keep the ultrafeeder: " (pr-str value))))))

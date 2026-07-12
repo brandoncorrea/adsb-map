@@ -20,6 +20,7 @@
             [adsb.ingest.plausibility :as plausibility]
             [adsb.ingest.poll :as poll]
             [adsb.ingest.receiver :as receiver]
+            [adsb.ingest.replay :as replay]
             [adsb.ingest.ultrafeeder :as ultrafeeder]
             [adsb.state :as state]
             [adsb.stream.broadcast :as broadcast]
@@ -40,12 +41,14 @@
 (defn env->config
   "Pure: derive the boot config from an environment map (string ->
   string). PORT defaults to adsb.http.server/default-port.
-  ADSB_ULTRAFEEDER_URL is validated by start!. The map itself rides
+  ADSB_ULTRAFEEDER_URL is validated by start! (unless ADSB_SOURCE selects
+  the fixture-replay Source, which needs no feeder). The map itself rides
   along as :env for the receiver-position override
   (ADSB_RECEIVER_LAT/LON — adsb.ingest.receiver)."
   [env]
   {:port            (parse-port (get env "PORT"))
-   :ultrafeeder-url (get env "ADSB_ULTRAFEEDER_URL")
+   :source          (get env config/source-env)
+   :ultrafeeder-url (get env config/feeder-url-env)
    :env             env})
 
 (defn- ingest-batch!
@@ -60,23 +63,44 @@
                                plausibility/default-max-range-m)
       (state/apply-batch! (System/currentTimeMillis))))
 
+(defn- build-source!
+  "Select the ingest Source from config and return [source feeder-url].
+  ADSB_SOURCE=replay swaps the live feeder for the recorded-fixture
+  Source (adsb.ingest.replay) — bb dev with no feeder reachable — and
+  needs no feeder URL, so feeder-url is nil and the range gate falls back
+  to the env override or off. Otherwise the live ultrafeeder Source sits
+  behind a validated feeder URL: a missing or malformed URL still fails
+  loudly here, before anything starts (Boundary 3)."
+  [{:keys [source ultrafeeder-url]}]
+  (if (config/replay-source? source)
+    [(replay/->source) nil]
+    (let [feeder-url (config/validate-feeder-url ultrafeeder-url)]
+      [(ultrafeeder/->source feeder-url) feeder-url])))
+
 (defn start!
   "Boot the backend from config and return the running system:
 
-    1. validate ADSB_ULTRAFEEDER_URL — throws before anything starts
+    1. select the Source — live ultrafeeder (validating
+       ADSB_ULTRAFEEDER_URL, which throws before anything starts) or the
+       fixture-replay Source when ADSB_SOURCE=replay
     2. resolve the receiver position once (env override, else the
        feeder's receiver.json, else nil — range gate disabled)
-    3. poll the feeder at ~1 Hz through the range gate into the store
+    3. poll the source at ~1 Hz through the range gate into the store
     4. broadcast the picture over SSE; the broadcast tick doubles as
        the age-out cadence (its picture fn is adsb.state/age-out!)
     5. serve HTTP with real feeder status on /healthz and the stream
-       on /api/stream"
-  [{:keys [port ultrafeeder-url env]}]
-  (let [feeder-url        (config/validate-feeder-url ultrafeeder-url)
+       on /api/stream
+
+  In replay mode the fixture always 'reaches', so the poller reports
+  :ok and /healthz shows feeder-status \"ok\" — honestly meaning ingest
+  is producing a picture, since there is no feeder whose reachability to
+  report."
+  [{:keys [port env] :as config}]
+  (let [[source feeder-url] (build-source! config)
         receiver-position (receiver/resolve-position! {:env      env
                                                        :base-url feeder-url})
         poller            (poll/start!
-                            {:source    (ultrafeeder/->source feeder-url)
+                            {:source    source
                              :on-batch! #(ingest-batch! receiver-position %)})
         broadcaster       (broadcast/start! {:picture state/age-out!})
         http-server       (server/start!
