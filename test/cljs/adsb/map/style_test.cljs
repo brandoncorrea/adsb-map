@@ -4,54 +4,64 @@
   the MapLibre expressions: the layer is a symbol layer rotated by track;
   the altitude colour peels its three states (number / \"ground\" /
   absent) apart correctly; emergency overrides colour and size; stale
-  fades opacity. When the visual pass (adsb-dgb.5) re-skins by editing the
-  constants, these structural assertions stay green — they check the
-  wiring, not the palette."
+  fades opacity. The palette is two printed editions (adsb-dgb.7), so the
+  structural assertions run over BOTH — the wiring is edition-free, only
+  the ink changes — and a dedicated test pins the two-edition discipline:
+  same keys, same feet, different ink, never a shared leftover."
   (:require
     [adsb.aircraft :as aircraft]
     [adsb.map.style :as style]
     [cljs.test :refer-macros [deftest is testing]]))
 
+(def ^:private themes [:day :night])
+
 (deftest layer-is-a-symbol-rotated-by-track
-  (let [spec (style/aircraft-layer-spec "aircraft" "aircraft")]
-    (is (= "symbol" (:type spec)) "a symbol layer — a plane, not a circle")
-    (testing "the icon rotates with the reported track, pinned to the ground"
-      (is (= ["get" "track"] (get-in spec [:layout :icon-rotate])))
-      (is (= "map" (get-in spec [:layout :icon-rotation-alignment]))))
-    (testing "track-less aircraft fall back to a non-directional dot"
-      (is (= ["case" ["has" "track"] style/plane-icon-id style/dot-icon-id]
-             (get-in spec [:layout :icon-image]))))
-    (testing "no aircraft is dropped by label collision"
-      (is (true? (get-in spec [:layout :icon-allow-overlap]))))))
+  (doseq [theme themes]
+    (let [spec (style/aircraft-layer-spec theme "aircraft" "aircraft")]
+      (is (= "symbol" (:type spec)) "a symbol layer — a plane, not a circle")
+      (testing "the icon rotates with the reported track, pinned to the ground"
+        (is (= ["get" "track"] (get-in spec [:layout :icon-rotate])))
+        (is (= "map" (get-in spec [:layout :icon-rotation-alignment]))))
+      (testing "track-less aircraft fall back to a non-directional dot"
+        (is (= ["case" ["has" "track"] style/plane-icon-id style/dot-icon-id]
+               (get-in spec [:layout :icon-image]))))
+      (testing "no aircraft is dropped by label collision"
+        (is (true? (get-in spec [:layout :icon-allow-overlap]))))
+      (testing "the halo is the edition's own paper — ink survives a busy chart"
+        (is (= (:halo-color (style/palette theme))
+               (get-in spec [:paint :icon-halo-color])))))))
 
 (deftest altitude-colour-handles-its-three-states
-  (let [expr (style/altitude-color-expression)]
-    (is (= "case" (first expr)) "a case, because interpolate is numeric-only")
-    (testing "absent altitude -> unknown treatment, guarded by `has` (missing, not zero)"
-      (is (= ["!" ["has" "altitude"]] (nth expr 1)))
-      (is (= style/unknown-color (nth expr 2))))
-    (testing "the string \"ground\" -> its own ground treatment"
-      (is (= ["==" ["get" "altitude"] "ground"] (nth expr 3)))
-      (is (= style/ground-color (nth expr 4))))
-    (testing "the numeric branch is a linear interpolate over the altitude number"
-      (let [ramp (nth expr 5)]
-        (is (= "interpolate" (first ramp)))
-        (is (= ["linear"] (nth ramp 1)))
-        (is (= ["get" "altitude"] (nth ramp 2)))
-        (let [stops (drop 3 ramp)]
-          (is (even? (count stops)) "stop/colour pairs")
-          (is (= (map first style/altitude-stops)
-                 (take-nth 2 stops))
-              "the numeric stops come straight from the re-skinnable ramp data"))))))
+  (doseq [theme themes]
+    (let [expr    (style/altitude-color-expression theme)
+          palette (style/palette theme)]
+      (is (= "case" (first expr)) "a case, because interpolate is numeric-only")
+      (testing "absent altitude -> unknown treatment, guarded by `has` (missing, not zero)"
+        (is (= ["!" ["has" "altitude"]] (nth expr 1)))
+        (is (= (:unknown-color palette) (nth expr 2))))
+      (testing "the string \"ground\" -> its own ground treatment"
+        (is (= ["==" ["get" "altitude"] "ground"] (nth expr 3)))
+        (is (= (:ground-color palette) (nth expr 4))))
+      (testing "the numeric branch is a linear interpolate over the altitude number"
+        (let [ramp (nth expr 5)]
+          (is (= "interpolate" (first ramp)))
+          (is (= ["linear"] (nth ramp 1)))
+          (is (= ["get" "altitude"] (nth ramp 2)))
+          (let [stops (drop 3 ramp)]
+            (is (even? (count stops)) "stop/colour pairs")
+            (is (= (map first (:altitude-stops palette))
+                   (take-nth 2 stops))
+                "the numeric stops come straight from the edition's ramp data")))))))
 
 (deftest emergency-overrides-colour-and-size
-  (testing "colour: emergency red beats the altitude ramp"
-    (let [expr (style/icon-color-expression)]
-      (is (= "case" (first expr)))
-      (is (= ["get" "emergency"] (nth expr 1)))
-      (is (= style/emergency-color (nth expr 2)))
-      (is (= (style/altitude-color-expression) (nth expr 3))
-          "otherwise the three-state altitude ramp")))
+  (testing "colour: emergency red beats the altitude ramp, in both editions"
+    (doseq [theme themes]
+      (let [expr (style/icon-color-expression theme)]
+        (is (= "case" (first expr)))
+        (is (= ["get" "emergency"] (nth expr 1)))
+        (is (= (:emergency-color (style/palette theme)) (nth expr 2)))
+        (is (= (style/altitude-color-expression theme) (nth expr 3))
+            "otherwise the three-state altitude ramp"))))
   (testing "size: emergency wins first, then mlat is demoted, else base"
     (let [expr (style/icon-size-expression)]
       (is (= ["case"
@@ -88,3 +98,44 @@
     (is (= (/ aircraft/age-out-threshold-ms 1000) style/age-out-threshold-s))
     (is (< style/aged-out-opacity style/base-opacity)
         "aged reads dimmer, not gone")))
+
+;; ---------------------------------------------------------------------
+;; The two printed editions (adsb-dgb.7 / design-direction §2): one plate,
+;; two inks. Same roles, same feet, no colour carried over unexamined.
+
+(deftest the-palette-is-two-editions-of-one-plate
+  (let [day   (style/palette :day)
+        night (style/palette :night)]
+    (testing "same roles in both editions — a print cannot be missing an ink"
+      (is (= (set (keys day)) (set (keys night)))))
+    (testing "the altitude feet are identical — the SEMANTICS are shared"
+      (is (= (map first (:altitude-stops day))
+             (map first (:altitude-stops night)))))
+    (testing "every ink was re-reasoned for its paper — no colour survives
+              the edition switch unchanged (a shared hex would be the first
+              symptom of an invert-and-forget)"
+      (doseq [role [:ground-color :unknown-color :emergency-color
+                    :halo-color :trail-rgb]]
+        (is (not= (role day) (role night)) (str role)))
+      (is (= [] (filter identity
+                        (map (fn [[_ d] [_ n]] (when (= d n) d))
+                             (:altitude-stops day) (:altitude-stops night))))
+          "every ramp stop differs between editions"))
+    (testing "each edition's halo is its OWN paper (design-direction §2/§4)"
+      (is (= "#F5EFDF" (:halo-color day)))
+      (is (= "#151B26" (:halo-color night))))
+    (testing "an unknown theme falls back to the day edition — a chart is
+              always on the table"
+      (is (= day (style/palette :sepia))))))
+
+(deftest trail-gradient-is-the-editions-ink
+  (doseq [theme themes]
+    (let [expr (style/trail-gradient-expression theme)
+          rgb  (:trail-rgb (style/palette theme))]
+      (is (= ["interpolate" ["linear"] ["line-progress"]] (take 3 expr)))
+      (testing "tail fully transparent, head capped at the quiet-echo alpha"
+        (is (= (str "rgba(" rgb ", 0)") (nth expr 4)))
+        (is (= (str "rgba(" rgb ", " style/trail-head-opacity ")")
+               (nth expr 6))))))
+  (is (<= style/trail-head-opacity 0.5)
+      "history is a quiet ink echo — the direction caps the head at 0.5"))

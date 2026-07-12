@@ -46,6 +46,18 @@ The hue *relationships* are the identity; each edition renders them on its own
 paper. All values are the settled starting point for the visual pass — tune in
 place, keep the relationships.
 
+**The night edition is PROVED** (bead `adsb-dgb.7`): both editions were
+rendered in the running app — Liberty re-inked to this table over live replay
+traffic, theme-switched by `prefers-color-scheme` — and the night print reads
+as a printed night chart, not an invert. One value moved under proof, in the
+table below: **night roads print at ~0.6 alpha** (`#6B5540` full-strength
+glows like filament against the night paper at regional-zoom road density;
+the alpha the day edition always used quiets the network to embers). Every
+other night value stood as designed. Where the palette lives in code:
+aircraft inks in `adsb.map.style/palettes`, basemap inks in
+`adsb.map.basemap/editions`, chrome inks in `app.css` custom properties —
+one table, three media, change them together.
+
 | Role | Day edition | Night edition |
 |---|---|---|
 | Paper (map base) | `#F5EFDF` | `#151B26` |
@@ -57,7 +69,7 @@ place, keep the relationships.
 | Faded ink (captions, ticks) | `#8B8471` | `#8D96A8` |
 | Aviation magenta (accents, selection) | `#C0447C` | `#E06A9F` |
 | Aero blue (links, water labels) | `#3D5E8C` | `#7FA3D4` |
-| Roads | `#A65A2E` at ~0.6 alpha | `#6B5540` |
+| Roads | `#A65A2E` at ~0.6 alpha | `#6B5540` at ~0.6 alpha |
 | Emergency red | `#CE2029` | `#FF5A4D` |
 
 **Aircraft altitude ramp** — *continuous* (Q6a), interpolated through
@@ -92,6 +104,19 @@ rgb `233,226,206`, head opacity ≤ 0.5 on paper.
   lines are not in the tiles — the *texture* of contours may be suggested in
   the paper itself, never fabricated as data.
 - Theme switches with `prefers-color-scheme`; both editions ship at once.
+- **Mechanism (built, adsb-dgb.7):** the raw Liberty JSON is fetched once and
+  re-inked at runtime by `adsb.map.basemap/edition-style` — a pure,
+  palette-driven transform keyed on `source-layer` + layer type (not
+  Liberty's layer ids), so upstream drift degrades to Liberty's own paint
+  instead of breaking the plate. `adsb.map.theme` owns the media query; a
+  flip re-prints map + aircraft layer together. Sprite decor that cannot be
+  re-inked (highway shields, pattern fills) is hidden in the night edition;
+  the low-zoom natural-earth raster is hidden in both — a photograph is not
+  a print. OpenFreeMap's hosted darks (`dark`, `fiord`) were examined and
+  rejected: generic dashboard darks, not our artifact. *Sustainable path:*
+  keep the runtime transform while Liberty is stable; if upstream churns,
+  vendor a build-time-generated pair of style JSONs produced from the same
+  palette maps — the palettes stay the single source of truth either way.
 
 ## 4. Aircraft styling
 

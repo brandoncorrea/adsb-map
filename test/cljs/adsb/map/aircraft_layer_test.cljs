@@ -57,6 +57,15 @@
 
 (defn- fire-load! [{:keys [rec]}] ((:on-load @rec)))
 
+;; The shell-mounting proofs stub the basemap-style fetch (adsb.map.view/
+;; load-style!) with a synchronous minimal style: no network in a test,
+;; and the map is created during mount, exactly as before the two-edition
+;; plumbing (adsb-dgb.7).
+(def ^:private fixture-style
+  {:version 8 :sources {} :layers []})
+
+(defn- stub-load-style! [_url cb] (cb fixture-style))
+
 (defn- set-data-calls [{:keys [rec]}] (:set-data @rec))
 
 ;; A push now hands the seam TWO setData calls — a trail and an aircraft
@@ -104,7 +113,8 @@
         (is (= {layer/source-id       layer/source-spec
                 layer/trail-source-id layer/trail-source-spec}
                (:sources @rec)))
-        (is (= [layer/trail-layer-spec layer/layer-spec] (:layers @rec))
+        (is (= [(layer/trail-layer-spec :day) (layer/layer-spec :day)]
+               (:layers @rec))
             "the trail layer is added first, so it renders under the plane"))
 
       (rf/dispatch [:stream/received (frame [fixtures/ups-2717
@@ -346,7 +356,8 @@
                (get (:sources @rec) layer/trail-source-id)))
         (is (true? (:lineMetrics layer/trail-source-spec))))
       (testing "its line layer is added below the aircraft symbol layer"
-        (is (= [layer/trail-layer-spec layer/layer-spec] (:layers @rec))))
+        (is (= [(layer/trail-layer-spec :day) (layer/layer-spec :day)]
+               (:layers @rec))))
       (layer/detach! handle))))
 
 (deftest a-moving-aircraft-accumulates-a-multi-point-trail
@@ -432,6 +443,7 @@
       (with-redefs [maplibre/create! (fn [_container _opts]
                                        (swap! !mounts inc)
                                        m)
+                    view/load-style! stub-load-style!
                     view/map-container (fn [!c]
                                          (swap! !renders inc)
                                          (real-container !c))]
@@ -705,6 +717,7 @@
               real-container view/map-container
               n 20]
           (with-redefs [maplibre/create! (fn [_container _opts] m)
+                        view/load-style! stub-load-style!
                         view/map-container (fn [!c]
                                              (swap! !renders inc)
                                              (real-container !c))]

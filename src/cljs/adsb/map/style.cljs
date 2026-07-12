@@ -1,14 +1,13 @@
 (ns adsb.map.style
   "The aircraft layer's visual contract, expressed as DATA.
 
-  Every knob the map uses to draw a plane — the colour ramp, the sizes,
+  Every knob the map uses to draw a plane — the colour ramps, the sizes,
   the opacities, the icon ids, and the MapLibre style EXPRESSIONS built
   from them — lives here and nowhere else. Nothing in this namespace
   touches the DOM, a map, or a clock; it returns plain Clojure vectors
   and maps that `adsb.map.aircraft-layer` hands across the seam. That is
-  the whole point: the styling is data-driven and runs on the GPU, and
-  the future visual pass (adsb-dgb.5 / adsb-bvi.5) re-skins the map by
-  editing the constants below — NOT by rewriting logic.
+  the whole point: the styling is data-driven and runs on the GPU, and a
+  re-skin edits the palette data below — NOT the logic.
 
   ## Why expressions and not per-feature code
 
@@ -33,12 +32,20 @@
   \"altitude\"]`, since absent means the property is genuinely missing,
   not zero — and only then interpolates the number.
 
-  ## The direction is NOT chosen
+  ## Two printed editions — the direction IS chosen
 
-  There is no settled design direction yet (see AUTEUR.md, adsb-bvi.5).
-  The palette below is deliberately functional: a legible warm->cool
-  altitude ramp, an unmissable emergency red, a dim for stale. It is
-  meant to READ, not to be final. Re-skin here."
+  The settled direction (docs/design-direction.md, 'The Sectional, Day &
+  Night') prints the chart twice: a day edition on warm paper and a
+  designed night edition on dark stock — never an invert. So every
+  edition-dependent colour lives in `palettes`, keyed `:day`/`:night`,
+  and every expression builder takes the theme. The hue RELATIONSHIPS
+  are the identity (warm-low -> cool-high through chart inks, emergency
+  red overriding everything, halo the paper of its own edition); each
+  edition renders them on its own paper. Sizes, opacities, and the
+  staleness fade are edition-free semantics and stay plain constants.
+
+  The legend (adsb.ui.legend) paints its swatches from this SAME data,
+  per theme, so the key and the map can never disagree."
   (:require [adsb.aircraft :as aircraft]))
 
 ;; ---------------------------------------------------------------------
@@ -56,7 +63,8 @@
   "aircraft-dot")
 
 ;; ---------------------------------------------------------------------
-;; Sizes, opacities — the scalar knobs. DATA: re-skin here.
+;; Sizes, opacities — the scalar knobs. Edition-free: both prints share
+;; them. DATA: re-skin here.
 
 (def ^:const base-icon-size
   "Icon-size multiplier for an ordinary aircraft." 0.9)
@@ -101,49 +109,10 @@
   bottoms out here, then the client drops the feature."
   (/ aircraft/age-out-threshold-ms 1000))
 
-;; ---------------------------------------------------------------------
-;; Colours. DATA: the whole palette re-skins here.
-
-(def ^:const ground-color
-  "On the tarmac. An earthy khaki — reads \"not flying\" at a glance,
-  distinct from both the airborne ramp and the unknown grey."
-  "#a08a5b")
-
-(def ^:const unknown-color
-  "Positioned, but altitude never reported. A neutral cool grey — present
-  and placed, but carrying no altitude meaning to colour."
-  "#aab2bd")
-
-(def ^:const emergency-color
-  "7500 / 7600 / 7700. Unmissable red — overrides the altitude ramp
-  entirely. A human being is having the worst day of their life."
-  "#ff1e1e")
-
-(def altitude-stops
-  "Feet -> colour, warm(low) -> cool(high). A functional sequential ramp,
-  NOT a final look (adsb-bvi.5). Edit these pairs to re-skin the airborne
-  altitude legend; the interpolate expression is generated from them."
-  [[0     "#feb24c"]    ; warm amber — down low
-   [10000 "#fd8d3c"]    ; orange
-   [18000 "#41b6c4"]    ; teal — the transition
-   [30000 "#2c7fb8"]    ; blue
-   [40000 "#253494"]])  ; deep blue — up high
-
-(def ^:const halo-color
-  "A dark outline so a pale icon survives a pale basemap." "#0b0f14")
-
-(def ^:const halo-width 1.0)
-
-;; ---------------------------------------------------------------------
-;; Trails — the fading ribbon each aircraft leaves behind (adsb-6wd.1).
-;; DATA: re-skin here. The trail is deliberately a single NEUTRAL grey with
-;; a spatial alpha gradient, NOT the altitude ramp — history should read as
-;; a quiet echo, never compete with the live target's altitude colour. The
-;; design pass (adsb-bvi.5) may choose to recolour it to follow the ramp.
-
-(def ^:const trail-rgb
-  "The trail's colour as bare `r, g, b` channels — the cool unknown-grey
-  family. Bare so the gradient can vary only the alpha around it." "170, 178, 189")
+(def ^:const halo-width
+  "The hairline paper-coloured halo that lets an ink glyph survive a busy
+  chart area (design-direction §4). Width is shared; the COLOUR is the
+  paper of each edition, in `palettes`." 1.0)
 
 (def ^:const trail-width
   "Stroke width of the trail line, in px. Thinner than the icon so the
@@ -152,13 +121,50 @@
 (def ^:const trail-head-opacity
   "Alpha at the HEAD of the trail — the newest point, nearest the aircraft.
   The tail fades to fully transparent; this is the strongest the ribbon
-  ever gets, kept below 1 so even the freshest history reads as secondary
-  to the live icon." 0.7)
+  ever gets. The direction caps it at 0.5 on paper (§2): history is a
+  quiet ink echo, never a rival to the live target." 0.5)
+
+;; ---------------------------------------------------------------------
+;; The two editions. DATA: the whole aircraft palette re-skins here.
+;; Same keys, same feet, same semantics in both — two prints of one
+;; plate (docs/design-direction.md §2). Trails are the edition's ink as
+;; bare `r, g, b` channels so the gradient can vary only the alpha.
+
+(def palettes
+  {:day
+   {:ground-color    "#8A8374"   ; on the tarmac — dusty field khaki
+    :unknown-color   "#9A937F"   ; positioned, altitude never reported
+    :emergency-color "#CE2029"   ; red pen; overrides everything
+    :halo-color      "#F5EFDF"   ; the day paper itself
+    :trail-rgb       "44, 42, 36" ; day ink #2C2A24
+    :altitude-stops  [[0     "#A0622D"]    ; sienna — on the deck
+                      [10000 "#C2447C"]    ; aviation magenta
+                      [20000 "#7A4F86"]    ; plum — the transition
+                      [30000 "#3D5E8C"]    ; aero blue
+                      [40000 "#2A3F66"]]}  ; deep ink blue — up high
+   :night
+   {:ground-color    "#6E7686"   ; tarmac grey-blue on dark stock
+    :unknown-color   "#7C8494"   ; neutral, carrying no altitude meaning
+    :emergency-color "#FF5A4D"   ; red pen re-inked to carry on dark
+    :halo-color      "#151B26"   ; the night paper itself
+    :trail-rgb       "233, 226, 206" ; night ink #E9E2CE
+    :altitude-stops  [[0     "#C98A54"]    ; lamplit sienna
+                      [10000 "#E06A9F"]    ; night-print magenta
+                      [20000 "#A98BC4"]    ; lifted plum
+                      [30000 "#7FA3D4"]    ; night aero blue
+                      [40000 "#5F7FB8"]]}}) ; high blue, still legible
+
+(defn palette
+  "The edition's aircraft palette. Unrecognized themes read the day
+  edition — a chart is always on the table."
+  [theme]
+  (get palettes theme (:day palettes)))
 
 (defn- trail-rgba
-  "A trail colour at `alpha` (0..1), as a MapLibre-legible rgba string."
-  [alpha]
-  (str "rgba(" trail-rgb ", " alpha ")"))
+  "The edition's trail ink at `alpha` (0..1), as a MapLibre-legible rgba
+  string."
+  [theme alpha]
+  (str "rgba(" (:trail-rgb (palette theme)) ", " alpha ")"))
 
 (defn trail-gradient-expression
   "The trail's fade, as a `line-gradient` over `line-progress` — MapLibre's
@@ -168,10 +174,10 @@
   needs `lineMetrics true` on the source (set where the source is defined);
   the same expression applies to every trail, which is exactly the uniform
   tail-to-head fade we want."
-  []
+  [theme]
   ["interpolate" ["linear"] ["line-progress"]
-   0.0 (trail-rgba 0)
-   1.0 (trail-rgba trail-head-opacity)])
+   0.0 (trail-rgba theme 0)
+   1.0 (trail-rgba theme trail-head-opacity)])
 
 ;; ---------------------------------------------------------------------
 ;; Expressions — pure functions returning MapLibre expression vectors.
@@ -179,26 +185,27 @@
 ;; asserts their shape directly, because they ARE data.
 
 (defn altitude-color-expression
-  "The three-state altitude colour, as a `case`. Absent altitude (the
-  property missing) takes the neutral unknown treatment — guarded by
-  `[\"has\" \"altitude\"]` because absent is missing, not zero. The string
-  \"ground\" takes the ground treatment. Everything else is a number and
-  ramps through `altitude-stops`. `interpolate` never sees a non-number:
-  the two guards run before it."
-  []
-  ["case"
-   ["!" ["has" "altitude"]]            unknown-color
-   ["==" ["get" "altitude"] "ground"]  ground-color
-   (into ["interpolate" ["linear"] ["get" "altitude"]]
-         (mapcat identity altitude-stops))])
+  "The three-state altitude colour for `theme`, as a `case`. Absent
+  altitude (the property missing) takes the neutral unknown treatment —
+  guarded by `[\"has\" \"altitude\"]` because absent is missing, not zero.
+  The string \"ground\" takes the ground treatment. Everything else is a
+  number and ramps through the edition's altitude stops. `interpolate`
+  never sees a non-number: the two guards run before it."
+  [theme]
+  (let [{:keys [unknown-color ground-color altitude-stops]} (palette theme)]
+    ["case"
+     ["!" ["has" "altitude"]]            unknown-color
+     ["==" ["get" "altitude"] "ground"]  ground-color
+     (into ["interpolate" ["linear"] ["get" "altitude"]]
+           (mapcat identity altitude-stops))]))
 
 (defn icon-color-expression
   "Emergency beats altitude, full stop — a squawking aircraft is red no
   matter how high it is. Otherwise the altitude ramp."
-  []
+  [theme]
   ["case"
-   ["get" "emergency"] emergency-color
-   (altitude-color-expression)])
+   ["get" "emergency"] (:emergency-color (palette theme))
+   (altitude-color-expression theme)])
 
 (defn icon-size-expression
   "Emergency aircraft draw largest; a multilaterated (lower-confidence)
@@ -240,10 +247,12 @@
 
 (defn aircraft-layer-spec
   "The complete MapLibre symbol-layer spec for the aircraft `layer-id`
-  over `source-id`, built entirely from the constants and expressions
-  above. A symbol layer, not a circle: the icon is a plane silhouette
-  rotated to `track`, coloured by the altitude ramp (emergency
-  overriding), sized up for emergencies, and faded when stale.
+  over `source-id`, printed in `theme`'s edition and built entirely from
+  the palette data and expressions above. A symbol layer, not a circle:
+  the icon is a plane silhouette rotated to `track`, coloured by the
+  altitude ramp (emergency overriding), sized up for emergencies, and
+  faded when stale. The halo is the edition's own paper, so ink survives
+  a busy chart area without a foreign outline colour.
 
   `icon-rotate` is a bare `[\"get\" \"track\"]`: MapLibre defaults a null
   rotation to 0, and a null track already draws the rotation-agnostic dot
@@ -254,7 +263,7 @@
   `icon-allow-overlap` / `icon-ignore-placement` are true so no aircraft
   is ever silently dropped from a dense sky by label collision — every
   target the feeder positioned must appear."
-  [layer-id source-id]
+  [theme layer-id source-id]
   {:id     layer-id
    :type   "symbol"
    :source source-id
@@ -264,23 +273,24 @@
             :icon-size               (icon-size-expression)
             :icon-allow-overlap      true
             :icon-ignore-placement   true}
-   :paint  {:icon-color      (icon-color-expression)
+   :paint  {:icon-color      (icon-color-expression theme)
             :icon-opacity    (icon-opacity-expression)
-            :icon-halo-color halo-color
+            :icon-halo-color (:halo-color (palette theme))
             :icon-halo-width halo-width}})
 
 (defn trail-layer-spec
   "The MapLibre LINE-layer spec for the aircraft trails on `layer-id` over
-  `source-id`. One LineString per aircraft (adsb.trails), stroked at
-  `trail-width`, faded tail-to-head by `trail-gradient-expression`. Rounded
-  cap and join so a turning trail bends cleanly. The layer must be added
-  BELOW the aircraft symbol layer so the ribbon sits under the target, and
-  its source must carry `lineMetrics true` for `line-gradient` to resolve."
-  [layer-id source-id]
+  `source-id`, printed in `theme`'s edition. One LineString per aircraft
+  (adsb.trails), stroked at `trail-width`, faded tail-to-head by
+  `trail-gradient-expression`. Rounded cap and join so a turning trail
+  bends cleanly. The layer must be added BELOW the aircraft symbol layer
+  so the ribbon sits under the target, and its source must carry
+  `lineMetrics true` for `line-gradient` to resolve."
+  [theme layer-id source-id]
   {:id     layer-id
    :type   "line"
    :source source-id
    :layout {:line-cap  "round"
             :line-join "round"}
    :paint  {:line-width    trail-width
-            :line-gradient (trail-gradient-expression)}})
+            :line-gradient (trail-gradient-expression theme)}})

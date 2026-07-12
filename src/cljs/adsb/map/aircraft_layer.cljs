@@ -118,6 +118,7 @@
     [adsb.geo :as geo]
     [adsb.map.maplibre :as maplibre]
     [adsb.map.style :as style]
+    [adsb.map.theme :as theme]
     [adsb.trails :as trails]
     [re-frame.core :as rf]
     [reagent.core :as r]))
@@ -143,18 +144,22 @@
   push replaces its data wholesale, exactly like the aircraft source."
   {:type "geojson" :lineMetrics true :data empty-feature-collection})
 
-(def layer-spec
-  "The aircraft symbol layer: a plane silhouette per positioned aircraft,
-  rotated by track, coloured by the altitude ramp, enlarged and reddened
-  for emergencies, faded when stale. Every knob is data in
-  `adsb.map.style` — this is just the wiring."
-  (style/aircraft-layer-spec layer-id source-id))
+(defn layer-spec
+  "The aircraft symbol layer, printed in `theme`'s edition: a plane
+  silhouette per positioned aircraft, rotated by track, coloured by the
+  altitude ramp, enlarged and reddened for emergencies, faded when
+  stale. Every knob is data in `adsb.map.style` — this is just the
+  wiring."
+  [theme]
+  (style/aircraft-layer-spec theme layer-id source-id))
 
-(def trail-layer-spec
-  "The trail line layer: a fading ribbon behind each aircraft. Added BELOW
-  the aircraft layer so the ribbon sits under the target. Style is data in
-  `adsb.map.style`; this is just the wiring."
-  (style/trail-layer-spec trail-layer-id trail-source-id))
+(defn trail-layer-spec
+  "The trail line layer, printed in `theme`'s edition: a fading ink
+  ribbon behind each aircraft. Added BELOW the aircraft layer so the
+  ribbon sits under the target. Style is data in `adsb.map.style`; this
+  is just the wiring."
+  [theme]
+  (style/trail-layer-spec theme trail-layer-id trail-source-id))
 
 ;; ---------------------------------------------------------------------
 ;; The icon assets. We draw the silhouettes ourselves rather than ship a
@@ -391,11 +396,16 @@
     (on-visibility-change! handler)))
 
 (defn attach!
-  "Wire the aircraft layer onto map `m` (an adsb.map.maplibre/Map). Call
-  once, from the map component's did-mount. Returns a handle for
-  `detach!`. Everything waits on the map's load event; frames arriving
-  before it are covered by app-db's latest-wins buffering (ns docstring)."
-  [m]
+  "Wire the aircraft layer onto map `m` (an adsb.map.maplibre/Map),
+  printed in `theme`'s edition (defaulting to the current one — the map
+  view passes the theme it printed the basemap with, so the two can
+  never disagree). Call from the map component's mount path; the view
+  re-creates map and layer together when the system theme flips. Returns
+  a handle for `detach!`. Everything waits on the map's load event;
+  frames arriving before it are covered by app-db's latest-wins
+  buffering (ns docstring)."
+  ([m] (attach! m @theme/!theme))
+  ([m theme]
   (let [!state (atom {:disposed? false :track nil :tick nil
                       :picture nil :history {}
                       :raf nil :hidden? false :visibility-handler nil
@@ -411,9 +421,9 @@
           ;; the ribbon renders UNDER the plane it trails (add order is z
           ;; order). Its source carries lineMetrics for the gradient.
           (maplibre/add-source! m trail-source-id trail-source-spec)
-          (maplibre/add-layer! m trail-layer-spec)
+          (maplibre/add-layer! m (trail-layer-spec theme))
           (maplibre/add-source! m source-id source-spec)
-          (maplibre/add-layer! m layer-spec)
+          (maplibre/add-layer! m (layer-spec theme))
           ;; The click contract and its hover affordance, through the
           ;; seam. We fire `[:aircraft/select icao]`; adsb-dgb.1 handles it.
           (maplibre/on-layer-click! m layer-id select!)
@@ -457,7 +467,7 @@
           (watch-visibility! m !state)
           (when-not (:hidden? @!state)
             (start-projection-loop! m !state)))))
-    !state))
+    !state)))
 
 (defn detach!
   "Stop pushing into the map: dispose the reaction (which also releases

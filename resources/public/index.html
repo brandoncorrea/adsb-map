@@ -3,6 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- The chart ships in two printed editions (docs/design-direction.md):
+         declaring both lets the UA match form controls and scrollbars to
+         the edition prefers-color-scheme selects. -->
+    <meta name="color-scheme" content="light dark" />
     <title>adsb — live aircraft</title>
     <!-- MapLibre GL CSS, vendored locally (no CDN, no token) so the map
          canvas and attribution control lay out correctly in dev. -->
