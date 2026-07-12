@@ -40,6 +40,21 @@
     (let [env {"ADSB_RECEIVER_LAT" "27.9"}]
       (is (= env (:env (main/env->config env)))))))
 
+(deftest env->config-reads-the-dev-csp-flag
+  (testing "the relaxed dev CSP is OFF unless the environment says the
+            exact word — a security boundary does not get lowered by a
+            typo, a leftover \"0\", or a plausible-looking synonym"
+    (is (false? (:dev-csp? (main/env->config {}))))
+    (is (false? (:dev-csp? (main/env->config {"ADSB_DEV_CSP" "0"}))))
+    (is (false? (:dev-csp? (main/env->config {"ADSB_DEV_CSP" "false"}))))
+    (is (false? (:dev-csp? (main/env->config {"ADSB_DEV_CSP" "yes"}))))
+    (is (false? (:dev-csp? (main/env->config {"ADSB_DEV_CSP" ""})))))
+
+  (testing "and on when it does — `bb dev` sets it; no deployment does"
+    (is (true? (:dev-csp? (main/env->config {"ADSB_DEV_CSP" "true"}))))
+    (is (true? (:dev-csp? (main/env->config {"ADSB_DEV_CSP" " TRUE "})))
+        "tolerant of shell whitespace and case, strict about meaning")))
+
 (deftest env->config-captures-source
   (testing "ADSB_SOURCE is captured so start! can pick the ingest Source"
     (is (= "replay" (:source (main/env->config {"ADSB_SOURCE" "replay"}))))

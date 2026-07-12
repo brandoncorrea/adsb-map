@@ -16,14 +16,26 @@
   dev
   {:doc     "Backend on :8280 + shadow-cljs watch + nREPL, together.
              Config comes from the environment, backfilled from .env by
-             adsb.env — bb does nothing special for it."
+             adsb.env — bb does nothing special for it, EXCEPT ADSB_DEV_CSP.
+
+             ADSB_DEV_CSP=true is set here, and only here. The backend serves
+             a strict Content-Security-Policy (adsb.http.security), and the
+             `shadow-cljs watch` build it is serving ships a dev HUD whose
+             overlay sets style ATTRIBUTES — which that policy refuses. The
+             flag adds one directive (style-src-attr) to unblock the HUD and
+             changes nothing else. The shipped release build has no devtools
+             at all, so production runs strict — see
+             adsb.http.security/dev-content-security-policy."
    :depends [-npm-install]
    :task    (run! p/check
               (doall
-                (for [cmd ["npx shadow-cljs watch app"
-                           "clojure -M:dev"
-                           "clojure -M:nrepl"]]
-                  (p/process {:inherit true :shutdown p/destroy-tree} cmd))))}
+                (for [[cmd env] [["npx shadow-cljs watch app" nil]
+                                 ["clojure -M:dev" {"ADSB_DEV_CSP" "true"}]
+                                 ["clojure -M:nrepl" nil]]]
+                  (p/process (cond-> {:inherit  true
+                                      :shutdown p/destroy-tree}
+                               env (assoc :extra-env env))
+                             cmd))))}
 
   dev-
   {:doc     "shadow-cljs watch + nREPL, together.

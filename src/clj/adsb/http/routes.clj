@@ -10,6 +10,7 @@
   detail (hostnames, config), not something an anonymous internet
   client gets to read (adsb-kh4.4)."
   (:require [adsb.http.handlers :as handlers]
+            [adsb.http.security :as security]
             [adsb.schema :as schema]
             [clojure.tools.logging :as log]
             [muuntaja.core :as muuntaja]
@@ -80,15 +81,28 @@
 
     :state-lookup   icao -> aircraft or nil       (default: empty state)
     :feeder-status  () -> poller status map       (default: unknown)
-    :stream-connect Ring handler opening the SSE  (default: 503)"
-  [{:keys [state-lookup feeder-status stream-connect]
+    :stream-connect Ring handler opening the SSE  (default: 503)
+
+  The security headers wrap the OUTSIDE of the whole thing
+  (adsb.http.security) so they ride the static assets and the 404 too,
+  and so they ship no matter what edge is in front — DigitalOcean's
+  router in production, or nothing at all in front of a bare `bb dev`.
+
+    :dev-csp?  serve the dev Content-Security-Policy, which the
+               shadow-cljs watch build cannot run without
+               (adsb.http.security/dev-content-security-policy).
+               Default false — production is strict and stays strict."
+  [{:keys [state-lookup feeder-status stream-connect dev-csp?]
     :or   {state-lookup   (constantly nil)
            feeder-status  (constantly nil)
-           stream-connect stream-unavailable}}]
-  (ring/ring-handler
-    (router {:state-lookup   state-lookup
-             :feeder-status  feeder-status
-             :stream-connect stream-connect})
-    (ring/routes
-      (ring/create-resource-handler {:path "/"})
-      (ring/create-default-handler))))
+           stream-connect stream-unavailable
+           dev-csp?       false}}]
+  (security/wrap-security-headers
+    (ring/ring-handler
+      (router {:state-lookup   state-lookup
+               :feeder-status  feeder-status
+               :stream-connect stream-connect})
+      (ring/routes
+        (ring/create-resource-handler {:path "/"})
+        (ring/create-default-handler)))
+    dev-csp?))

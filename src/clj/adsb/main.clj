@@ -44,6 +44,21 @@
         (throw (ex-info (str "PORT must be a number, got: " port)
                         {:type ::invalid-port :port port})))))
 
+(def ^:const dev-csp-env
+  "Serves the DEV Content-Security-Policy, which permits the two things
+  shadow-cljs's dev tooling needs and the shipped release build never does
+  — eval (the CLJS REPL) and inline style attributes (the dev HUD). See
+  adsb.http.security. `bb dev` sets this; no deployment does, and the boot
+  warns loudly if one ever tries."
+  "ADSB_DEV_CSP")
+
+(defn dev-csp?
+  "Pure: does the environment ask for the relaxed dev CSP? Only the exact
+  string \"true\" counts — a policy this consequential does not get turned
+  off by a typo or a stray \"0\"."
+  [env]
+  (= "true" (some-> (get env dev-csp-env) str/trim str/lower-case)))
+
 (defn env->config
   "Pure: derive the boot config from an environment map (string ->
   string). PORT defaults to adsb.http.server/default-port.
@@ -55,6 +70,7 @@
   {:port            (parse-port (get env "PORT"))
    :source          (get env config/source-env)
    :ultrafeeder-url (get env config/feeder-url-env)
+   :dev-csp?        (dev-csp? env)
    :env             env})
 
 (defn- ingest-batch!
@@ -111,7 +127,19 @@
   :ok and /healthz shows feeder-status \"ok\" — honestly meaning ingest
   is producing a picture, since there is no feeder whose reachability to
   report."
-  [{:keys [port env] :as config}]
+  [{:keys [port env dev-csp?] :as config}]
+  (when dev-csp?
+    ;; Loud on purpose. This is the one switch in the app that weakens a
+    ;; security boundary, and the failure mode it guards against is a
+    ;; SILENT one: a production box that serves 'unsafe-eval' forever
+    ;; because a variable leaked into its environment. If this line is in
+    ;; a production log, that is the bug.
+    (log/warn (str "CSP RELAXED FOR DEVELOPMENT (" dev-csp-env "=true): "
+                   "script-src allows 'unsafe-eval' (the watch build and the "
+                   "CLJS REPL run on eval), connect-src allows loopback "
+                   "WebSockets (hot reload), style-src-attr allows "
+                   "'unsafe-inline' (the dev HUD). This is for `bb dev` only — "
+                   "it must NEVER be set in a deployed environment.")))
   (let [[source feeder-url feeder-auth] (build-source! config)
         receiver-position (receiver/resolve-position! {:env      env
                                                        :base-url feeder-url
@@ -134,6 +162,7 @@
                              :feeder  #(poll/status poller)})
         http-server       (server/start!
                             {:port           port
+                             :dev-csp?       dev-csp?
                              :feeder-status  #(poll/status poller)
                              :stream-connect #(broadcast/connect!
                                                 broadcaster %)})]

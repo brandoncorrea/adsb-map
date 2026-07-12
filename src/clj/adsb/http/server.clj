@@ -24,6 +24,14 @@
   http-kit answers an over-limit body 413 before a handler runs."
   16384)
 
+(def ^:const server-header
+  "http-kit announces itself in a `Server:` header. A reverse proxy of ours
+  used to strip it; there is no longer a proxy of ours (App Platform,
+  adsb-9n6/kh4.7), so the app declines to send it in the first place. nil
+  means omit. Naming the exact HTTP library and version to an anonymous
+  internet client only ever helps the client."
+  nil)
+
 (defonce ^:private server (atom nil))
 
 (defn start!
@@ -42,7 +50,8 @@
                             {:port                  port
                              :legacy-return-value?  false
                              :max-line              max-request-line-bytes
-                             :max-body              max-request-body-bytes})]
+                             :max-body              max-request-body-bytes
+                             :server-header         server-header})]
          (log/info "adsb http server listening on port"
                    (http-kit/server-port srv))
          (reset! server srv)))))
@@ -55,7 +64,3 @@
     (reset! server nil)
     (log/info "adsb http server stopped"))
   nil)
-
-(comment
-  (start! {:port 0})
-  (stop!))
