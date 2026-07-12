@@ -347,6 +347,97 @@
                :mlat)))))
 
 ;; ---------------------------------------------------------------------
+;; The cast shadow (design-direction §8) — the offset is pure geometry,
+;; so the curve and the counter-rotation are proved as math, no map.
+
+(defn- offset-magnitude [[dx dy]]
+  (Math/sqrt (+ (* dx dx) (* dy dy))))
+
+(defn- rotate-cw
+  "Rotate `[x y]` clockwise by `deg` in icon coordinates (y down) — what
+  MapLibre's `icon-rotate` does to an `icon-offset`. The test's model of
+  the rotation `shadow-offset` pre-counters."
+  [[x y] deg]
+  (let [a (* deg (/ Math/PI 180))]
+    [(- (* x (Math/cos a)) (* y (Math/sin a)))
+     (+ (* x (Math/sin a)) (* y (Math/cos a)))]))
+
+(deftest shadow-offset-curve
+  (testing "on the deck the shadow is tucked exactly beneath the plane"
+    (is (close? 0 (offset-magnitude (geo/shadow-offset 0 97.14)) 1e-9)))
+
+  (testing "the curve is a square root — half the full throw by a quarter
+            of the cap, so the drama low in the sky stays legible"
+    (is (close? (/ geo/shadow-max-offset 2)
+                (offset-magnitude (geo/shadow-offset 10000 0))
+                1e-9)))
+
+  (testing "full throw at the cap, and no further above it"
+    (is (close? geo/shadow-max-offset
+                (offset-magnitude (geo/shadow-offset 40000 0))
+                1e-9))
+    (is (= (geo/shadow-offset 40000 0) (geo/shadow-offset 45000 0))))
+
+  (testing "the throw only ever grows with altitude — a closing shadow can
+            only mean descent"
+    (let [mags (map #(offset-magnitude (geo/shadow-offset % 0))
+                    [0 500 2000 10000 20000 30000 40000])]
+      (is (apply < mags))))
+
+  (testing "a (barometric) altitude below zero clamps to the deck rather
+            than throwing the shadow backwards"
+    (is (close? 0 (offset-magnitude (geo/shadow-offset -75 0)) 1e-9))))
+
+(deftest shadow-offset-counter-rotation
+  (let [d    geo/shadow-max-offset
+        diag (/ d (Math/sqrt 2))]
+    (testing "track 0: the icon frame IS the map frame, so the offset is
+              the raw SE throw — light from the NW"
+      (let [[dx dy] (geo/shadow-offset 40000 0)]
+        (is (close? diag dx 1e-9))
+        (is (close? diag dy 1e-9))))
+
+    (testing "a plane flying SE carries its shadow dead ahead in icon
+              space — MapLibre's rotation swings it back to SE"
+      (let [[dx dy] (geo/shadow-offset 40000 135)]
+        (is (close? 0 dx 1e-9))
+        (is (close? (- d) dy 1e-9))))
+
+    (testing "for ANY track, applying the icon rotation recovers the same
+              fixed SE map-space shadow — one sun over the whole chart"
+      (doseq [track [0 45 90 135 222.5 270 359]]
+        (let [[mx my] (rotate-cw (geo/shadow-offset 40000 track) track)]
+          (is (close? diag mx 1e-9) (str "track " track))
+          (is (close? diag my 1e-9) (str "track " track)))))
+
+    (testing "a nil track reads as 0 — the track-less shadow is the
+              symmetric dot, so the fallback rotation is harmless"
+      (is (= (geo/shadow-offset 40000 nil) (geo/shadow-offset 40000 0))))))
+
+(deftest shadow-offset-property
+  (testing "a numeric altitude earns a shadow-offset, computed from its
+            altitude and track"
+    (is (= (geo/shadow-offset 34775 97.14)
+           (:shadow-offset (:properties (geo/aircraft->feature cruising 0))))))
+
+  (testing "on the ground there is NO shadow — the tarmac casts nothing"
+    (is (not (contains?
+               (:properties
+                 (geo/aircraft->feature
+                   (-> cruising
+                       (dissoc :aircraft/altitude-ft)
+                       (assoc :aircraft/on-ground? true))
+                   0))
+               :shadow-offset))))
+
+  (testing "absent altitude casts NO shadow — absent is not zero"
+    (is (not (contains?
+               (:properties
+                 (geo/aircraft->feature
+                   (dissoc cruising :aircraft/altitude-ft) 0))
+               :shadow-offset)))))
+
+;; ---------------------------------------------------------------------
 ;; Client-side age-out: the long-silent cast member is the acceptance
 ;; test. seen-at-ms is stamped by merge-batch, so we age the fixture
 ;; through the real boundary rather than hand-write the receive time.

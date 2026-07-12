@@ -100,6 +100,83 @@
         "aged reads dimmer, not gone")))
 
 ;; ---------------------------------------------------------------------
+;; The cast shadow (design-direction §8, adsb-dgb.8) — a prototype behind
+;; a toggle. The spec is DATA, so the contract is proved as data: the
+;; layer draws only shadow-bearing features, reads the geo-computed
+;; offset, wears the edition's shadow ink, fades with altitude AND age,
+;; and softens as the plane climbs.
+
+(deftest shadow-prototype-is-behind-a-toggle
+  (is (boolean? style/shadows-enabled?)
+      "the visual pass accepts or rejects the invention by flipping ONE
+       constant"))
+
+(deftest shadow-layer-draws-only-what-casts-a-shadow
+  (doseq [theme themes]
+    (let [spec (style/shadow-layer-spec theme "aircraft-shadows" "aircraft")]
+      (is (= "symbol" (:type spec)))
+      (is (= "aircraft" (:source spec))
+          "the SAME source as the aircraft layer — no second setData")
+      (testing "the filter admits only features carrying shadow-offset —
+                on-ground and altitude-unknown aircraft cast NOTHING
+                (adsb.geo omits the property; absent is not zero)"
+        (is (= ["has" "shadow-offset"] (:filter spec))))
+      (testing "the offset is the geo-computed [dx dy], read back as the
+                two-number array icon-offset demands"
+        (is (= ["array" "number" 2 ["get" "shadow-offset"]]
+               (get-in spec [:layout :icon-offset]))))
+      (testing "the shadow is the plane's true silhouette: same rotation,
+                same size treatment, pinned to the map like the plane"
+        (is (= ["get" "track"] (get-in spec [:layout :icon-rotate])))
+        (is (= "map" (get-in spec [:layout :icon-rotation-alignment])))
+        (is (= (style/icon-size-expression)
+               (get-in spec [:layout :icon-size]))))
+      (testing "the soft (pre-blurred) silhouettes, mirroring the
+                plane/dot choice"
+        (is (= ["case" ["has" "track"]
+                style/shadow-plane-icon-id style/shadow-dot-icon-id]
+               (get-in spec [:layout :icon-image]))))
+      (testing "no shadow is dropped by collision — it belongs to a plane
+                that is always drawn"
+        (is (true? (get-in spec [:layout :icon-allow-overlap])))))))
+
+(deftest shadow-wears-the-editions-ink
+  (doseq [theme themes]
+    (let [spec (style/shadow-layer-spec theme "aircraft-shadows" "aircraft")
+          ink  (:shadow-ink (style/palette theme))]
+      (is (some? ink) "each edition carries a shadow ink")
+      (is (= ink (get-in spec [:paint :icon-color])))
+      (is (= ink (get-in spec [:paint :icon-halo-color]))
+          "the penumbra is the same ink, softened — never a second colour"))))
+
+(deftest shadow-opacity-falls-with-altitude-and-fades-with-age
+  (doseq [theme themes]
+    (let [expr  (style/shadow-opacity-expression theme)
+          stops (:shadow-opacity-stops (style/palette theme))]
+      (is (= "*" (first expr)) "altitude base × age fade, multiplied")
+      (testing "the altitude base falls as the plane climbs — a high
+                shadow is fainter, never a rival glyph"
+        (let [ramp (nth expr 1)]
+          (is (= ["interpolate" ["linear"] ["get" "altitude"]] (take 3 ramp)))
+          (is (= (mapcat identity stops) (drop 3 ramp)))
+          (is (> (second (first stops)) (second (last stops)))
+              "alpha at the deck exceeds alpha at the cap")))
+      (testing "the age factor is the SAME continuous fade the aircraft
+                wears — the shadow fades with its plane, never outlives it"
+        (is (= (style/icon-opacity-expression) (nth expr 2)))))))
+
+(deftest shadow-softens-as-the-plane-climbs
+  (let [expr (style/shadow-softness-expression)]
+    (is (= ["interpolate" ["linear"] ["get" "altitude"]] (take 3 expr)))
+    (let [[[low-ft low-px] [high-ft high-px]] style/shadow-softness-stops]
+      (is (< low-ft high-ft))
+      (is (< low-px high-px) "the penumbra deepens with altitude"))
+    (doseq [theme themes]
+      (let [spec (style/shadow-layer-spec theme "s" "a")]
+        (is (= expr (get-in spec [:paint :icon-halo-width])))
+        (is (= expr (get-in spec [:paint :icon-halo-blur])))))))
+
+;; ---------------------------------------------------------------------
 ;; The two printed editions (adsb-dgb.7 / design-direction §2): one plate,
 ;; two inks. Same roles, same feet, no colour carried over unexamined.
 
@@ -115,7 +192,10 @@
               the edition switch unchanged (a shared hex would be the first
               symptom of an invert-and-forget)"
       (doseq [role [:ground-color :unknown-color :emergency-color
-                    :halo-color :trail-rgb]]
+                    :halo-color :trail-rgb
+                    ;; the shadow was re-reasoned for dark stock, not
+                    ;; inherited: different ink AND different alphas
+                    :shadow-ink :shadow-opacity-stops]]
         (is (not= (role day) (role night)) (str role)))
       (is (= [] (filter identity
                         (map (fn [[_ d] [_ n]] (when (= d n) d))

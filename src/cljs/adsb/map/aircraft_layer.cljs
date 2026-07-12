@@ -129,6 +129,8 @@
 (def ^:const trail-source-id "aircraft-trails")
 (def ^:const trail-layer-id "aircraft-trails")
 
+(def ^:const shadow-layer-id "aircraft-shadows")
+
 (def empty-feature-collection
   {:type "FeatureCollection" :features []})
 
@@ -160,6 +162,16 @@
   is just the wiring."
   [theme]
   (style/trail-layer-spec theme trail-layer-id trail-source-id))
+
+(defn shadow-layer-spec
+  "The cast-shadow layer (design-direction §8, adsb-dgb.8): the aircraft's
+  soft silhouette thrown SE onto the paper, offset by altitude. Reads the
+  SAME source as the aircraft layer — every push feeds both for free —
+  and is added between trail and aircraft: the shadow falls ON the
+  printed paper (over the trail's ink) and the plane flies over all of
+  it. Style is data in `adsb.map.style`; this is just the wiring."
+  [theme]
+  (style/shadow-layer-spec theme shadow-layer-id source-id))
 
 ;; ---------------------------------------------------------------------
 ;; The icon assets. We draw the silhouettes ourselves rather than ship a
@@ -210,6 +222,35 @@
     (.arc ctx c c (* size 0.32) 0 (* 2 js/Math.PI))
     (.fill ctx)))
 
+(def ^:const shadow-blur-px
+  "Canvas blur radius baked into the shadow silhouettes. This is what
+  turns a hard alpha mask into a soft alpha GRADIENT — a pseudo distance
+  field — which is the whole trick: registered SDF, that gradient is what
+  gives `icon-halo-blur` room to deepen the penumbra with altitude. The
+  crisp plane icons have binary alpha, so a halo on THEM has nothing to
+  soften into; the shadow needed its own pre-softened image."
+  1.5)
+
+(def ^:const shadow-inset-scale
+  "The shadow silhouette is drawn slightly smaller about the canvas
+  centre so the baked blur never clips at the canvas edge — and a
+  shadow a touch smaller than its plane reads as beneath it, not
+  beside it."
+  0.85)
+
+(defn- soften
+  "Wrap `draw!` to print blurred and inset — the shadow variant of a
+  silhouette. The transform scales about the canvas centre; the canvas
+  filter does the blurring at draw time, so the returned ImageData
+  carries the soft alpha ramp itself."
+  [draw!]
+  (fn [ctx size]
+    (let [margin (* size (/ (- 1 shadow-inset-scale) 2))]
+      (set! (.-filter ctx) (str "blur(" shadow-blur-px "px)"))
+      (.translate ctx margin margin)
+      (.scale ctx shadow-inset-scale shadow-inset-scale)
+      (draw! ctx size))))
+
 (defn ->icon-image
   "Draw `draw!` (a fn of ctx and size) on a fresh detached canvas and
   return its ImageData — white on transparent, ready to register SDF. No
@@ -229,7 +270,14 @@
   layer is added, or MapLibre reports a missing image."
   [m]
   (maplibre/add-image! m style/plane-icon-id (->icon-image draw-plane!) {:sdf true})
-  (maplibre/add-image! m style/dot-icon-id (->icon-image draw-dot!) {:sdf true}))
+  (maplibre/add-image! m style/dot-icon-id (->icon-image draw-dot!) {:sdf true})
+  ;; The cast shadow's soft variants (adsb-dgb.8) — registered even when
+  ;; the layer toggle is off: two tiny ImageDatas cost nothing, and the
+  ;; icon inventory stays independent of the style experiment.
+  (maplibre/add-image! m style/shadow-plane-icon-id
+                       (->icon-image (soften draw-plane!)) {:sdf true})
+  (maplibre/add-image! m style/shadow-dot-icon-id
+                       (->icon-image (soften draw-dot!)) {:sdf true}))
 
 (defn- select!
   "The click contract: dispatch selection with the icao from the clicked
@@ -423,6 +471,11 @@
           (maplibre/add-source! m trail-source-id trail-source-spec)
           (maplibre/add-layer! m (trail-layer-spec theme))
           (maplibre/add-source! m source-id source-spec)
+          ;; The cast-shadow prototype (adsb-dgb.8), behind its style
+          ;; toggle: shadows print over the trail ink (a shadow falls on
+          ;; whatever the paper carries) and under the aircraft.
+          (when style/shadows-enabled?
+            (maplibre/add-layer! m (shadow-layer-spec theme)))
           (maplibre/add-layer! m (layer-spec theme))
           ;; The click contract and its hover affordance, through the
           ;; seam. We fire `[:aircraft/select icao]`; adsb-dgb.1 handles it.
