@@ -4,6 +4,7 @@
   `adsb.views/app-root`."
   (:require
     [adsb.events]
+    [adsb.stream :as stream]
     [adsb.views :as views]
     [re-frame.core :as rf]
     [reagent.dom.client :as rdom]))
@@ -22,7 +23,9 @@
     (rdom/render @root [views/app-root])))
 
 (defn init!
-  "Called by the :app build on page load. Initialize the app-db, then mount."
+  "Called by the :app build on page load. Initialize the app-db, mount the
+  shell, then open the SSE stream so the map starts receiving aircraft."
   []
   (rf/dispatch-sync [:app/initialize-db])
-  (mount!))
+  (mount!)
+  (stream/start!))
