@@ -20,11 +20,8 @@
   Pure: the receiver position, the previous picture, and time are all
   arguments. Fetching the receiver position is I/O and lives at the
   clj edge."
-  (:require
-    [adsb.aircraft :as aircraft]
-    [adsb.geo :as geo]))
-
-(declare beyond-horizon? flag-position-jump position-jump?)
+  (:require [adsb.aircraft :as aircraft]
+            [adsb.geo :as geo]))
 
 ;; ---------------------------------------------------------------------
 ;; Range gate
@@ -34,6 +31,14 @@
   conditions rarely carry 1090 MHz much past 250 nm, so anything
   further did not come from this antenna's sky."
   400000)
+
+(defn beyond-horizon?
+  "True when the aircraft reports a position strictly further from the
+  receiver than max-range-m. False for a position-less aircraft."
+  [aircraft receiver-position max-range-m]
+  (boolean
+    (when-let [position (:aircraft/position aircraft)]
+      (> (geo/distance receiver-position position) max-range-m))))
 
 (defn gate-range
   "The batch without aircraft whose position lies beyond the
@@ -49,13 +54,44 @@
           batch)
     batch))
 
-(defn beyond-horizon?
-  "True when the aircraft reports a position strictly further from the
-  receiver than max-range-m. False for a position-less aircraft."
-  [aircraft receiver-position max-range-m]
-  (boolean
-    (when-let [position (:aircraft/position aircraft)]
-      (> (geo/distance receiver-position position) max-range-m))))
+(def ^:const ^:private ms-per-hour 3600000)
+
+(defn position-jump?
+  "True when reaching `position` at `observed-at-ms` from the
+  aircraft's previous observation implies a speed strictly above
+  max-implied-speed-kt. Zero-or-negative elapsed time with a changed
+  position is the most impossible jump of all; with an unchanged
+  position it is just the feeder repeating itself."
+  [{previous-position :aircraft/position
+    previous-at-ms    :aircraft/seen-at-ms}
+   position observed-at-ms max-implied-speed-kt]
+  (let [elapsed-ms (- observed-at-ms previous-at-ms)
+        distance-m (geo/distance previous-position position)]
+    (if (pos? elapsed-ms)
+      (> (/ (geo/meters->nm distance-m)
+            (/ elapsed-ms ms-per-hour))
+         max-implied-speed-kt)
+      (pos? distance-m))))
+
+(defn- flag-position-jump
+  "One aircraft's step of flag-position-jumps."
+  [picture {:aircraft/keys [icao position] :as observation}
+   captured-at-ms max-implied-speed-kt]
+  (let [previous (get picture icao)]
+    (cond
+      (nil? position)
+      (cond-> observation
+              (:aircraft/position-suspect? previous)
+              (assoc :aircraft/position-suspect? true))
+
+      (and (aircraft/positioned? previous)
+           (position-jump? previous position
+                           (aircraft/observed-at-ms observation
+                                                    captured-at-ms)
+                           max-implied-speed-kt))
+      (assoc observation :aircraft/position-suspect? true)
+
+      :else observation)))
 
 ;; ---------------------------------------------------------------------
 ;; Position-jump flagging
@@ -65,8 +101,6 @@
   per-field ceiling (adsb.schema/max-plausible-ground-speed-kt) so
   the two layers never disagree about a fast-but-real aircraft."
   1200)
-
-(def ^:const ^:private ms-per-hour 3600000)
 
 (defn flag-position-jumps
   "The batch with :aircraft/position-suspect? true on every aircraft
@@ -96,40 +130,3 @@
                                              captured-at-ms
                                              default-max-implied-speed-kt)
                         captured-at-ms))
-
-(defn position-jump?
-  "True when reaching `position` at `observed-at-ms` from the
-  aircraft's previous observation implies a speed strictly above
-  max-implied-speed-kt. Zero-or-negative elapsed time with a changed
-  position is the most impossible jump of all; with an unchanged
-  position it is just the feeder repeating itself."
-  [{previous-position :aircraft/position
-    previous-at-ms    :aircraft/seen-at-ms}
-   position observed-at-ms max-implied-speed-kt]
-  (let [elapsed-ms (- observed-at-ms previous-at-ms)
-        distance-m (geo/distance previous-position position)]
-    (if (pos? elapsed-ms)
-      (> (/ (geo/meters->nm distance-m)
-            (/ elapsed-ms ms-per-hour))
-         max-implied-speed-kt)
-      (pos? distance-m))))
-
-(defn- flag-position-jump
-  "One aircraft's step of flag-position-jumps."
-  [picture {:aircraft/keys [icao position] :as observation}
-   captured-at-ms max-implied-speed-kt]
-  (let [previous (get picture icao)]
-    (cond
-      (nil? position)
-      (cond-> observation
-        (:aircraft/position-suspect? previous)
-        (assoc :aircraft/position-suspect? true))
-
-      (and (aircraft/positioned? previous)
-           (position-jump? previous position
-                           (aircraft/observed-at-ms observation
-                                                    captured-at-ms)
-                           max-implied-speed-kt))
-      (assoc observation :aircraft/position-suspect? true)
-
-      :else observation)))

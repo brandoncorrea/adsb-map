@@ -10,8 +10,6 @@
   aircraft absent from a single poll is retained — it leaves the
   picture by silence, never by absence from one snapshot.")
 
-(declare ->observation merge-observation)
-
 (def ^:const stale-threshold-ms 60000)
 
 (def ^:const age-out-threshold-ms
@@ -50,6 +48,26 @@
   [{:aircraft/keys [seen-s]} captured-at-ms]
   (long (- captured-at-ms (* 1000 (or seen-s 0)))))
 
+(defn- ->observation
+  "Stamp an ingested aircraft with the absolute instant it was heard
+  (observed-at-ms). The capture-relative :aircraft/seen-s is dropped —
+  it rots the moment the poll ends; :aircraft/seen-at-ms is its
+  durable form."
+  [aircraft captured-at-ms]
+  (-> aircraft
+      (dissoc :aircraft/seen-s)
+      (assoc :aircraft/seen-at-ms
+             (observed-at-ms aircraft captured-at-ms))))
+
+(defn- merge-observation
+  "One aircraft's step of merge-batch: the new observation wins, except
+  a position-less observation inherits the last-known position."
+  [previous observation]
+  (if (or (positioned? observation) (not (positioned? previous)))
+    observation
+    (assoc observation
+           :aircraft/position (:aircraft/position previous))))
+
 (defn merge-batch
   "Merge one coerced feeder batch — a full snapshot of what the feeder
   currently tracks, captured at captured-at-ms — into the picture.
@@ -80,23 +98,3 @@
   (into {}
         (remove (fn [[_icao aircraft]] (aged-out? aircraft now-ms)))
         picture))
-
-(defn- ->observation
-  "Stamp an ingested aircraft with the absolute instant it was heard
-  (observed-at-ms). The capture-relative :aircraft/seen-s is dropped —
-  it rots the moment the poll ends; :aircraft/seen-at-ms is its
-  durable form."
-  [aircraft captured-at-ms]
-  (-> aircraft
-      (dissoc :aircraft/seen-s)
-      (assoc :aircraft/seen-at-ms
-             (observed-at-ms aircraft captured-at-ms))))
-
-(defn- merge-observation
-  "One aircraft's step of merge-batch: the new observation wins, except
-  a position-less observation inherits the last-known position."
-  [previous observation]
-  (if (or (positioned? observation) (not (positioned? previous)))
-    observation
-    (assoc observation
-           :aircraft/position (:aircraft/position previous))))

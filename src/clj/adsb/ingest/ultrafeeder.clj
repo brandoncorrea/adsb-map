@@ -7,14 +7,12 @@
 
   Stateless per poll: open!/close! are no-ops. A future SBS/Beast Source
   holds a socket instead; this one just issues a GET."
-  (:require
-    [adsb.ingest.coerce :as coerce]
-    [adsb.ingest.source :as source]
-    [cheshire.core :as json]
-    [org.httpkit.client :as http]))
+  (:require [adsb.ingest.coerce :as coerce]
+            [adsb.ingest.source :as source]
+            [cheshire.core :as json]
+            [org.httpkit.client :as http]))
 
 (def ^:private aircraft-json-path "/data/aircraft.json")
-
 (def ^:const default-timeout-ms 5000)
 
 (defn- parse-batch
@@ -27,16 +25,21 @@
       :aircraft
       coerce/->aircraft-batch))
 
+(defn- get-text! [url opts]
+  (-> {:url    url
+       :method :get
+       :as     :text}
+      (merge opts)
+      http/request
+      deref))
+
 (defn- fetch-batch!
   "GET aircraft.json once and return the coerced batch, or throw ex-info
   the poll loop can turn into feeder status. A request error (the feeder is
   down) and a non-200 status are both failures."
   [base-url timeout-ms]
   (let [url (str base-url aircraft-json-path)
-        {:keys [status body error]} @(http/request {:url     url
-                                                     :method  :get
-                                                     :timeout timeout-ms
-                                                     :as      :text})]
+        {:keys [status body error]} (get-text! url {:timeout timeout-ms})]
     (cond
       error
       (throw (ex-info "Feeder request failed"
@@ -59,8 +62,7 @@
   "A Source polling `base-url`/data/aircraft.json. `base-url` should be the
   validated feeder URL (adsb.ingest.config/validate-feeder-url)."
   ([base-url] (->source base-url default-timeout-ms))
-  ([base-url timeout-ms]
-   (->UltrafeederSource base-url timeout-ms)))
+  ([base-url timeout-ms] (->UltrafeederSource base-url timeout-ms)))
 
 (comment
   (source/fetch! (->source "http://dietpi.local:8100")))

@@ -5,37 +5,12 @@
   see docs/validation-boundaries.md. One malformed entry must never kill
   a batch, and the poll loop feeding it must never die; a reject costs
   one bounded log line, never the whole payload."
-  (:require
-    [adsb.schema :as schema]
-    [clojure.string :as str]
-    [malli.core :as m]
-    [malli.error :as me]
-    [malli.transform :as mt]
-    #?(:clj [clojure.tools.logging :as log])))
-
-(declare ->aircraft-or-log! coerce-raw raw->aircraft
-         drop-implausible-fields)
-
-(defn ->aircraft-batch
-  "Coerce a whole feeder batch into domain aircraft. A malformed entry
-  yields the rest of the batch plus one log line — never an exception."
-  [raw-entries]
-  (->> raw-entries
-       (keep ->aircraft-or-log!)
-       vec))
-
-(defn ->aircraft
-  "Coerce one raw feeder entry into a domain aircraft, or nil when it
-  cannot be one (not schema-valid, or no usable hex identity).
-
-  Position-less aircraft are kept: heard-but-never-positioned is the
-  most common real class of input, and it belongs in the sidebar even
-  though it gets no map feature. See docs/validation-boundaries.md."
-  [raw]
-  (some-> raw
-          coerce-raw
-          raw->aircraft
-          drop-implausible-fields))
+  (:require [adsb.schema :as schema]
+            [clojure.string :as str]
+            [malli.core :as m]
+            [malli.error :as me]
+            [malli.transform :as mt]
+            #?(:clj [clojure.tools.logging :as log])))
 
 ;; ---------------------------------------------------------------------
 ;; Schema pass
@@ -66,18 +41,17 @@
            seen rssi]}]
   (let [callsign (some-> flight str/trim not-empty)]
     (cond-> {:aircraft/icao (str/lower-case hex)}
-      callsign (assoc :aircraft/callsign callsign)
-      (and lat lon) (assoc :aircraft/position {:geo/lat lat
-                                               :geo/lon lon})
-      (number? alt_baro) (assoc :aircraft/altitude-ft alt_baro)
-      ;; alt_baro is the string "ground" on the tarmac, not a number.
-      (= "ground" alt_baro) (assoc :aircraft/on-ground? true)
-      squawk (assoc :aircraft/squawk squawk)
-      gs (assoc :aircraft/ground-speed-kt gs)
-      track (assoc :aircraft/track-deg track)
-      baro_rate (assoc :aircraft/baro-rate-fpm baro_rate)
-      seen (assoc :aircraft/seen-s seen)
-      rssi (assoc :aircraft/rssi rssi))))
+            callsign (assoc :aircraft/callsign callsign)
+            (and lat lon) (assoc :aircraft/position {:geo/lat lat :geo/lon lon})
+            (number? alt_baro) (assoc :aircraft/altitude-ft alt_baro)
+            ;; alt_baro is the string "ground" on the tarmac, not a number.
+            (= "ground" alt_baro) (assoc :aircraft/on-ground? true)
+            squawk (assoc :aircraft/squawk squawk)
+            gs (assoc :aircraft/ground-speed-kt gs)
+            track (assoc :aircraft/track-deg track)
+            baro_rate (assoc :aircraft/baro-rate-fpm baro_rate)
+            seen (assoc :aircraft/seen-s seen)
+            rssi (assoc :aircraft/rssi rssi))))
 
 ;; ---------------------------------------------------------------------
 ;; Plausibility pass — a separate layer from schema validity
@@ -93,17 +67,29 @@
   FIELD, never the aircraft — and is never clamped into range."
   [{:aircraft/keys [altitude-ft ground-speed-kt] :as aircraft}]
   (cond-> aircraft
-    (and altitude-ft (not (plausible-altitude? altitude-ft)))
-    (dissoc :aircraft/altitude-ft)
+          (and altitude-ft (not (plausible-altitude? altitude-ft)))
+          (dissoc :aircraft/altitude-ft)
 
-    (and ground-speed-kt (not (plausible-ground-speed? ground-speed-kt)))
-    (dissoc :aircraft/ground-speed-kt)))
+          (and ground-speed-kt (not (plausible-ground-speed? ground-speed-kt)))
+          (dissoc :aircraft/ground-speed-kt)))
+
+(defn ->aircraft
+  "Coerce one raw feeder entry into a domain aircraft, or nil when it
+  cannot be one (not schema-valid, or no usable hex identity).
+
+  Position-less aircraft are kept: heard-but-never-positioned is the
+  most common real class of input, and it belongs in the sidebar even
+  though it gets no map feature. See docs/validation-boundaries.md."
+  [raw]
+  (some-> raw
+          coerce-raw
+          raw->aircraft
+          drop-implausible-fields))
 
 ;; ---------------------------------------------------------------------
 ;; Rejection logging — one bounded line per reject
 
 (def ^:private max-logged-hex-chars 24)
-
 (def ^:private max-logged-reason-chars 240)
 
 (defn- bounded
@@ -115,17 +101,17 @@
 
 (defn- rejection-reason
   [raw]
-  (me/humanize (explain-raw raw)))
+  (-> raw explain-raw me/humanize))
 
 (defn- log-rejection!
   "One bounded log line per rejected entry — enough context to debug,
   never the whole payload. Returns nil so `keep` drops the entry."
   [raw reason]
-  (let [context {:hex (bounded (when (map? raw) (:hex raw))
-                               max-logged-hex-chars)
+  (let [context {:hex   (bounded (when (map? raw) (:hex raw))
+                                 max-logged-hex-chars)
                  :error (bounded reason max-logged-reason-chars)}]
-    #?(:clj (log/warn "Rejected aircraft" context)
-       :cljs (js/console.warn "Rejected aircraft" (pr-str context)))
+    #?(:clj  (log/warn "Rejected aircraft" context)
+       :cljs (.warn js/console "Rejected aircraft" (pr-str context)))
     nil))
 
 (defn- ->aircraft-or-log!
@@ -137,3 +123,11 @@
         (log-rejection! raw (rejection-reason raw)))
     (catch #?(:clj Exception :cljs :default) e
       (log-rejection! raw (ex-message e)))))
+
+(defn ->aircraft-batch
+  "Coerce a whole feeder batch into domain aircraft. A malformed entry
+  yields the rest of the batch plus one log line — never an exception."
+  [raw-entries]
+  (->> raw-entries
+       (keep ->aircraft-or-log!)
+       vec))

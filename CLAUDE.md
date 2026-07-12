@@ -75,6 +75,33 @@ CLJS tests run in a **real browser**, not jsdom — jsdom has no layout engine a
 WebGL, so MapLibre cannot initialize and `getBoundingClientRect` returns zeros. Do
 not "simplify" this to jsdom; it produces a green suite that proves nothing.
 
+## The REPL
+
+**An nREPL is already running on port 7888 when you start.** `bb dev` brings it up
+alongside the backend and the shadow watch. **Do not start your own** — a second `bb dev`
+collides on 7888 and 8280. If `clojure_eval` fails to connect, the REPL is down: say so
+and stop. Do not work around it by guessing.
+
+Clojure MCP exposes it as `clojure_eval`. The tools are deferred, so load them first:
+`ToolSearch` with `select:mcp__clojure-mcp__clojure_eval`.
+
+Use it. Verify behavior by evaluating against the running system instead of reasoning
+from source. `src/cljc/` is pure and takes time as an argument, so anything there can be
+exercised directly with a literal map and a literal `now-ms` — no fixtures, no mocking,
+no clock:
+
+```clojure
+(require '[adsb.aircraft :as ac] :reload)  ; :reload — always, or you get a stale namespace
+ac/age-out-threshold-ms                          ;=> 300000
+(ac/aged-out? #:aircraft{:seen-at-ms 0} 300001)  ;=> true — silent 5 min, out of the picture
+```
+
+That port is the JVM REPL. ClojureScript evaluation goes through shadow-cljs on its own
+nREPL — pass that port to `clojure_eval` explicitly.
+
+**The live-feeder rule extends here.** Slurping `dietpi.local:8100` from the REPL is
+testing against a live feeder, and it is still forbidden. Replay a recorded payload.
+
 ## Architecture Overview
 
 A live aircraft map. An ultrafeeder container on the home server receives ADS-B
@@ -126,4 +153,6 @@ The load-bearing ones:
   can inject fake aircraft. See `docs/validation-boundaries.md` — read it before
   touching ingest.
 - **Never test against a live feeder.** The sky is not a fixture. Replay a recorded
-  payload.
+  payload. This includes the REPL.
+- **There is a REPL. Use it.** It's already running — see "The REPL" above. Evaluate
+  against the running system rather than reasoning from source.

@@ -6,10 +6,8 @@
 
   The validator is pure: it takes the string. Reading the environment stays
   at the caller edge (adsb.main)."
-  (:require
-    [clojure.string :as str])
-  (:import
-    (java.net URI URISyntaxException)))
+  (:require [clojure.string :as str])
+  (:import (java.net URI URISyntaxException)))
 
 (def ^:const feeder-url-env "ADSB_ULTRAFEEDER_URL")
 

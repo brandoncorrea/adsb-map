@@ -92,9 +92,7 @@
 ;; adsb.ingest.plausibility.
 
 (def ^:const min-plausible-altitude-ft -1500)  ; below-sea-level airports
-
 (def ^:const max-plausible-altitude-ft 60000)  ; above all civil traffic
-
 (def ^:const max-plausible-ground-speed-kt 1000)
 
 (def plausible-altitude-ft

@@ -7,16 +7,13 @@
   Positions are the domain's `{:geo/lat _ :geo/lon _}` maps. Distances
   are METERS; `meters->km` / `meters->nm` convert. Bearings are degrees
   clockwise from true north, in [0, 360)."
-  (:require
-    [adsb.aircraft :as aircraft]))
+  (:require [adsb.aircraft :as aircraft]))
 
 ;; ---------------------------------------------------------------------
 ;; Constants
 
 (def ^:const earth-radius-m 6371000)   ; mean radius, the haversine R
-
 (def ^:const meters-per-km 1000)
-
 (def ^:const meters-per-nm 1852)       ; the nautical mile is exactly this
 
 ;; ---------------------------------------------------------------------

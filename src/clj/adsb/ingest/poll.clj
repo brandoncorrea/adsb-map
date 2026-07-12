@@ -10,20 +10,17 @@
   Feeder status lives in the atom returned inside the poller (read it with
   `status`). The /healthz handler (adsb-kbm.2) and the SSE chrome
   (adsb-nqf.2) will consume it once they're wired; nothing reads it yet."
-  (:require
-    [adsb.ingest.source :as source]
-    [clojure.tools.logging :as log]))
+  (:require [adsb.ingest.source :as source]
+            [clojure.tools.logging :as log]))
 
 (def ^:const default-interval-ms 1000)
-
 (def ^:const default-initial-backoff-ms 1000)
-
 (def ^:const default-max-backoff-ms 30000)
 
 (def ^:private initial-status
-  {:feeder/status           :starting
-   :feeder/last-success-ms  nil
-   :feeder/last-error       nil})
+  {:feeder/status          :starting
+   :feeder/last-success-ms nil
+   :feeder/last-error      nil})
 
 ;; ---------------------------------------------------------------------
 ;; Status transitions — logged once per state change, not per tick.
@@ -34,9 +31,9 @@
   [status]
   (let [recovered? (= :down (:feeder/status @status))]
     (swap! status assoc
-           :feeder/status          :ok
+           :feeder/status :ok
            :feeder/last-success-ms (System/currentTimeMillis)
-           :feeder/last-error      nil)
+           :feeder/last-error nil)
     (when recovered?
       (log/info "Feeder recovered"))))
 
@@ -46,7 +43,7 @@
   [status ^Throwable e]
   (let [already-down? (= :down (:feeder/status @status))]
     (swap! status assoc
-           :feeder/status     :down
+           :feeder/status :down
            :feeder/last-error (ex-message e))
     (when-not already-down?
       (log/warn e "Feeder unreachable; backing off until it returns"))))
@@ -75,11 +72,10 @@
                 (catch Throwable e
                   (mark-down! status e)
                   ::failed))]
-    (if (= ::failed batch)
-      false
-      (do (deliver-batch! on-batch! batch)
-          (mark-ok! status)
-          true))))
+    (when-not (= ::failed batch)
+      (deliver-batch! on-batch! batch)
+      (mark-ok! status)
+      true)))
 
 (defn- sleep!
   "Sleep, returning false if interrupted (stop! interrupts the thread) so
@@ -88,8 +84,7 @@
   (try
     (Thread/sleep (long ms))
     true
-    (catch InterruptedException _
-      false)))
+    (catch InterruptedException _)))
 
 (defn- run-loop!
   [{:keys [source on-batch! status running?
