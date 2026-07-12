@@ -1,0 +1,95 @@
+name: CI
+
+# bb lint + bb test on every push to master and on pull requests.
+# The CLJS suite runs in real headless Chromium via the Playwright driver
+# (script/run-browser-tests.mjs) — exactly as it runs locally. It is never
+# downgraded to jsdom or skipped.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# A newer push to the same ref cancels an in-flight run for that ref.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Installs the Clojure CLI and babashka together.
+      - name: Set up Clojure + babashka
+        uses: DeLaGuardo/setup-clojure@12.5
+        with:
+          cli: latest
+          bb: latest
+          # Authenticated GitHub API calls avoid tool-download rate limits.
+          github-token: ${{ github.token }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # Maven + git deps. deps.edn drives the JVM classpath; shadow-cljs.edn
+      # its own CLJS deps; bb.edn the task deps. Any change reseeds the cache.
+      - name: Cache Clojure dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            ~/.gitlibs
+          key: cljdeps-${{ runner.os }}-${{ hashFiles('deps.edn', 'bb.edn', 'shadow-cljs.edn') }}
+          restore-keys: |
+            cljdeps-${{ runner.os }}-
+
+      - name: Install Node dependencies
+        run: npm ci --no-audit --no-fund
+
+      # The browser-binary cache is keyed on the exact Playwright version, so a
+      # dependency bump misses the cache and reinstalls the matching browser.
+      - name: Resolve Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      # --with-deps installs the OS libraries headless Chromium needs on Linux
+      # runners; those system packages are outside the cached browser dir, so
+      # this step runs every time (fast once the browser binary is cached).
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium --with-deps
+
+      # The :app build writes resources/public/js/main.js (gitignored). The JVM
+      # static-serving route test asserts that file is served, so it must exist
+      # before `bb test`. `compile` is the fast, non-optimized build — all the
+      # static test needs.
+      - name: Compile the app build
+        run: npx shadow-cljs compile app
+
+      - name: Lint
+        run: bb lint
+
+      # clj + cljc + cljs. The cljs half compiles the :test build and drives it
+      # in real headless Chromium via script/run-browser-tests.mjs.
+      - name: Test
+        run: bb test
