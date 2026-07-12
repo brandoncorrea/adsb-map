@@ -127,6 +127,15 @@ check. DNS is on Cloudflare — with the proxy toggle on, the zone must run **Fu
 (strict)** so the Cloudflare→origin hop is verified TLS, never "Flexible". The
 audit items:
 
+- [ ] **The origin lock is set** (`ADSB_ORIGIN_TOKEN` + the Cloudflare Transform
+      Rule that stamps `X-Origin-Token`). This is the item the rest of the
+      section leans on, and it was **false in the first deployment**: App
+      Platform publishes the app on its own `*.ondigitalocean.app` hostname,
+      bypassing Cloudflare, and that hostname answered anonymous requests `200`
+      and accepted a forged `X-Forwarded-For` (adsb-wrx). "Behind a proxy" is a
+      claim to *test*, not to assume — `curl` the platform hostname and expect a
+      `403`. Without the lock, every header-borne client identity is typed by the
+      client, and the per-IP cap below is decorative.
 - [ ] **The app is not reachable except through the platform router.** A publicly
       reachable 8280 is the plaintext side door — and it also makes the app's
       trust in `X-Forwarded-For` forgeable.
@@ -146,16 +155,17 @@ audit items:
       `X-Forwarded-For` entry whenever the header is present, so `:remote-addr`
       is attacker-controlled and must never be the key for any limit, audit log,
       or allowlist.
-- [ ] **`ADSB_TRUSTED_PROXY_HOPS` matches the real chain**, and was *verified
-      against the deployed environment* rather than assumed. It decides which
-      `X-Forwarded-For` entry is the client
-      (`adsb.stream.broadcast/forwarded-ip`), and it is a fact about
-      DigitalOcean's topology, not about our code — so the default of `1` is a
-      guess until someone counts the entries in a real request.
-      It fails in both directions: too **low** and the count keys on a proxy's
-      own address, so every visitor on earth is one IP and the site locks after
-      `ADSB_SSE_MAX_PER_IP` strangers; too **high** and it reads bytes the client
-      chose, so the per-IP cap becomes spoofable (the total cap still binds).
+- [ ] **The per-IP cap actually binds — proven against the deployment, not
+      reasoned about.** Open `ADSB_SSE_MAX_PER_IP` + 1 concurrent streams from one
+      address; the last must be `503`. This is not paranoia: the first deployment
+      admitted all five against a cap of four (adsb-nnk). The cap keys on
+      `CF-Connecting-IP` — one address, set by Cloudflare, overwritten if a client
+      sends its own — because counting `X-Forwarded-For` hops was **measured to
+      fail here**: our edge is Cloudflare fronting DigitalOcean's edge, which is
+      *also* Cloudflare, and the address the last hop appends varies per
+      connection, so no fixed index holds the client.
+      `ADSB_TRUSTED_PROXY_HOPS` remains only as a fallback for a non-Cloudflare
+      edge. A cap nobody has watched refuse a connection is a cap you do not have.
 - [ ] Security headers set **by the app** (`adsb.http.security`, tested in
       `test/clj/adsb/http/security_test.clj`), *not* by the edge — so they ship
       whatever is in front, including an edge whose config we never see: a strict

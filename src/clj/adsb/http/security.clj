@@ -24,7 +24,8 @@
   `worker-src`/`child-src blob:` and `img-src blob:` are for. If a future
   change adds a third-party origin, it goes here or it does not load."
   (:require [clojure.string :as str]
-            [ring.util.response :as response]))
+            [ring.util.response :as response])
+  (:import (java.security MessageDigest)))
 
 (def ^:const content-security-policy
   "Strict, allowlist-only. The app is CSP-friendly by construction — no
@@ -158,6 +159,81 @@
   [resp response-headers]
   (when resp
     (reduce-kv response/header resp response-headers)))
+
+;; ---------------------------------------------------------------------
+;; The origin lock: only Cloudflare may speak to this container.
+
+(def ^:const origin-token-header
+  "The header Cloudflare adds (a Transform Rule on requests to the
+  origin) and this app demands. Its VALUE is the shared secret; the name
+  is not one."
+  "x-origin-token")
+
+(def ^:const origin-lock-exempt-paths
+  "The one path that must answer WITHOUT the token: App Platform's health
+  check reaches the container directly, not through Cloudflare, so a
+  locked /healthz means a container the platform believes is dead — it
+  would be killed and redeployed forever. Exempting it costs nothing:
+  /healthz reveals liveness and feeder reachability, never the picture
+  and never the receiver position (adsb.http.handlers/health)."
+  #{"/healthz"})
+
+(defn- token-match?
+  "Constant-time comparison. A `=` on strings returns early at the first
+  differing byte, which leaks the length of the correct prefix to anyone
+  who can time the response — enough to recover a secret one byte at a
+  time. MessageDigest/isEqual is the interop we keep: there is no
+  constant-time string compare in clojure.core, and this is exactly the
+  case the house rule's 'almost always' is carved out for."
+  [expected supplied]
+  (and (string? supplied)
+       (MessageDigest/isEqual (.getBytes ^String expected "UTF-8")
+                              (.getBytes ^String supplied "UTF-8"))))
+
+(defn wrap-origin-lock
+  "Ring middleware: refuse any request that did not come through our
+  Cloudflare edge.
+
+  WHY THIS EXISTS (adsb-wrx). App Platform also publishes the app on its
+  own *.ondigitalocean.app hostname, which bypasses our Cloudflare zone
+  entirely — measured against the live deployment, that hostname answered
+  strangers with 200 and accepted a forged X-Forwarded-For. Every
+  header-borne claim about who a client is (X-Forwarded-For,
+  CF-Connecting-IP) is therefore forgeable, because the premise those
+  claims rest on — that a request PROVABLY passed through a trusted proxy
+  — is simply false while the container answers the internet directly.
+
+  So the lock is the load-bearing part, not the choice of header. With it
+  in place, a request carrying the secret provably came from our edge (the
+  only other holder is Cloudflare), and only then does CF-Connecting-IP
+  mean anything (adsb.stream.broadcast/client-ip).
+
+  `token` nil DISABLES the lock, which is what `bb dev` and the tests
+  want — there is no Cloudflare in front of a laptop. A deployment that
+  forgets to set it is therefore unlocked, so adsb.main warns loudly at
+  boot rather than failing: an app that refuses to start is an outage, and
+  an outage is not the safer failure here when the total SSE cap still
+  binds. Read that warning in a production log as the incident it is.
+
+  A refused request gets a bare 403 with no body and no explanation. An
+  anonymous scanner learns that something is in front of this host; it
+  does not learn what, or what the header is called."
+  [handler token]
+  (if-not token
+    handler
+    (let [forbidden {:status 403 :headers {} :body ""}
+          allowed?  (fn [request]
+                      (or (contains? origin-lock-exempt-paths (:uri request))
+                          (token-match?
+                            token
+                            (get-in request [:headers origin-token-header]))))]
+      (fn
+        ([request]
+         (if (allowed? request) (handler request) forbidden))
+        ([request respond raise]
+         (if (allowed? request)
+           (handler request respond raise)
+           (respond forbidden)))))))
 
 (defn wrap-security-headers
   "Ring middleware: every response leaves with the headers above.

@@ -137,6 +137,56 @@
                     {:request-method :get :uri "/healthz"})
                    [:headers "Content-Security-Policy"])))))
 
+(def ^:private token "s3cret-origin-token")
+
+(defn- locked-response-for
+  [request]
+  ((routes/handler {:origin-token token}) request))
+
+(defn- with-token [request]
+  (assoc-in request [:headers security/origin-token-header] token))
+
+(deftest the-origin-lock-refuses-what-did-not-come-through-our-edge
+  ;; adsb-wrx: App Platform also publishes the app on its own hostname,
+  ;; which bypasses Cloudflare — measured live, that hostname answered
+  ;; strangers 200 and took a forged X-Forwarded-For.
+  (testing "no token -> 403, and the 403 explains nothing to a scanner"
+    (let [response (locked-response-for {:request-method :get :uri "/api/stream"})]
+      (is (= 403 (:status response)))
+      (is (= "" (:body response)))))
+
+  (testing "a WRONG token is refused exactly like no token"
+    (let [response (locked-response-for
+                     {:request-method :get
+                      :uri            "/api/stream"
+                      :headers        {security/origin-token-header "nope"}})]
+      (is (= 403 (:status response)))))
+
+  (testing "a token that is a PREFIX of the real one is refused — the
+            comparison is constant-time, not a startsWith"
+    (let [response (locked-response-for
+                     {:request-method :get
+                      :uri            "/api/stream"
+                      :headers        {security/origin-token-header "s3cret"}})]
+      (is (= 403 (:status response)))))
+
+  (testing "the right token passes through to the real handler"
+    (let [response (locked-response-for
+                     (with-token {:request-method :get :uri "/healthz"}))]
+      (is (= 200 (:status response)))))
+
+  (testing "/healthz answers WITHOUT the token. App Platform's health check
+            reaches the container directly, not through Cloudflare — a
+            locked /healthz is a container the platform believes is dead,
+            and it would be killed and redeployed forever"
+    (let [response (locked-response-for {:request-method :get :uri "/healthz"})]
+      (is (= 200 (:status response)))))
+
+  (testing "and the lock is OFF when no token is configured — a laptop has
+            no Cloudflare in front of it"
+    (is (= 200 (:status (response-for {:request-method :get :uri "/healthz"}))))
+    (is (= 404 (:status (response-for {:request-method :get :uri "/nope"}))))))
+
 (deftest headers-survive-a-real-http-response
   (testing "over a real socket, not just as a map the middleware returned
             — including the absence of a Server header. Caddy used to

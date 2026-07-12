@@ -243,8 +243,9 @@ All configuration is via environment variables (read once at boot,
 | `ADSB_FEEDER_AUTH_SECRET` | no² | — | The service-token **Client Secret** (`CF-Access-Client-Secret`). Never logged. |
 | `ADSB_SSE_MAX_CLIENTS` | no | `100` | Cap on concurrent SSE stream clients. At the cap a new connect gets `503` + `Retry-After`. |
 | `ADSB_SSE_MAX_PER_IP` | no | `4` | Concurrent SSE connections allowed per client IP. |
-| `ADSB_TRUST_FORWARDED_FOR` | no | `false` | Honor the proxy-appended `X-Forwarded-For` for the per-IP limit. Set `true` **only** when the app port is reachable exclusively through a trusted proxy — both deployment specs set it. |
-| `ADSB_TRUSTED_PROXY_HOPS` | no | `1` | How many trusted proxies stand in front, which decides **which** `X-Forwarded-For` entry is the client. A property of the deployment — [verify it](#the-client-address), don't assume it. |
+| `ADSB_ORIGIN_TOKEN` | no⁴ | — | The **origin lock**: a shared secret Cloudflare stamps on every request to the origin. Without it the app answers 403. Unset = no lock — see [The client address](#the-client-address). |
+| `ADSB_TRUST_FORWARDED_FOR` | no | `false` | Believe the client address the edge reports rather than the TCP peer. Sound **only** behind the origin lock. |
+| `ADSB_TRUSTED_PROXY_HOPS` | no | `1` | Fallback only. How many proxies stand in front, deciding which `X-Forwarded-For` entry is the client — consulted only when `CF-Connecting-IP` is absent. |
 | `ADSB_DEV_CSP` | no | `false` | `bb dev` only. Serves the relaxed dev Content-Security-Policy the shadow-cljs watch build needs. **Never set this in a deployment** — the boot warns loudly if you do. |
 | `JAVA_OPTS` | no | tuned for a 512 MB box | JVM flags. The `Dockerfile` ships a set sized for App Platform's `basic-xxs`; override wholesale to retune. |
 
@@ -252,6 +253,9 @@ All configuration is via environment variables (read once at boot,
 ² Optional, but **both or neither** — supplying only one fails the boot loudly.
 Required when the feeder tunnel is gated by a Cloudflare Access policy (the cloud
 deployment); omit both for a trusted-LAN feeder.
+⁴ Not required to *boot* — the app warns loudly and runs unlocked, because refusing
+to start is an outage. It **is** required for the per-IP cap to mean anything in a
+deployment.
 
 There is no TLS or domain configuration here: App Platform terminates TLS and
 owns the certificate, so the app never sees one.
@@ -292,24 +296,38 @@ Operational notes:
 #### The client address
 
 The per-IP SSE cap counts connections per client address, and behind a proxy that
-address comes from `X-Forwarded-For` — a header any client can write. Two settings
-govern it, and **only the first is safe to assume**:
+address arrives in a header — which any client can write. So there are two
+questions, and the first one is the one that matters.
 
-- `ADSB_TRUST_FORWARDED_FOR=true` says the header can be believed at all. Correct
-  exactly when the app is unreachable except through the platform's router, which
-  is the case on App Platform.
-- `ADSB_TRUSTED_PROXY_HOPS` says **which entry** is the client. Every proxy
-  *appends* the peer it saw, so with `n` trusted hops in front the client is the
-  `n`-th entry from the right. This is a fact about DigitalOcean's topology, not
-  about our code, so it **must be measured, not guessed** — the default of `1` is
-  a guess, and it is the guess that fails closed.
+**1. Can the header be believed at all?** Only if the container is unreachable
+except through our edge. **By default it is not.** App Platform also publishes the
+app on its own `*.ondigitalocean.app` hostname, which bypasses Cloudflare entirely;
+measured against the live deployment, that hostname answered anonymous requests
+with `200` and cheerfully accepted a forged `X-Forwarded-For`.
 
-To measure it: deploy, hit the app from an address you know, and read the
-`X-Forwarded-For` the container received. Count the entries to the right of your
-own address and add one. Getting it wrong breaks the cap in opposite directions —
-too low and every visitor on earth is counted as one address, so the fifth stranger
-to open the map gets a `503` while the logs look fine; too high and the count keys
-on bytes the client chose, making the per-IP cap spoofable.
+`ADSB_ORIGIN_TOKEN` closes that door. Add a Cloudflare **Transform Rule** (Rules →
+Transform Rules → Modify Request Header) that sets `X-Origin-Token` to a shared
+secret on every request to the origin, and give the app the same value; it answers
+`403` to anything without it. Generate one with `openssl rand -hex 32`, and set it
+as an encrypted app-level secret. `/healthz` is deliberately exempt — App Platform's
+health check reaches the container *directly*, not through Cloudflare, so a locked
+`/healthz` is a container the platform believes is dead and restarts forever.
+
+Without the lock, `ADSB_TRUST_FORWARDED_FOR=true` is trusting a stranger's typing,
+and the boot warns you about exactly that.
+
+**2. Which address is the client?** With the lock on, the app reads
+**`CF-Connecting-IP`** — one address, set by Cloudflare, and overwritten if a client
+tries to send its own.
+
+It reads that rather than counting `X-Forwarded-For` hops because counting was tried
+and **measured to fail**: five concurrent streams from one address, against a cap of
+four, were all admitted. The chain is browser → Cloudflare → DigitalOcean's edge —
+which is *itself* Cloudflare — and the address the last hop appends comes from a pool
+that varies per connection, so every connection keyed under a different address and
+the cap never bound. No hop *count* can repair that; there is no fixed index at which
+the client reliably sits. `ADSB_TRUSTED_PROXY_HOPS` survives only as a fallback for
+an edge that someday isn't Cloudflare.
 
 ### Cloud-to-home feeder tunnel
 

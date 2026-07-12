@@ -59,6 +59,21 @@
   [env]
   (= "true" (some-> (get env dev-csp-env) str/trim str/lower-case)))
 
+(def ^:const origin-token-env
+  "The shared secret Cloudflare stamps on every request it sends to the
+  origin, and without which the app answers 403 (adsb.http.security/
+  wrap-origin-lock). Unset means NO LOCK — correct on a laptop, wrong in
+  a deployment, and start! says so out loud."
+  "ADSB_ORIGIN_TOKEN")
+
+(defn origin-token
+  "Pure: the origin-lock secret from an environment map, or nil when it
+  is absent or blank. Blank counts as absent — an empty string would
+  otherwise be a token every request could match by omitting the header
+  entirely."
+  [env]
+  (some-> (get env origin-token-env) str/trim not-empty))
+
 (defn env->config
   "Pure: derive the boot config from an environment map (string ->
   string). PORT defaults to adsb.http.server/default-port.
@@ -71,6 +86,7 @@
    :source          (get env config/source-env)
    :ultrafeeder-url (get env config/feeder-url-env)
    :dev-csp?        (dev-csp? env)
+   :origin-token    (origin-token env)
    :env             env})
 
 (defn- ingest-batch!
@@ -127,7 +143,21 @@
   :ok and /healthz shows feeder-status \"ok\" — honestly meaning ingest
   is producing a picture, since there is no feeder whose reachability to
   report."
-  [{:keys [port env dev-csp?] :as config}]
+  [{:keys [port env dev-csp? origin-token] :as config}]
+  (when-not origin-token
+    ;; Loud, and for the same reason as the CSP warning below: the failure
+    ;; is SILENT. Without the lock the container answers anyone who finds
+    ;; its platform hostname, and every claim a request makes about who it
+    ;; is (X-Forwarded-For, CF-Connecting-IP) becomes forgeable — so the
+    ;; per-IP cap it feeds becomes decorative (adsb-wrx). We warn instead
+    ;; of refusing to boot: an app that will not start is an outage, and
+    ;; the total SSE cap still binds. On a laptop this line is expected.
+    (log/warn (str "ORIGIN LOCK DISABLED (" origin-token-env " unset): this "
+                   "process will answer ANY client that can reach it, not "
+                   "only requests arriving through our edge — so "
+                   "CF-Connecting-IP and X-Forwarded-For are forgeable and "
+                   "the per-IP SSE cap cannot be trusted. Expected under "
+                   "`bb dev`; in a deployment this is the incident.")))
   (when dev-csp?
     ;; Loud on purpose. This is the one switch in the app that weakens a
     ;; security boundary, and the failure mode it guards against is a
@@ -163,6 +193,7 @@
         http-server       (server/start!
                             {:port           port
                              :dev-csp?       dev-csp?
+                             :origin-token   origin-token
                              :feeder-status  #(poll/status poller)
                              :stream-connect #(broadcast/connect!
                                                 broadcaster %)})]

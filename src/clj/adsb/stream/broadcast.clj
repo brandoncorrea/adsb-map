@@ -191,14 +191,46 @@
                                vec)]
     (nth entries (max 0 (- (count entries) hops)))))
 
+(def ^:const cf-connecting-ip-header
+  "Cloudflare's own name for the client. It is a SINGLE address, not a
+  list, and Cloudflare overwrites any copy the client sent — so there is
+  no chain to count and no hop number to get wrong."
+  "cf-connecting-ip")
+
 (defn- client-ip
-  "The address a client is counted under: the X-Forwarded-For entry the
-  trusted proxy chain vouches for when :trust-forwarded? is set and the
-  header is present, the TCP peer address otherwise. See the ns docstring
-  for why the flag must only be set behind a proxy."
+  "The address a client is counted under, in order of preference:
+
+    1. CF-Connecting-IP, when :trust-forwarded? is set. Our edge IS
+       Cloudflare, and this is the address it says the client came from.
+    2. The X-Forwarded-For entry the trusted proxy chain vouches for
+       (forwarded-ip), when :trust-forwarded? is set but Cloudflare did
+       not name the client. Kept as a fallback so a future edge that is
+       not Cloudflare still gets a per-IP cap.
+    3. The TCP peer address. What a direct deployment counts, and a
+       spoofed header is then just bytes.
+
+  WHY CF-Connecting-IP RATHER THAN COUNTING HOPS (adsb-nnk). Counting was
+  measured against the live deployment and it does not work: five
+  concurrent streams from ONE address, against a cap of four, were all
+  admitted. The chain is browser -> Cloudflare -> DigitalOcean's edge,
+  which is ITSELF Cloudflare, and the address the last hop appends is
+  drawn from a pool that varies per connection — so every connection keyed
+  under a different address and the cap never bound. A hop COUNT cannot
+  fix that: there is no fixed index at which the client reliably sits.
+  CF-Connecting-IP sidesteps the arithmetic entirely.
+
+  It is trustworthy only because of the origin lock
+  (adsb.http.security/wrap-origin-lock): a request that reaches this
+  function provably came through our Cloudflare edge, so the header is
+  Cloudflare's word and not a stranger's. Without the lock this header is
+  exactly as forgeable as the one it replaces — which is why the lock,
+  not this line, is the fix."
   [trust-forwarded? hops request]
   (or (when trust-forwarded?
-        (forwarded-ip hops (get-in request [:headers "x-forwarded-for"])))
+        (or (some-> (get-in request [:headers cf-connecting-ip-header])
+                    str/trim
+                    not-empty)
+            (forwarded-ip hops (get-in request [:headers "x-forwarded-for"]))))
       (socket-peer-ip request)))
 
 (defn- deny-reason

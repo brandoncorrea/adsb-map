@@ -77,29 +77,53 @@ services:
         scope: RUN_TIME
         value: "4"
 
-      # Correct HERE because the container has no public port of its own: every
-      # connection provably arrived through DigitalOcean's router, so the
-      # X-Forwarded-For it appended is trustworthy.
+      # ⚠ THE ORIGIN LOCK. Set this or the per-IP cap is decorative (adsb-wrx).
+      #
+      # App Platform ALSO publishes this app on its own *.ondigitalocean.app
+      # hostname, which bypasses Cloudflare entirely — measured against the live
+      # deployment, that hostname answered strangers with 200 and accepted a
+      # forged X-Forwarded-For. So "the container is only reachable through our
+      # edge" is FALSE by default, and every header-borne claim about who a
+      # client is can simply be typed by the client.
+      #
+      # The fix is a shared secret only Cloudflare knows. In the Cloudflare
+      # dashboard, add a Transform Rule (Rules -> Transform Rules -> Modify
+      # Request Header) that sets X-Origin-Token to the same value on every
+      # request to the origin. This app then 403s anything arriving without it
+      # (adsb.http.security/wrap-origin-lock), so the .ondigitalocean.app
+      # hostname stops answering strangers and CF-Connecting-IP becomes
+      # Cloudflare's word rather than a stranger's.
+      #
+      # Generate one: openssl rand -hex 32. It is a SECRET — never commit the
+      # real value. /healthz is deliberately exempt: App Platform's health check
+      # reaches the container directly, not through Cloudflare, and a locked
+      # /healthz means a container the platform kills and redeploys forever.
+      - key: ADSB_ORIGIN_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+        value: REPLACE_ME
+
+      # Believe the client address the edge reports, rather than the TCP peer
+      # (which, behind any proxy, is the proxy). Sound ONLY because of the
+      # origin lock above: without it, this trusts a header a stranger can type.
       - key: ADSB_TRUST_FORWARDED_FOR
         scope: RUN_TIME
         value: "true"
 
-      # ⚠ VERIFY THIS AGAINST THE DEPLOYED APP BEFORE TRUSTING THE PER-IP CAP.
+      # A FALLBACK, and no longer the primary mechanism (adsb-nnk).
       #
-      # This says how many proxies stand between the internet and the container,
-      # which is what decides WHICH X-Forwarded-For entry is the real client
-      # (adsb.stream.broadcast/forwarded-ip). It is a fact about DigitalOcean's
-      # topology, not about this code, and it cannot be inferred from source.
+      # The per-IP cap now keys on CF-Connecting-IP, which Cloudflare sets to a
+      # single client address and overwrites if the client sends one. That is
+      # deliberate: counting X-Forwarded-For hops was MEASURED against the live
+      # deployment and it does not work here. Five concurrent streams from one
+      # address, against a cap of four, were all admitted — the chain is
+      # browser -> Cloudflare -> DigitalOcean's edge (itself Cloudflare), and
+      # the address the last hop appends is drawn from a pool that varies per
+      # connection. No hop COUNT can fix that: there is no fixed index at which
+      # the client reliably sits.
       #
-      # 1 is a GUESS — the simplest chain, one proxy in front. Nobody has counted
-      # DO's. If their router is actually two hops, then with 1 the rightmost
-      # entry is DO's own internal address — EVERY VISITOR ON EARTH counts as one
-      # IP, and the fifth stranger to open the map gets a 503 while the logs look
-      # fine.
-      #
-      # To check: deploy, hit the app from a known address, and read the
-      # X-Forwarded-For the container received. Count the entries to the right
-      # of your own address, add one, and put that number here.
+      # This is consulted only if CF-Connecting-IP is absent — i.e. if the edge
+      # someday stops being Cloudflare.
       - key: ADSB_TRUSTED_PROXY_HOPS
         scope: RUN_TIME
         value: "1"

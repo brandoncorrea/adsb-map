@@ -91,18 +91,26 @@
     :dev-csp?  serve the dev Content-Security-Policy, which the
                shadow-cljs watch build cannot run without
                (adsb.http.security/dev-content-security-policy).
-               Default false — production is strict and stays strict."
-  [{:keys [state-lookup feeder-status stream-connect dev-csp?]
+               Default false — production is strict and stays strict.
+
+    :origin-token  the shared secret Cloudflare stamps on requests to
+               the origin (adsb.http.security/wrap-origin-lock). Wraps
+               OUTSIDE the headers — a request we refuse should cost us
+               a comparison, not a route match. nil disables the lock,
+               which is right for a laptop and wrong for a deployment."
+  [{:keys [state-lookup feeder-status stream-connect dev-csp? origin-token]
     :or   {state-lookup   (constantly nil)
            feeder-status  (constantly nil)
            stream-connect stream-unavailable
            dev-csp?       false}}]
-  (security/wrap-security-headers
-    (ring/ring-handler
-      (router {:state-lookup   state-lookup
-               :feeder-status  feeder-status
-               :stream-connect stream-connect})
-      (ring/routes
-        (ring/create-resource-handler {:path "/"})
-        (ring/create-default-handler)))
-    dev-csp?))
+  (security/wrap-origin-lock
+    (security/wrap-security-headers
+      (ring/ring-handler
+        (router {:state-lookup   state-lookup
+                 :feeder-status  feeder-status
+                 :stream-connect stream-connect})
+        (ring/routes
+          (ring/create-resource-handler {:path "/"})
+          (ring/create-default-handler)))
+      dev-csp?)
+    origin-token))

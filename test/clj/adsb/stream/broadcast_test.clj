@@ -85,8 +85,9 @@
 
 (defn- open-stream!
   "GET /api/stream and return a line reader over the live body."
-  ^BufferedReader [port]
-  (io/reader (.body (stream-response! port {}))))
+  (^BufferedReader [port] (open-stream! port {}))
+  (^BufferedReader [port headers]
+   (io/reader (.body (stream-response! port headers)))))
 
 (defn- retry-after [^HttpResponse response]
   (.orElse (.firstValue (.headers response) "Retry-After") nil))
@@ -242,9 +243,10 @@
 (defn- open-admitted!
   "Open a stream and consume its snapshot, so the client is admitted,
   ready, and receiving ticks. Returns the reader; the caller closes."
-  ^BufferedReader [port]
-  (doto (open-stream! port)
-    (read-frame!)))
+  (^BufferedReader [port] (open-admitted! port {}))
+  (^BufferedReader [port headers]
+   (doto (open-stream! port headers)
+     (read-frame!))))
 
 (deftest total-connection-cap
   (testing "at the concurrent-client cap a new connect is refused with
@@ -275,6 +277,67 @@
         (let [refused (stream-response! port {})]
           (is (= 503 (.statusCode refused)))
           (is (str/includes? (slurp (.body refused)) "ip-full")))
+        (finally
+          (.close admitted)
+          (stop-streaming-server! streaming))))))
+
+(deftest the-per-ip-cap-keys-on-cf-connecting-ip
+  ;; The regression this exists for is adsb-nnk, and it was found in
+  ;; PRODUCTION, not here: five concurrent streams from one address, against
+  ;; a cap of four, were all admitted. The chain is browser -> Cloudflare ->
+  ;; DigitalOcean's edge (itself Cloudflare), and the address the last hop
+  ;; appends varies per connection, so every connection keyed under a
+  ;; different address and the cap never bound. No hop COUNT can fix that —
+  ;; there is no fixed index where the client reliably sits — so the cap now
+  ;; keys on CF-Connecting-IP, which is one address and not a chain.
+  (testing "two connections Cloudflare says are the SAME client are counted
+            together, even though X-Forwarded-For disagrees on every hop —
+            this is the production failure, in a test"
+    (let [streaming (start-streaming-server! {:max-clients      100
+                                              :max-per-ip       1
+                                              :trust-forwarded? true})
+          port      (:port streaming)
+          headers   (fn [xff] {"CF-Connecting-IP" "1.2.3.4"
+                               "X-Forwarded-For"  xff})
+          admitted  (open-admitted! port (headers "1.2.3.4, 172.71.10.1"))]
+      (try
+        ;; A different last hop every time — exactly what DigitalOcean's edge
+        ;; does, and exactly what defeated the hop count.
+        (let [refused (stream-response! port (headers "1.2.3.4, 172.71.99.7"))]
+          (is (= 503 (.statusCode refused))
+              "same client per Cloudflare, so the second connection is refused")
+          (is (str/includes? (slurp (.body refused)) "ip-full")))
+        (finally
+          (.close admitted)
+          (stop-streaming-server! streaming)))))
+
+  (testing "two genuinely different clients are NOT counted together, so the
+            cap does not lock the site — the other direction of the bug"
+    (let [streaming (start-streaming-server! {:max-clients      100
+                                              :max-per-ip       1
+                                              :trust-forwarded? true})
+          port      (:port streaming)
+          admitted  (open-admitted! port {"CF-Connecting-IP" "1.2.3.4"})]
+      (try
+        (let [other (open-admitted! port {"CF-Connecting-IP" "5.6.7.8"})]
+          (is (= 2 (broadcast/client-count (:broadcaster streaming)))
+              "a second, different client gets its own slot")
+          (.close other))
+        (finally
+          (.close admitted)
+          (stop-streaming-server! streaming)))))
+
+  (testing "with trust off, a client cannot name itself — a forged
+            CF-Connecting-IP is just bytes, and both connections count
+            against the socket's own address"
+    (let [streaming (start-streaming-server! {:max-clients 100
+                                              :max-per-ip  1})
+          port      (:port streaming)
+          admitted  (open-admitted! port {"CF-Connecting-IP" "1.2.3.4"})]
+      (try
+        (let [refused (stream-response! port {"CF-Connecting-IP" "5.6.7.8"})]
+          (is (= 503 (.statusCode refused))
+              "spoofing a different CF-Connecting-IP buys no second slot"))
         (finally
           (.close admitted)
           (stop-streaming-server! streaming))))))
