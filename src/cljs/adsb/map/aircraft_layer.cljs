@@ -33,18 +33,34 @@
 
   ## The clock
 
-  The `stale` feature property is judged against `now-ms`, read from
-  js/Date.now at push time — i.e. the frame's arrival instant, since a
-  push happens when the picture changes. The imperative browser edge is
-  allowed a clock; the domain is not — adsb.geo and adsb.aircraft take
-  time as an argument, which is why tests can redef `now-ms` and assert
-  staleness against a literal.
+  The `stale`/`age-s` feature properties are judged against `now-ms`,
+  read from js/Date.now at push time — i.e. the frame's arrival instant,
+  since a push happens when the picture changes. The imperative browser
+  edge is allowed a clock; the domain is not — adsb.geo and adsb.aircraft
+  take time as an argument, which is why tests can redef `now-ms` and
+  assert staleness against a literal.
+
+  ## The client tick — aging between frames
+
+  A push happens when the picture CHANGES, but silence is the absence of
+  change: a silent aircraft's fade would freeze between frames, and if
+  the stream stalls entirely it would freeze forever, never disappearing.
+  So `attach!` also starts a coarse interval (`tick-interval-ms`) that
+  re-pushes the CURRENT picture through the same setData path with a
+  fresh `now-ms`. Nothing about the picture changed — only time did — so
+  the fade advances and aircraft past the age-out line drop out of the
+  FeatureCollection (adsb.geo filters them with adsb.aircraft/aged-out?).
+  The server still ages aircraft out authoritatively; this only keeps the
+  view honest in the gaps. The tick is imperative, owned by the
+  attach!/detach! lifecycle, never React, and it stops on detach. Its
+  scheduling goes through the `set-interval!`/`clear-interval!` seams so
+  tests drive it with a fake clock instead of waiting real seconds.
 
   ## Styling and the icon assets
 
   The layer is a MapLibre SYMBOL layer whose paint/layout are pure style
   expressions over each feature's properties (icao, callsign, track,
-  altitude, emergency, stale — adsb.geo puts them there). All of that
+  altitude, emergency, stale, age-s, mlat — adsb.geo puts them there). All of that
   data — the colour ramp, the sizes, the expressions — lives in
   `adsb.map.style`; this namespace only WIRES it. The icon the layer
   names in `icon-image` is not a sprite fetched over the network: at load
@@ -170,6 +186,24 @@
   []
   (js/Date.now))
 
+(def ^:const tick-interval-ms
+  "How often the client re-pushes the current picture so silent aircraft
+  keep aging between frames. Coarse — the fade is a slow visual, not a
+  hot path — so a re-push every few seconds is ample and cheap."
+  5000)
+
+(defn set-interval!
+  "Schedule `f` to run every `ms`, returning a handle for `clear-interval!`.
+  A seam over js/setInterval so tests capture the tick and drive it with a
+  fake clock rather than waiting real seconds."
+  [f ms]
+  (js/setInterval f ms))
+
+(defn clear-interval!
+  "Cancel the interval named by `id` (a `set-interval!` handle)."
+  [id]
+  (js/clearInterval id))
+
 (defn picture->feature-collection
   "The app-db picture (icao -> domain aircraft) as a GeoJSON
   FeatureCollection, staleness judged at `at-ms`. Pure — delegates to
@@ -189,7 +223,7 @@
   `detach!`. Everything waits on the map's load event; frames arriving
   before it are covered by app-db's latest-wins buffering (ns docstring)."
   [m]
-  (let [!state (atom {:disposed? false :track nil})]
+  (let [!state (atom {:disposed? false :track nil :tick nil :picture nil})]
     (maplibre/on-load!
       m
       (fn []
@@ -206,17 +240,36 @@
           ;; The hot path: a reaction OUTSIDE any component. Its initial
           ;; run flushes whatever picture already arrived; each re-run is
           ;; one picture change -> one setData. React never hears of it.
+          ;; It also caches the latest picture in !state so the
+          ;; time-driven tick can re-push it WITHOUT subscribing outside a
+          ;; reactive context (the subscription lives here, in the track).
           (swap! !state assoc :track
-                 (r/track! (fn [] (push! m @(rf/subscribe [:aircraft/picture]))))))))
+                 (r/track!
+                   (fn []
+                     (let [picture @(rf/subscribe [:aircraft/picture])]
+                       (swap! !state assoc :picture picture)
+                       (push! m picture)))))
+          ;; The client tick: re-push the cached picture on a coarse
+          ;; interval so silent aircraft keep aging between frames and
+          ;; through a stream stall. Nothing about the picture changed —
+          ;; only time did — so the fresh now-ms deepens the fade and drops
+          ;; anything past the age-out line (adsb.geo filters it).
+          (swap! !state assoc :tick
+                 (set-interval!
+                   (fn [] (push! m (:picture @!state)))
+                   tick-interval-ms)))))
     !state))
 
 (defn detach!
-  "Stop pushing into the map and dispose the reaction (which also
-  releases the cached subscription). Call from will-unmount, BEFORE the
-  map is destroyed. Safe when the load event never fired: the pending
-  load callback sees :disposed? and does nothing."
+  "Stop pushing into the map: dispose the reaction (which also releases
+  the cached subscription) and cancel the client tick. Call from
+  will-unmount, BEFORE the map is destroyed. Safe when the load event
+  never fired: the pending load callback sees :disposed? and does
+  nothing, so no track or tick was ever created."
   [!state]
-  (let [{:keys [track]} @!state]
-    (swap! !state assoc :disposed? true :track nil)
+  (let [{:keys [track tick]} @!state]
+    (swap! !state assoc :disposed? true :track nil :tick nil)
     (when track
-      (r/dispose! track))))
+      (r/dispose! track))
+    (when tick
+      (clear-interval! tick))))

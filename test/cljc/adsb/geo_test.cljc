@@ -1,6 +1,7 @@
 (ns adsb.geo-test
   (:require
     [adsb.aircraft :as aircraft]
+    [adsb.fixtures :as fixtures]
     [adsb.geo :as geo]
     ;; The whole-fixture test needs file I/O, so it is JVM-only — as are
     ;; the requires that exist solely to serve it.
@@ -179,6 +180,67 @@
       (is (not (contains?
                  (:properties (geo/aircraft->feature cruising 0))
                  :stale))))))
+
+(deftest age-property
+  (let [heard (assoc cruising :aircraft/seen-at-ms 0)]
+    (testing "age-s is the continuous silence in seconds, judged against
+              now-ms — the property the opacity fade interpolates over"
+      (is (= 0 (:age-s (:properties (geo/aircraft->feature heard 0)))))
+      (is (= 45 (:age-s (:properties (geo/aircraft->feature heard 45000)))))
+      (is (= 250 (:age-s (:properties (geo/aircraft->feature heard 250000))))))
+
+    (testing "age-s grows with the clock — a later now-ms reads as older,
+              so the fade only ever deepens for a silent aircraft"
+      (let [young (:age-s (:properties (geo/aircraft->feature heard 30000)))
+            old   (:age-s (:properties (geo/aircraft->feature heard 90000)))]
+        (is (> old young))))
+
+    (testing "an aircraft with no receive time carries no age — nothing to
+              measure from"
+      (is (not (contains?
+                 (:properties (geo/aircraft->feature cruising 0))
+                 :age-s))))))
+
+(deftest mlat-property
+  (testing "a multilaterated aircraft carries :mlat true so the style can
+            demote its lower-confidence position"
+    (is (true? (:mlat (:properties
+                        (geo/aircraft->feature fixtures/mlat-derived 0))))))
+
+  (testing "a self-reporting ADS-B aircraft omits :mlat entirely — absent,
+            never false"
+    (is (not (contains?
+               (:properties (geo/aircraft->feature fixtures/ups-2717 0))
+               :mlat)))))
+
+;; ---------------------------------------------------------------------
+;; Client-side age-out: the long-silent cast member is the acceptance
+;; test. seen-at-ms is stamped by merge-batch, so we age the fixture
+;; through the real boundary rather than hand-write the receive time.
+
+(deftest aged-out-aircraft-produce-no-feature
+  (let [captured 1720713600000
+        picture  (aircraft/merge-batch {} [fixtures/long-silent] captured)
+        planes   (vals picture)]
+    (testing "at the age-out line the long-silent aircraft still renders —
+              faded, not gone: 300 s of silence, exactly the threshold"
+      (let [coll     (geo/aircraft-picture->feature-collection planes captured)
+            features (:features coll)]
+        (is (= 1 (count features)))
+        (is (= 300 (:age-s (:properties (first features))))
+            "aged to the age-out line, where the fade bottoms out")))
+
+    (testing "one millisecond past the age-out line it produces no feature —
+              the client drops it even if the server has not yet"
+      (is (empty? (:features
+                    (geo/aircraft-picture->feature-collection
+                      planes (inc captured))))))
+
+    (testing "an un-timed aircraft is never spuriously aged out — with no
+              receive time there is nothing to judge silent"
+      (is (= 1 (count (:features
+                        (geo/aircraft-picture->feature-collection
+                          [cruising] (+ captured 1000000)))))))))
 
 (deftest feature-collection
   (testing "only positioned aircraft become features; the count is the

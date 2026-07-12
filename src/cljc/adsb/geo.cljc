@@ -104,40 +104,80 @@
   a numeric altitude and distinct from an absent one."
   "ground")
 
+(def ^:const millis-per-second 1000)
+
 (defn- stale-property
   "Staleness as a boolean, judged against wall-clock `now-ms`. nil (and so
-  omitted) when the aircraft carries no receive time to judge against."
+  omitted) when the aircraft carries no receive time to judge against.
+  The boolean marks the crossing of the stale line; the continuous fade
+  rides `age-property`."
   [aircraft now-ms]
   (when (:aircraft/seen-at-ms aircraft)
     (aircraft/stale? aircraft now-ms)))
 
+(defn- age-property
+  "Seconds of silence since the aircraft was last heard, judged against
+  wall-clock `now-ms` — the continuous age the opacity ramp interpolates
+  smoothly from fresh through the stale line to the age-out line. nil
+  (and so omitted) when there is no receive time to measure from. The
+  thresholds that bound the fade live in adsb.aircraft; this is the raw
+  elapsed time, judged, never a threshold."
+  [aircraft now-ms]
+  (when-let [seen-at-ms (:aircraft/seen-at-ms aircraft)]
+    (/ (- now-ms seen-at-ms) millis-per-second)))
+
 (defn- feature-properties [aircraft now-ms]
-  (let [{:aircraft/keys [icao callsign track-deg altitude-ft on-ground?]}
+  (let [{:aircraft/keys [icao callsign track-deg altitude-ft on-ground?
+                         mlat?]}
         aircraft
-        stale (stale-property aircraft now-ms)]
+        stale (stale-property aircraft now-ms)
+        age   (age-property aircraft now-ms)]
     (cond-> {:icao      icao
              :emergency (emergency? aircraft)}
       callsign      (assoc :callsign callsign)
       track-deg     (assoc :track track-deg)
       on-ground?    (assoc :altitude ground-altitude)
       altitude-ft   (assoc :altitude altitude-ft)
-      (some? stale) (assoc :stale stale))))
+      (some? stale) (assoc :stale stale)
+      (some? age)   (assoc :age-s age)
+      ;; Multilateration is lower-confidence than self-reported ADS-B; the
+      ;; style layer demotes it visually. Omitted when absent — a plain
+      ;; ADS-B target carries no :mlat, not `false`.
+      mlat?         (assoc :mlat true))))
 
 (defn aircraft->feature
   "A domain aircraft as a GeoJSON Point Feature, or nil when it has no
   position — there is nothing to place on the map. `now-ms` is the wall
-  clock the `stale` property is judged against. GeoJSON coordinates are
-  [lon lat], not [lat lon]."
+  clock the `stale`/`age-s` properties are judged against. GeoJSON
+  coordinates are [lon lat], not [lat lon]."
   [aircraft now-ms]
   (when-let [{:geo/keys [lat lon]} (:aircraft/position aircraft)]
     {:type       "Feature"
      :geometry   {:type "Point" :coordinates [lon lat]}
      :properties (feature-properties aircraft now-ms)}))
 
+(defn- present?
+  "True when the aircraft still belongs on the map — not yet aged out.
+  An aircraft with no receive time cannot be judged silent, so it is
+  kept: the same guard `stale-property` makes, so an un-timed aircraft
+  is never spuriously removed. This is the client's between-frame safety
+  net — the server ages aircraft out of its picture, but between frames
+  (or during a stream stall) the client keeps aging and drops anything
+  past the shared age-out line, judged with adsb.aircraft/aged-out?."
+  [aircraft now-ms]
+  (not (and (:aircraft/seen-at-ms aircraft)
+            (aircraft/aged-out? aircraft now-ms))))
+
 (defn aircraft-picture->feature-collection
   "A seq of domain aircraft as a GeoJSON FeatureCollection. Aircraft with
-  no position contribute no feature, so the feature count is the
-  positioned count — never the total. Plain data, ready for clj->js."
+  no position contribute no feature, and aircraft silent past the
+  age-out line contribute none either — they have left the picture even
+  if a stalled stream has not yet said so. So the feature count is the
+  positioned, still-present count — never the total. Plain data, ready
+  for clj->js."
   [aircraft-picture now-ms]
   {:type     "FeatureCollection"
-   :features (into [] (keep #(aircraft->feature % now-ms)) aircraft-picture)})
+   :features (into []
+                   (comp (filter #(present? % now-ms))
+                         (keep #(aircraft->feature % now-ms)))
+                   aircraft-picture)})

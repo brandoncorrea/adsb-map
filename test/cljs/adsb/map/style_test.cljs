@@ -8,6 +8,7 @@
   constants, these structural assertions stay green — they check the
   wiring, not the palette."
   (:require
+    [adsb.aircraft :as aircraft]
     [adsb.map.style :as style]
     [cljs.test :refer-macros [deftest is testing]]))
 
@@ -51,15 +52,39 @@
       (is (= style/emergency-color (nth expr 2)))
       (is (= (style/altitude-color-expression) (nth expr 3))
           "otherwise the three-state altitude ramp")))
-  (testing "size: emergency aircraft draw larger, unmissable"
+  (testing "size: emergency wins first, then mlat is demoted, else base"
     (let [expr (style/icon-size-expression)]
-      (is (= ["case" ["get" "emergency"]
-              style/emergency-icon-size style/base-icon-size]
+      (is (= ["case"
+              ["get" "emergency"] style/emergency-icon-size
+              ["get" "mlat"]      style/mlat-icon-size
+              style/base-icon-size]
              expr))
-      (is (> style/emergency-icon-size style/base-icon-size)))))
+      (is (> style/emergency-icon-size style/base-icon-size)
+          "emergency is unmissably large")
+      (is (< style/mlat-icon-size style/base-icon-size)
+          "an mlat fix reads a touch smaller — lower confidence"))))
 
-(deftest stale-fades-opacity
-  (let [expr (style/icon-opacity-expression)]
-    (is (= ["case" ["get" "stale"] style/stale-opacity style/base-opacity]
-           expr))
-    (is (< style/stale-opacity style/base-opacity) "stale reads dimmer, not gone")))
+(deftest age-fades-opacity-continuously
+  (testing "opacity interpolates over age-s, guarded for the absent case"
+    (let [expr (style/icon-opacity-expression)]
+      (is (= "case" (first expr)))
+      (testing "an un-judged aircraft (no age-s) stays full opacity"
+        (is (= ["has" "age-s"] (nth expr 1)))
+        (is (= style/base-opacity (nth expr 3))))
+      (testing "the fade is a linear interpolate from the stale line to the
+                age-out line — not a single binary step"
+        (let [ramp (nth expr 2)]
+          (is (= "interpolate" (first ramp)))
+          (is (= ["linear"] (nth ramp 1)))
+          (is (= ["get" "age-s"] (nth ramp 2)))
+          (is (= [style/stale-threshold-s   style/base-opacity
+                  style/age-out-threshold-s style/aged-out-opacity]
+                 (drop 3 ramp))
+              "full at the stale line, nearly gone at the age-out line")))))
+
+  (testing "the fade bounds are the domain thresholds, in seconds — the two
+            sides can never disagree about where the fade begins or ends"
+    (is (= (/ aircraft/stale-threshold-ms 1000) style/stale-threshold-s))
+    (is (= (/ aircraft/age-out-threshold-ms 1000) style/age-out-threshold-s))
+    (is (< style/aged-out-opacity style/base-opacity)
+        "aged reads dimmer, not gone")))

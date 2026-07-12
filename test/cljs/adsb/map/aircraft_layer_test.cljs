@@ -244,6 +244,55 @@
           "a disposed handle ignores a late load event entirely"))))
 
 ;; ---------------------------------------------------------------------
+;; adsb-2yu.6: THE CLIENT TICK. A push happens when the picture CHANGES,
+;; but silence is the absence of change — so a coarse interval re-pushes
+;; the current picture with a fresh clock, and silent aircraft keep aging
+;; (and eventually disappear) even when no frame arrives. We drive the
+;; tick manually through the set-interval! seam with a fake clock rather
+;; than wait real seconds.
+
+(deftest client-tick-ages-and-removes-between-frames
+  (rf-test/run-test-sync
+    (let [{:keys [m] :as fake} (recording-map)
+          !tick    (atom nil)
+          !cleared (atom [])]
+      (with-redefs [layer/set-interval!   (fn [f _ms] (reset! !tick f) :tick-id)
+                    layer/clear-interval! (fn [id] (swap! !cleared conj id))]
+        (let [handle (layer/attach! m)
+              ;; seen-at 0 lets age be judged; a single frame arrives and
+              ;; then the stream goes quiet — only the tick advances time.
+              heard  (assoc fixtures/ups-2717 :aircraft/seen-at-ms 0)
+              icao   (:aircraft/icao heard)
+              age-of (fn [] (get-in (feature-by-icao (last-features fake) icao)
+                                    [:properties :age-s]))]
+          (fire-load! fake)
+          (testing "attach! started a client tick through the seam"
+            (is (fn? @!tick)))
+
+          (with-redefs [layer/now-ms (constantly 70000)]
+            (rf/dispatch [:stream/received (frame [heard])])
+            (r/flush))
+          (testing "the frame's feature ages from its receive time (70 s)"
+            (is (= 70 (age-of))))
+
+          (testing "with no new frame, the tick re-pushes the SAME picture
+                    aged further — the fade progresses on the clock alone"
+            (with-redefs [layer/now-ms (constantly 200000)]
+              (@!tick))
+            (is (= 200 (age-of)))
+            (is (> 200 70) "the opacity-relevant age grew across the tick"))
+
+          (testing "past the age-out line the tick drops the aircraft from
+                    the setData payload entirely — it disappears"
+            (with-redefs [layer/now-ms (constantly 400000)]
+              (@!tick))
+            (is (empty? (last-features fake))))
+
+          (layer/detach! handle)
+          (testing "detach! cancels the tick through the seam"
+            (is (= [:tick-id] @!cleared))))))))
+
+;; ---------------------------------------------------------------------
 ;; THE CENTERPIECE PROOF: mount the real shell, push N picture updates
 ;; through re-frame, and the map component's render and mount counts do
 ;; not move while setData is called once per update. The aircraft never

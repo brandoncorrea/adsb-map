@@ -38,7 +38,8 @@
   There is no settled design direction yet (see AUTEUR.md, adsb-bvi.5).
   The palette below is deliberately functional: a legible warm->cool
   altitude ramp, an unmissable emergency red, a dim for stale. It is
-  meant to READ, not to be final. Re-skin here.")
+  meant to READ, not to be final. Re-skin here."
+  (:require [adsb.aircraft :as aircraft]))
 
 ;; ---------------------------------------------------------------------
 ;; Icon assets — the two silhouettes the symbol layer chooses between.
@@ -64,11 +65,41 @@
   "Icon-size multiplier for an aircraft squawking distress — larger so it
   cannot be missed in a crowd." 1.6)
 
+(def ^:const mlat-icon-size
+  "Icon-size multiplier for a multilaterated position — a touch smaller
+  than a self-reporting target, a quiet visual demotion for the lower
+  confidence of an mlat fix." 0.7)
+
 (def ^:const base-opacity 1.0)
 
 (def ^:const stale-opacity
-  "Opacity for an aircraft gone quiet past the staleness threshold —
-  present but fading, not gone." 0.3)
+  "A representative opacity for a stale, fading aircraft — the single
+  value the legend paints its \"Stale (fading)\" swatch with, since a
+  legend key shows one exemplar, not the continuous ramp. The LIVE map
+  fade is continuous (see `icon-opacity-expression`): full at the stale
+  line, `aged-out-opacity` at the age-out line, with this sitting between."
+  0.3)
+
+(def ^:const aged-out-opacity
+  "The opacity an aging aircraft reaches at the age-out line — nearly
+  gone, the last frame before the client drops it from the picture. The
+  fade interpolates from `base-opacity` at the stale line down to this."
+  0.2)
+
+;; The staleness fade is bounded by the SAME thresholds the domain judges
+;; staleness and age-out against (adsb.aircraft) — the two sides can never
+;; disagree about where the fade begins or ends. adsb.aircraft speaks in
+;; milliseconds; the `age-s` feature property (adsb.geo) is in seconds, so
+;; the interpolation stops are the thresholds in seconds.
+
+(def ^:const stale-threshold-s
+  "Seconds of silence at which the fade begins — the domain's stale line."
+  (/ aircraft/stale-threshold-ms 1000))
+
+(def ^:const age-out-threshold-s
+  "Seconds of silence at which the aircraft leaves the picture — the fade
+  bottoms out here, then the client drops the feature."
+  (/ aircraft/age-out-threshold-ms 1000))
 
 ;; ---------------------------------------------------------------------
 ;; Colours. DATA: the whole palette re-skins here.
@@ -131,16 +162,34 @@
    (altitude-color-expression)])
 
 (defn icon-size-expression
-  "Emergency aircraft draw larger; everyone else is the base size."
+  "Emergency aircraft draw largest; a multilaterated (lower-confidence)
+  position draws a little smaller as a quiet demotion; everyone else is
+  the base size. Emergency wins first — a squawking mlat target is still
+  an emergency and must not be shrunk. `[\"get\" \"mlat\"]` is null when
+  absent, which `case` reads as false, so a plain ADS-B target is base."
   []
-  ["case" ["get" "emergency"] emergency-icon-size base-icon-size])
+  ["case"
+   ["get" "emergency"] emergency-icon-size
+   ["get" "mlat"]      mlat-icon-size
+   base-icon-size])
 
 (defn icon-opacity-expression
-  "Stale aircraft fade. `[\"get\" \"stale\"]` is null when the property is
-  absent — `case` reads null as false, so un-judged aircraft stay full
-  opacity, exactly right."
+  "Silent aircraft fade CONTINUOUSLY as their age grows, not in one step:
+  full opacity while fresh, then interpolating down from the stale line
+  (`stale-threshold-s`) to `aged-out-opacity` at the age-out line, where
+  the client drops the feature entirely. `interpolate` clamps below its
+  first stop (fresh aircraft stay full) and above its last (nothing older
+  than age-out survives to be drawn). `age-s` is absent until an aircraft
+  carries a receive time, so a `case` guards the interpolate — an
+  un-judged aircraft stays full opacity, and `interpolate` never sees a
+  null."
   []
-  ["case" ["get" "stale"] stale-opacity base-opacity])
+  ["case"
+   ["has" "age-s"]
+   ["interpolate" ["linear"] ["get" "age-s"]
+    stale-threshold-s   base-opacity
+    age-out-threshold-s aged-out-opacity]
+   base-opacity])
 
 (defn icon-image-expression
   "Choose the silhouette per feature: the directional plane when a track
