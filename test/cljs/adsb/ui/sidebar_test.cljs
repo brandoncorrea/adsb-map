@@ -151,6 +151,18 @@
                (row-icaos))
             "highest first, ground beneath the airborne, never-reported last")))))
 
+(deftest emergency-row-shows-the-squawk-meaning
+  (testing "the squawking-7700 row flies an emergency badge naming the
+            MEANING in words, not a bare 'EMG'"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture
+                    (by-icao [fixtures/ups-2717 fixtures/squawking-7700])])
+      (render-sidebar!)
+      (is (some? (.getByText rtl/screen "general emergency"))
+          "the emergency row names what 7700 means")
+      (is (nil? (.queryByText rtl/screen "EMG"))
+          "and no longer whispers a bare abbreviation"))))
+
 (deftest callsign-sort-is-alphabetical-with-icao-fallback
   (testing "callsign A→Z, and the callsign-less sort by their icao"
     (rf-test/run-test-sync

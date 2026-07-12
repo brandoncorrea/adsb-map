@@ -24,6 +24,41 @@
   [aircraft]
   (contains? aircraft :aircraft/position))
 
+;; ---------------------------------------------------------------------
+;; Emergency squawks
+;;
+;; Three transponder codes are reserved distress signals, and each means
+;; something different — a fact worth keeping in the DOMAIN, not buried in
+;; a boolean at the map boundary. adsb.geo delegates its `emergency`
+;; feature property here; the chrome (ribbon, badges) reads the KIND so it
+;; can name the emergency in words. The human-readable words themselves
+;; ("hijacking", "radio failure", "general emergency") are presentation and
+;; live at the UI edge, not here — the domain knows the kind, not the copy.
+
+(def ^:const emergency-squawks
+  "Distress squawk -> the kind of emergency it signals. 7500 is a hijack,
+  7600 a radio (comms) failure, 7700 a general emergency."
+  {"7500" :hijack
+   "7600" :radio-failure
+   "7700" :general})
+
+(defn squawk->emergency-kind
+  "The kind of emergency a squawk code signals — :hijack, :radio-failure,
+  or :general — or nil for an ordinary (or absent) squawk."
+  [squawk]
+  (get emergency-squawks squawk))
+
+(defn emergency-kind
+  "The kind of emergency an aircraft is squawking, or nil when it is not
+  squawking a distress code."
+  [{:aircraft/keys [squawk]}]
+  (squawk->emergency-kind squawk))
+
+(defn emergency?
+  "True when the aircraft is squawking one of the three distress codes."
+  [aircraft]
+  (some? (emergency-kind aircraft)))
+
 (defn stale?
   "True when the aircraft has not been heard from within the stale
   threshold. :aircraft/seen-at-ms is stamped by merge-batch."

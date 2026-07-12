@@ -19,6 +19,8 @@
   visual pass is bead adsb-dgb.5. This namespace commits to structure, not a
   look."
   (:require
+    [adsb.aircraft :as aircraft]
+    [adsb.ui.alert :as alert]
     [re-frame.core :as rf]))
 
 ;; The em-dash stands in for every fact the sky never reported.
@@ -97,7 +99,8 @@
   [aircraft now-ms]
   (let [{:aircraft/keys [icao callsign ground-speed-kt track-deg squawk
                          baro-rate-fpm position-suspect? mlat?]} aircraft
-        seen (seen-age-s aircraft now-ms)]
+        seen           (seen-age-s aircraft now-ms)
+        emergency-kind (aircraft/emergency-kind aircraft)]
     [:aside.adsb-panel {:role "complementary" :aria-label "Aircraft detail"}
      [:div.adsb-panel-header
       ;; Callsign when the sky gave one, otherwise the bare icao — never blank.
@@ -106,8 +109,12 @@
       [:button.adsb-panel-close
        {:type "button" :aria-label "Close" :on-click close!}
        close-glyph]]
-     (when (or position-suspect? mlat?)
+     ;; Emergency leads the badges and names the MEANING in words (shared with
+     ;; the ribbon and sidebar), not just the raw squawk shown in the facts.
+     (when (or emergency-kind position-suspect? mlat?)
        [:div.adsb-panel-badges
+        (when emergency-kind
+          [badge "emergency" (alert/emergency-words emergency-kind)])
         (when position-suspect? [badge "suspect" "position suspect"])
         (when mlat? [badge "mlat" "MLAT"])])
      [:div.adsb-panel-facts

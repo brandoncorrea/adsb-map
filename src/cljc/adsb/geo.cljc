@@ -74,21 +74,6 @@
        :geo/max-lon (reduce max lons)})))
 
 ;; ---------------------------------------------------------------------
-;; Emergency squawks
-;;
-;; NOTE: 7500 hijack, 7600 radio failure, 7700 general emergency. This is
-;; the minimal squawk logic geo needs to set an `emergency` property;
-;; adsb-dgb.4 owns promoting a shared `emergency?` predicate into
-;; adsb.aircraft, at which point this should delegate to it.
-
-(def ^:const emergency-squawks #{"7500" "7600" "7700"})
-
-(defn emergency?
-  "True when the aircraft is squawking a distress code."
-  [{:aircraft/keys [squawk]}]
-  (boolean (emergency-squawks squawk)))
-
-;; ---------------------------------------------------------------------
 ;; Domain aircraft -> GeoJSON
 ;;
 ;; Feature `:properties` keys are simple, UNqualified keywords. clj->js
@@ -133,7 +118,10 @@
         stale (stale-property aircraft now-ms)
         age   (age-property aircraft now-ms)]
     (cond-> {:icao      icao
-             :emergency (emergency? aircraft)}
+             ;; The emergency predicate now lives in the domain
+             ;; (adsb.aircraft); the boolean feature property it feeds the
+             ;; style layer is unchanged.
+             :emergency (aircraft/emergency? aircraft)}
       callsign      (assoc :callsign callsign)
       track-deg     (assoc :track track-deg)
       on-ground?    (assoc :altitude ground-altitude)

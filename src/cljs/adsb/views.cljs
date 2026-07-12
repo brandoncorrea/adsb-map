@@ -6,6 +6,7 @@
   (:require
     [adsb.map.view :as map-view]
     [adsb.ui.aircraft-panel :as aircraft-panel]
+    [adsb.ui.alert :as alert]
     [adsb.ui.header :as header]
     [adsb.ui.legend :as legend]
     [adsb.ui.sidebar :as sidebar]))
@@ -18,6 +19,10 @@
   []
   [:div.adsb-shell
    [header/header]
+   ;; The emergency banner sits directly under the header — top of the shell,
+   ;; impossible to miss while any aircraft is squawking distress. Renders
+   ;; nothing when the sky is calm (adsb.ui.alert).
+   [alert/alert-ribbon]
    [map-view/map-view]
    ;; Corner overlay explaining the colour ramp. Static chrome — reads the
    ;; style constants, derefs nothing (adsb.ui.legend).

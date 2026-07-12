@@ -264,3 +264,83 @@ body {
   padding: 12px;
   color: #aab2bd;
 }
+
+/* Emergency ribbon — the loudest chrome the app owns (adsb-dgb.4). Sits
+   directly under the 44px header, spanning the shell, so an active distress
+   squawk is impossible to miss. Every emergency STACKS as its own row rather
+   than cycling behind a timer. NEUTRAL PLACEHOLDER: an unmissable red is
+   functional, not the final look (visual pass adsb-dgb.5). */
+.adsb-alerts {
+  position: absolute;
+  top: 44px;
+  left: 0;
+  right: 260px;             /* clear of the roster docked top-right */
+  z-index: 2;               /* above the map and the sidebar's top edge */
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 100%;
+}
+
+.adsb-alert {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 16px;
+  border: none;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.35);
+  background: #c81e1e;
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.adsb-alert:hover {
+  background: #e02424;
+}
+
+.adsb-alert-name {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.adsb-alert-squawk {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.adsb-alert-meaning {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.9;
+}
+
+/* Status badges — small flags on rows and in the detail panel. The emergency
+   badge is the only one with a committed colour, because it is the only one
+   that means someone is in danger. */
+.adsb-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.14);
+  color: #f5f6f7;
+}
+
+.adsb-badge-emergency {
+  background: #c81e1e;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.adsb-panel-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}

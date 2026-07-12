@@ -102,6 +102,19 @@
       (is (nil? (.queryByText rtl/screen "MLAT")))
       (is (nil? (.queryByText rtl/screen "position suspect"))))))
 
+(deftest emergency-badge-shows-the-squawk-meaning
+  (testing "a selected emergency aircraft flies a badge naming the MEANING —
+            the raw squawk still shows in the facts, the words in the badge"
+    (rf-test/run-test-sync
+      (let [icao (:aircraft/icao fixtures/squawking-7700)]
+        (rf/dispatch [:test/set-picture {icao fixtures/squawking-7700}])
+        (rf/dispatch [:aircraft/select icao])
+        (render-panel!)
+        (is (some? (.getByText rtl/screen "general emergency"))
+            "the badge spells out what 7700 means")
+        (is (= "7700" (.-textContent (.getByTestId rtl/screen "fact:Squawk")))
+            "and the raw squawk is still there in the facts")))))
+
 (deftest seen-age-derives-from-seen-at-and-the-ui-clock
   (testing "seen-age counts seconds since the aircraft was last heard"
     (rf-test/run-test-sync

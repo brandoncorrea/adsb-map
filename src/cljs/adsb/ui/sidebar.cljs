@@ -35,7 +35,7 @@
   aircraft actually carries. See the close reason for the full rationale."
   (:require
     [adsb.aircraft :as aircraft]
-    [adsb.geo :as geo]
+    [adsb.ui.alert :as alert]
     [clojure.string :as str]
     [re-frame.core :as rf]))
 
@@ -209,16 +209,18 @@
 
 (defn- badges
   "Status flags for a row — emergency squawk, suspect position, MLAT — each
-  shown only when true. Emergency uses adsb.geo/emergency? (the shared
-  predicate's promotion to adsb.aircraft is bead adsb-dgb.4's job, not
-  ours). `role=status` mirrors the detail panel's badges."
-  [aircraft]
-  (let [{:aircraft/keys [position-suspect? mlat?]} aircraft
-        emergency? (geo/emergency? aircraft)]
-    (when (or emergency? position-suspect? mlat?)
+  shown only when true. Emergency uses the promoted domain predicate
+  (adsb.aircraft/emergency-kind) and names the MEANING in words, not a bare
+  'EMG': a hijacking and a radio failure are not the same row. `role=status`
+  mirrors the detail panel's badges."
+  [aircraft*]
+  (let [{:aircraft/keys [position-suspect? mlat?]} aircraft*
+        emergency-kind (aircraft/emergency-kind aircraft*)]
+    (when (or emergency-kind position-suspect? mlat?)
       [:span.adsb-row-badges
-       (when emergency?
-         [:span.adsb-badge.adsb-badge-emergency {:role "status"} "EMG"])
+       (when emergency-kind
+         [:span.adsb-badge.adsb-badge-emergency {:role "status"}
+          (alert/emergency-words emergency-kind)])
        (when position-suspect?
          [:span.adsb-badge.adsb-badge-suspect {:role "status"} "SUS"])
        (when mlat?

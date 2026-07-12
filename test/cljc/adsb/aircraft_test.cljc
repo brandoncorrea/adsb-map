@@ -31,6 +31,30 @@
   (testing "false for an aircraft heard but never positioned"
     (is (not (aircraft/positioned? fixtures/never-positioned)))))
 
+(deftest emergency?
+  (testing "each of the three distress squawks reads as an emergency and
+            names its distinct kind"
+    (is (aircraft/emergency? {:aircraft/squawk "7500"}))
+    (is (aircraft/emergency? {:aircraft/squawk "7600"}))
+    (is (aircraft/emergency? {:aircraft/squawk "7700"}))
+    (is (= :hijack        (aircraft/squawk->emergency-kind "7500")) "7500 is a hijack")
+    (is (= :radio-failure (aircraft/squawk->emergency-kind "7600")) "7600 is a comms failure")
+    (is (= :general       (aircraft/squawk->emergency-kind "7700")) "7700 is a general emergency"))
+
+  (testing "the squawking-7700 cast member is a general emergency, through
+            the real ingest boundary"
+    (is (aircraft/emergency? fixtures/squawking-7700))
+    (is (= :general (aircraft/emergency-kind fixtures/squawking-7700))))
+
+  (testing "an ordinary squawk is not an emergency and has no kind"
+    (is (not (aircraft/emergency? {:aircraft/squawk "0000"})))
+    (is (nil? (aircraft/squawk->emergency-kind "0000")))
+    (is (not (aircraft/emergency? fixtures/ups-2717))))
+
+  (testing "an absent squawk is not an emergency — nil, never a false positive"
+    (is (not (aircraft/emergency? {})))
+    (is (nil? (aircraft/emergency-kind {})))))
+
 (deftest merge-batch
   (testing "a newly heard aircraft is added to the picture, keyed by icao"
     (let [picture (aircraft/merge-batch {} [fixtures/ups-2717]
