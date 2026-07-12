@@ -218,8 +218,11 @@ losing to its most radical rival:
 **Mechanism:** the winner ships exactly as previewed — the mix's CSS
 custom-property set promoted into `app.css` `:root` in both editions,
 `font-src 'self'` added to the CSP (`adsb-kh4.7`), applied across the
-chrome in the visual pass (`adsb-dgb.5`). The `#/preview` page remains:
-it is the standing fitting room for any future re-skin.
+chrome in the visual pass (`adsb-dgb.5`). The `#/preview` fitting room
+(bead `adsb-dgb.11`) served every pick above and was then cleared out
+at the Overseer's direction (bead `adsb-gdz`) — the app carries no
+preview route. If a future re-skin wants the mechanism back, resurrect
+it from git history rather than reinventing it.
 
 **The one consequence left open — now closed:** whether basemap places
 kept a serif voice against the mono chrome, or the whole chart adopted
@@ -334,4 +337,5 @@ In order, because risk fronts the queue:
    the instinct channel is perspective size (§8, shadow rejected); the Stack
    (§9) is built and load-bearing.
 7. ~~File the typography bake-off bead~~ **Done — picked and shipped**:
-   the §5 mix is live in `app.css`; `#/preview` remains the fitting room.
+   the §5 mix is live in `app.css`; the `#/preview` fitting room was
+   cleared out after the picks (in git history if ever needed again).
