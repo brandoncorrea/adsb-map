@@ -67,6 +67,8 @@
     (is (= "mlat" (:type fixtures/mlat-derived-raw)))
     (is (seq (:mlat fixtures/mlat-derived-raw))))
 
-  (testing "mlat-derived still coerces to an ordinary positioned domain
-            aircraft"
-    (is (contains? fixtures/mlat-derived :aircraft/position))))
+  (testing "mlat-derived coerces to a positioned domain aircraft that
+            now carries the :aircraft/mlat? confidence marker, derived
+            through the real ingest boundary"
+    (is (contains? fixtures/mlat-derived :aircraft/position))
+    (is (true? (:aircraft/mlat? fixtures/mlat-derived)))))

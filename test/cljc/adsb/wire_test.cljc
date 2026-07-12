@@ -19,7 +19,7 @@
 (def ^:private wire-keys
   "Every key aircraft->wire may emit — the documented allowlist."
   #{:icao :callsign :lat :lon :altitude :on-ground :squawk
-    :ground-speed :track :baro-rate :seen-at :position-suspect})
+    :ground-speed :track :baro-rate :seen-at :position-suspect :mlat})
 
 (deftest aircraft->wire
   (testing "projects the happy-path aircraft onto flat unqualified keys"
@@ -51,7 +51,11 @@
 
   (testing "a suspect position is surfaced, not hidden"
     (let [suspect (assoc fixtures/ups-2717 :aircraft/position-suspect? true)]
-      (is (true? (:position-suspect (wire/aircraft->wire suspect)))))))
+      (is (true? (:position-suspect (wire/aircraft->wire suspect))))))
+
+  (testing "an MLAT-derived position is surfaced as lower-confidence"
+    (is (true? (:mlat (wire/aircraft->wire fixtures/mlat-derived))))
+    (is (not (contains? (wire/aircraft->wire fixtures/ups-2717) :mlat)))))
 
 (deftest receiver-privacy
   (testing "receiver-relative fields never survive the projection, even

@@ -33,12 +33,26 @@
 ;; ---------------------------------------------------------------------
 ;; Feeder vocabulary -> domain vocabulary
 
+(defn- mlat-derived?
+  "Does this raw entry's position come from multilateration rather than
+  the aircraft's own ADS-B? readsb signals MLAT two ways and either is
+  enough to lower our confidence: the entry's `type` is \"mlat\", or its
+  `mlat` array names the fields it multilaterated (a mode_s target with
+  no ADS-B position falls back to MLAT and lists lat/lon there). The
+  union is deliberate — a bare `type` check would miss mode_s entries
+  whose position is MLAT, and a bare array check would miss a type
+  \"mlat\" entry that happened to arrive with an empty array. Either
+  fires this true-only marker; neither leaves it absent."
+  [{:keys [type mlat]}]
+  (or (= "mlat" type)
+      (boolean (seq mlat))))
+
 (defn- raw->aircraft
   "Rename feeder fields into namespaced domain keys. Absent (or null)
   stays absent — an aircraft with no reported altitude is not at sea
   level, and one with no reported speed is not stationary."
   [{:keys [hex flight alt_baro lat lon squawk gs track baro_rate
-           seen rssi]}]
+           seen rssi] :as raw}]
   (let [callsign (some-> flight str/trim not-empty)]
     (cond-> {:aircraft/icao (str/lower-case hex)}
             callsign (assoc :aircraft/callsign callsign)
@@ -51,7 +65,10 @@
             track (assoc :aircraft/track-deg track)
             baro_rate (assoc :aircraft/baro-rate-fpm baro_rate)
             seen (assoc :aircraft/seen-s seen)
-            rssi (assoc :aircraft/rssi rssi))))
+            rssi (assoc :aircraft/rssi rssi)
+            ;; True only for MLAT-derived positions; absent otherwise, so
+            ;; the wire can omit it like on-ground? and position-suspect?.
+            (mlat-derived? raw) (assoc :aircraft/mlat? true))))
 
 ;; ---------------------------------------------------------------------
 ;; Plausibility pass — a separate layer from schema validity

@@ -37,6 +37,10 @@
       position-suspect  :aircraft/position-suspect? true only — the
                         spoofing fingerprint (adsb.ingest.plausibility),
                         flagged so the browser can surface it
+      mlat              :aircraft/mlat?             true only — the
+                        position is multilaterated, not ADS-B
+                        (adsb.ingest.coerce); lower confidence, so the
+                        browser can render it distinctly
 
   ## Privacy (the adsb-kbm.2 mandate)
 
@@ -55,7 +59,7 @@
   receiver-relative field — never reach the wire."
   [{:aircraft/keys [icao callsign position altitude-ft on-ground? squawk
                     ground-speed-kt track-deg baro-rate-fpm seen-at-ms
-                    position-suspect?]}]
+                    position-suspect? mlat?]}]
   (cond-> {:icao icao}
           callsign (assoc :callsign callsign)
           position (assoc :lat (:geo/lat position)
@@ -67,7 +71,8 @@
           track-deg (assoc :track track-deg)
           baro-rate-fpm (assoc :baro-rate baro-rate-fpm)
           seen-at-ms (assoc :seen-at seen-at-ms)
-          position-suspect? (assoc :position-suspect true)))
+          position-suspect? (assoc :position-suspect true)
+          mlat? (assoc :mlat true)))
 
 (defn picture->wire
   "The picture (icao -> aircraft) as one frame envelope, built at
@@ -80,7 +85,7 @@
   "The inverse projection: one decoded wire aircraft (keywordized JSON)
   back into a domain aircraft. For the browser SSE client (adsb-2yu.2)."
   [{:keys [icao callsign lat lon altitude on-ground squawk ground-speed
-           track baro-rate seen-at position-suspect]}]
+           track baro-rate seen-at position-suspect mlat]}]
   (cond-> {:aircraft/icao icao}
           callsign (assoc :aircraft/callsign callsign)
           (and lat lon) (assoc :aircraft/position {:geo/lat lat :geo/lon lon})
@@ -91,7 +96,8 @@
           track (assoc :aircraft/track-deg track)
           baro-rate (assoc :aircraft/baro-rate-fpm baro-rate)
           seen-at (assoc :aircraft/seen-at-ms seen-at)
-          position-suspect (assoc :aircraft/position-suspect? true)))
+          position-suspect (assoc :aircraft/position-suspect? true)
+          mlat (assoc :aircraft/mlat? true)))
 
 (defn wire->picture
   "A decoded frame envelope back into the domain picture, icao ->

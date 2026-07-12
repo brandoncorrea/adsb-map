@@ -80,7 +80,13 @@
    ;; from the previous observation — the fingerprint of spoofing.
    ;; Flagged and surfaced, never dropped or clamped; cleared by the
    ;; next consistent observation (adsb.ingest.plausibility).
-   [:aircraft/position-suspect? {:optional true} :boolean]])
+   [:aircraft/position-suspect? {:optional true} :boolean]
+   ;; True only when the position derives from multilateration rather
+   ;; than the aircraft's own ADS-B — lower-confidence data the UI
+   ;; renders distinctly (adsb.ingest.coerce). Like on-ground? and
+   ;; position-suspect?, this is a true-or-absent marker: absent means
+   ;; not-MLAT, never an explicit false.
+   [:aircraft/mlat? {:optional true} :boolean]])
 
 ;; ---------------------------------------------------------------------
 ;; Plausibility — a second, separate layer from schema validity.

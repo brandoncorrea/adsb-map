@@ -103,9 +103,10 @@
 ;; mlat-derived — position from multilateration, not ADS-B. The feeder
 ;; signals this with `type` "mlat" and a non-empty `mlat` array listing
 ;; which fields were multilaterated rather than self-reported. That is
-;; lower-confidence data. The confidence signal lives in the raw form;
-;; coercion does not yet surface it as a domain field (adsb-nqf.3), so
-;; the domain aircraft is an ordinary positioned one.
+;; lower-confidence data. Coercion surfaces it as :aircraft/mlat? true
+;; on the domain aircraft (adsb-nqf.5), so the UI can render this target
+;; distinctly; the marker is derived through the real boundary, not
+;; hand-written here.
 
 (def mlat-derived-raw
   {:hex "a2ddac" :type "mlat" :flight "N512ML  "

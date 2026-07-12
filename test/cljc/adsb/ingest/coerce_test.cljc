@@ -93,6 +93,28 @@
     (is (nil? (coerce/->aircraft "garbage")))
     (is (nil? (coerce/->aircraft 42)))))
 
+(deftest ->aircraft-mlat
+  (testing "a type \"mlat\" entry is flagged :aircraft/mlat? true"
+    (is (true? (:aircraft/mlat?
+                 (coerce/->aircraft (assoc cruising-raw :type "mlat"))))))
+
+  (testing "a non-empty mlat array flags the marker even when type is not
+            \"mlat\" — a mode_s target falling back to multilateration"
+    (is (true? (:aircraft/mlat?
+                 (coerce/->aircraft
+                   (assoc cruising-raw :type "mode_s"
+                          :mlat ["lat" "lon"]))))))
+
+  (testing "an ordinary adsb_icao entry carries no marker — absent means
+            not-MLAT, never an explicit false"
+    (let [aircraft (coerce/->aircraft (assoc cruising-raw :mlat []))]
+      (is (not (contains? aircraft :aircraft/mlat?)))))
+
+  (testing "an adsb_icao entry with the mlat field absent entirely
+            carries no marker"
+    (is (not (contains? (coerce/->aircraft cruising-raw)
+                        :aircraft/mlat?)))))
+
 (deftest ->aircraft-plausibility
   (testing "an absurd altitude costs the field, not the aircraft, and is
             never clamped"
