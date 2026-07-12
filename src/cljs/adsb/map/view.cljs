@@ -21,6 +21,7 @@
   (:require
     [adsb.map.aircraft-layer :as aircraft-layer]
     [adsb.map.basemap :as basemap]
+    [adsb.map.emergency :as emergency]
     [adsb.map.maplibre :as maplibre]
     [adsb.map.selection :as selection]
     [adsb.map.theme :as theme]
@@ -101,6 +102,7 @@
         !map       (atom nil)
         !aircraft  (atom nil)
         !ring      (atom nil)
+        !emergency (atom nil)
         !raw-style (atom nil)
         !unwatch   (atom nil)
         !disposed  (atom false)]
@@ -111,8 +113,14 @@
                 (reset! !aircraft (aircraft-layer/attach! m th))
                 ;; The selection ring rides the same lifecycle: ring and
                 ;; map are created and torn down together (adsb.map.selection).
-                (reset! !ring (selection/attach! m))))
+                (reset! !ring (selection/attach! m))
+                ;; So do the §7 emergency annotations — the red-pen
+                ;; ellipse, MAYDAY stamp, and edge arrow (adsb.map.emergency).
+                (reset! !emergency (emergency/attach! m))))
             (unmount-map! []
+              (when-let [annotations @!emergency]
+                (emergency/detach! @!map annotations)
+                (reset! !emergency nil))
               (when-let [ring @!ring]
                 (selection/detach! @!map ring)
                 (reset! !ring nil))

@@ -102,6 +102,69 @@
        :geo/max-lon (reduce max lons)})))
 
 ;; ---------------------------------------------------------------------
+;; The viewport edge annotation — where an off-screen target announces
+;; itself (design direction §7, Q13c: the camera is never hijacked, so
+;; an out-of-view emergency is POINTED AT from the map's edge instead).
+;; Pure viewport geometry over the same bounds shape `bounds` returns;
+;; the browser side (adsb.map.emergency) only converts the fractions
+;; back to a marker position.
+
+(defn- lon-near
+  "`lon` shifted by whole turns (±360°) to the representation nearest
+  `reference-lon`. MapLibre's unwrapped bounds can run past ±180 after a
+  pan across the antimeridian while aircraft longitudes stay wrapped;
+  comparing the two demands one frame of reference."
+  [lon reference-lon]
+  (let [offset (- lon reference-lon)]
+    (cond
+      (> offset 180)  (recur (- lon 360) reference-lon)
+      (< offset -180) (recur (+ lon 360) reference-lon)
+      :else           lon)))
+
+(defn- clamp01 [x] (-> x (max 0.0) (min 1.0)))
+
+(defn edge-annotation
+  "Where the viewport edge should announce an off-screen `target`: the
+  point where the straight ray from the viewport's centre toward the
+  target crosses the edge, in PLATE FRACTIONS of the `bounds` box, plus
+  the great-circle bearing and distance from that centre —
+
+    {:edge/x           0..1, fraction across the viewport, left -> right
+     :edge/y           0..1, fraction down the viewport, top -> bottom
+     :edge/bearing-deg initial bearing, viewport centre -> target
+     :edge/distance-m  great-circle distance, viewport centre -> target}
+
+  nil when the target lies INSIDE the bounds (an on-screen aircraft
+  needs no arrow) or the bounds are degenerate (a zero-area viewport
+  has no edge worth annotating). The ray is planar in the fractions;
+  screen x/y are near-affine in lon/lat over a regional viewport, so
+  the fraction-space crossing IS the on-screen crossing — the honest
+  datum for a distant target is the great-circle bearing, which is
+  returned alongside."
+  [{:geo/keys [min-lat max-lat min-lon max-lon]} {:geo/keys [lat lon]}]
+  (let [lat-span (- max-lat min-lat)
+        lon-span (- max-lon min-lon)]
+    (when (and (pos? lat-span) (pos? lon-span))
+      (let [centre {:geo/lat (+ min-lat (/ lat-span 2))
+                    :geo/lon (+ min-lon (/ lon-span 2))}
+            lon*   (lon-near lon (:geo/lon centre))
+            ;; The target in plate fractions; y grows DOWN the screen.
+            x      (/ (- lon* min-lon) lon-span)
+            y      (/ (- max-lat lat) lat-span)]
+        (when-not (and (<= 0 x 1) (<= 0 y 1))
+          (let [dx     (- x 0.5)
+                dy     (- y 0.5)
+                ;; First crossing of the unit box along the centre->target
+                ;; ray: the tighter of the two half-span ratios.
+                t      (min (if (zero? dx) ##Inf (/ 0.5 (Math/abs dx)))
+                            (if (zero? dy) ##Inf (/ 0.5 (Math/abs dy))))
+                target {:geo/lat lat :geo/lon lon*}]
+            {:edge/x           (clamp01 (+ 0.5 (* t dx)))
+             :edge/y           (clamp01 (+ 0.5 (* t dy)))
+             :edge/bearing-deg (bearing centre target)
+             :edge/distance-m  (distance centre target)}))))))
+
+;; ---------------------------------------------------------------------
 ;; Dead reckoning — projecting an aircraft between real frames
 ;;
 ;; Positions arrive at ~1 Hz; the map draws at ~60. Between real frames

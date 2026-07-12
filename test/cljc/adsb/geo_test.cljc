@@ -216,6 +216,75 @@
     (is (nil? (geo/bounds nil)))))
 
 ;; ---------------------------------------------------------------------
+;; The viewport edge annotation (§7's off-screen arrow, Q13c)
+
+;; A square-ish regional viewport around the app's default centre:
+;; centre (28, -82), one degree of half-span each way.
+(def ^:private viewport
+  {:geo/min-lat 27.0 :geo/max-lat 29.0
+   :geo/min-lon -83.0 :geo/max-lon -81.0})
+
+(deftest edge-annotation-known-geometry
+  (testing "a target INSIDE the viewport needs no arrow"
+    (is (nil? (geo/edge-annotation viewport {:geo/lat 28.0 :geo/lon -82.0})))
+    (is (nil? (geo/edge-annotation viewport {:geo/lat 28.9 :geo/lon -81.1}))
+        "inside near a corner is still inside"))
+
+  (testing "a target due NORTH exits through the top edge's midpoint,
+            bearing 0 along the meridian"
+    (let [edge (geo/edge-annotation viewport {:geo/lat 31.0 :geo/lon -82.0})]
+      (is (close? 0.5 (:edge/x edge) 1e-9))
+      (is (close? 0.0 (:edge/y edge) 1e-9))
+      (is (close? 0.0 (:edge/bearing-deg edge) 0.01))))
+
+  (testing "a target due SOUTH exits through the bottom edge's midpoint,
+            bearing 180"
+    (let [edge (geo/edge-annotation viewport {:geo/lat 25.0 :geo/lon -82.0})]
+      (is (close? 0.5 (:edge/x edge) 1e-9))
+      (is (close? 1.0 (:edge/y edge) 1e-9))
+      (is (close? 180.0 (:edge/bearing-deg edge) 0.01))))
+
+  (testing "a target on the exact 45° plate diagonal exits through the
+            top-right corner"
+    (let [edge (geo/edge-annotation viewport {:geo/lat 30.0 :geo/lon -80.0})]
+      (is (close? 1.0 (:edge/x edge) 1e-9))
+      (is (close? 0.0 (:edge/y edge) 1e-9))))
+
+  (testing "the tighter half-span wins: a target far east and a little
+            north pins to the RIGHT edge, part-way up"
+    ;; fractions: x = 2.5, y = 0.25 -> dx = 2.0, dy = -0.25;
+    ;; t = min(0.5/2.0, 0.5/0.25) = 0.25 -> edge (1.0, 0.4375).
+    (let [edge (geo/edge-annotation viewport {:geo/lat 28.5 :geo/lon -78.0})]
+      (is (close? 1.0 (:edge/x edge) 1e-9))
+      (is (close? 0.4375 (:edge/y edge) 1e-9))
+      (is (< 80 (:edge/bearing-deg edge) 90)
+          "east and slightly north of the centre")))
+
+  (testing "the distance is the great-circle distance from the viewport
+            centre, so the arrow's label agrees with geo/distance"
+    (let [target {:geo/lat 31.0 :geo/lon -82.0}
+          edge   (geo/edge-annotation viewport target)]
+      (is (close? (geo/distance {:geo/lat 28.0 :geo/lon -82.0} target)
+                  (:edge/distance-m edge)
+                  1))))
+
+  (testing "an unwrapped-bounds pan meets a wrapped longitude: the target
+            reads in the viewport's frame, not 360° away"
+    (let [across {:geo/min-lat 27.0 :geo/max-lat 29.0
+                  :geo/min-lon 178.0 :geo/max-lon 182.0}]
+      (is (nil? (geo/edge-annotation across {:geo/lat 28.0 :geo/lon -179.0}))
+          "lon -179 IS 181 in this viewport — inside, no arrow")
+      (let [edge (geo/edge-annotation across {:geo/lat 28.0 :geo/lon -175.0})]
+        (is (close? 1.0 (:edge/x edge) 1e-9)
+            "lon -175 is 185 here — off the right edge"))))
+
+  (testing "a degenerate viewport has no edge worth annotating"
+    (is (nil? (geo/edge-annotation
+                {:geo/min-lat 28.0 :geo/max-lat 28.0
+                 :geo/min-lon -82.0 :geo/max-lon -82.0}
+                {:geo/lat 31.0 :geo/lon -82.0})))))
+
+;; ---------------------------------------------------------------------
 ;; Domain aircraft -> GeoJSON
 
 (def cruising

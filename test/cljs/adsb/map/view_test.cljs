@@ -59,7 +59,11 @@
     (on-layer-hover-cursor! [_ _layer-id] nil)
     (add-marker! [_ _element _lng-lat] nil)
     (move-marker! [_ _marker _lng-lat] nil)
-    (remove-marker! [_ _marker] nil)))
+    (remove-marker! [_ _marker] nil)
+    ;; A calm sky never reads bounds, but the protocol must be whole.
+    (bounds [_] {:geo/min-lat 27.0 :geo/max-lat 29.0
+                 :geo/min-lon -83.0 :geo/max-lon -81.0})
+    (on-move! [_ _f] nil)))
 
 (deftest default-map-opts-privacy
   (testing "default center is a fixed, whole-degree regional point — never a receiver"

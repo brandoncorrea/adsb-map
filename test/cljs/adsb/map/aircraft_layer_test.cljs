@@ -53,7 +53,13 @@
             (on-layer-click! [_ _layer-id f]
               (swap! !rec assoc :on-layer-click f))
             (on-layer-hover-cursor! [_ layer-id]
-              (swap! !rec update :hover-layers conj layer-id)))}))
+              (swap! !rec update :hover-layers conj layer-id))
+            ;; The shell-mounting proofs attach the emergency annotations
+            ;; too (adsb.map.emergency); their fixtures squawk nothing, so
+            ;; only the moveend registration ever crosses this seam.
+            (bounds [_] {:geo/min-lat 27.0 :geo/max-lat 29.0
+                         :geo/min-lon -83.0 :geo/max-lon -81.0})
+            (on-move! [_ _f] nil))}))
 
 (defn- fire-load! [{:keys [rec]}] ((:on-load @rec)))
 

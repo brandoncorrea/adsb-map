@@ -145,8 +145,12 @@
 /* ── Motion (§6) ──────────────────────────────────────────────────────
    The chrome breathes, quietly: panels settle in under 200ms ease-out,
    the live dots breathe (never blink), the selection ring draws itself
-   in. The EMERGENCY treatment spends zero motion (§7) — nothing under
-   .adsb-alerts or any -emergency class animates, ever. */
+   in. The EMERGENCY treatment spends zero AMBIENT motion (§7) — nothing
+   under .adsb-alerts or any -emergency class animates, ever. The one
+   sanctioned exception is §7's own commission: the red-pen ellipse
+   (.adsb-mayday) DRAWS ITSELF IN once — iteration-count 1, set inline
+   by adsb.map.emergency so the suite can prove it — and then holds.
+   Ink never blinks. */
 
 @keyframes adsb-settle {
   from {
@@ -177,12 +181,29 @@
   }
 }
 
+/* The red pen circling an emergency (§7): the dash sweeps from the full
+   pathLength 100 to the ellipse's settled dashoffset 0 — one pass of the
+   grease pencil, pressed in and left. Duration, delay, and the PROVABLE
+   iteration-count 1 are inline longhands set by adsb.map.emergency. */
+@keyframes adsb-mayday-draw {
+  from {
+    stroke-dashoffset: 100;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .adsb-panel,
   .adsb-selection-ring circle,
   .adsb-conn-live .adsb-conn-dot,
   .adsb-feeder-ok .adsb-feeder-dot {
     animation: none;
+  }
+
+  /* !important because the draw-in rides inline longhands (see above);
+     reduced motion must still win, and the ellipse is simply already
+     drawn — the held state IS the design. */
+  .adsb-mayday ellipse {
+    animation-name: none !important;
   }
 
   .adsb-stack-tick {
@@ -672,6 +693,133 @@ body {
   animation: adsb-ring-draw 420ms ease-out;
 }
 
+/* ── The §7 map annotations (adsb.map.emergency) ─────────────────────
+   The chart's own emergency marks, beside the NOTAM strip's chrome:
+   the red-pen double ellipse + MAYDAY stamp on a squawking aircraft in
+   view, the edge arrow when it is beyond the frame. Both print in the
+   edition's emergency red via var(--emergency) — §2's two reds, one
+   variable. The ellipse's ONE-TIME draw-in is inline (see the §6
+   motion note); everything in this block is still ink. */
+.adsb-mayday {
+  width: 84px;  /* mirror adsb.map.emergency/ellipse-box-px */
+  height: 84px;
+  pointer-events: none; /* the plane beneath stays clickable */
+}
+
+.adsb-mayday svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.adsb-mayday ellipse {
+  fill: none;
+  stroke: var(--emergency);
+  stroke-width: 2px;
+  stroke-linecap: round;
+}
+
+/* The MAYDAY stamp: a small rotated annotation on the paper beside the
+   ellipse, in the plotter's hand — red ink, pressed slightly askew.
+   Placement (left/top) is chosen once by adsb.map.emergency from the
+   track at placement; only its DATA ever changes after. */
+.adsb-mayday-stamp {
+  position: absolute;
+  transform: translate(-50%, -50%) rotate(-4deg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+  width: max-content;
+  max-width: 168px;
+  padding: var(--s2) var(--s3);
+  background: var(--paper-veil);
+  border: 1.5px solid var(--emergency);
+  border-radius: 1px;
+  box-shadow: 2px 2px 0 var(--rule-faint);
+  color: var(--emergency);
+  font-size: var(--t-1);
+  line-height: 1.25;
+  text-align: left;
+}
+
+.adsb-mayday-word {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  border-bottom: 1px solid var(--emergency);
+  padding-bottom: var(--s1);
+}
+
+.adsb-mayday-callsign {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere; /* a hostile callsign must not shear the stamp */
+}
+
+.adsb-mayday-facts {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+  white-space: nowrap;
+}
+
+.adsb-mayday-label {
+  /* voice: the printed caption rule below */
+  opacity: 0.75;
+}
+
+.adsb-mayday-value {
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+}
+
+/* The edge arrow (Q13c): pinned just inside the frame on the bearing
+   toward an off-screen emergency. A button — it OFFERS selection; the
+   camera is never hijacked. Zero animation of any kind. */
+.adsb-edge-arrow {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s1) var(--s3) var(--s1) var(--s2);
+  background: var(--paper-veil);
+  border: 1.5px solid var(--emergency);
+  border-radius: 1px;
+  box-shadow: 2px 2px 0 var(--rule-faint);
+  color: var(--emergency);
+  font: inherit;
+  font-size: var(--t-1);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.adsb-edge-arrow:hover {
+  filter: brightness(1.08);
+}
+
+.adsb-edge-arrow:focus-visible {
+  outline: 2px solid var(--emergency);
+  outline-offset: 2px;
+}
+
+.adsb-edge-arrow-glyph {
+  display: block;
+  width: 14px;
+  height: 14px;
+  fill: var(--emergency);
+}
+
+.adsb-edge-arrow-callsign {
+  letter-spacing: 0.02em;
+  overflow-wrap: anywhere;
+}
+
+.adsb-edge-arrow-distance {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+}
+
 /* =====================================================================
    THE STACK (adsb-dgb.9) — BEGIN BOUNDED SECTION
    The live flight-level ruler on the map's edge (design direction §9).
@@ -990,6 +1138,7 @@ body {
 .adsb-count-unit,
 .adsb-stats-label,
 .adsb-fact-label,
+.adsb-mayday-label,
 .adsb-stack-shelf-label {
   font-family: "Space Grotesk", system-ui, sans-serif;
   font-style: normal;

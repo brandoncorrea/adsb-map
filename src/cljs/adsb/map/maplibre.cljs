@@ -57,7 +57,23 @@
   (move-marker! [this marker lng-lat]
     "Move `marker` (an `add-marker!` handle) to `lng-lat` ([lng lat]).")
   (remove-marker! [this marker]
-    "Remove `marker` (an `add-marker!` handle) from the map."))
+    "Remove `marker` (an `add-marker!` handle) from the map.")
+  (bounds [this]
+    "The current viewport as the adsb.geo bounds box —
+    {:geo/min-lat _ :geo/max-lat _ :geo/min-lon _ :geo/max-lon _} — so
+    viewport geometry (the emergency edge arrow, adsb.map.emergency)
+    stays pure Clojure math over a shape the domain already speaks.
+    Longitudes are MapLibre's UNWRAPPED west/east and can run past ±180
+    after a pan across the antimeridian; adsb.geo/edge-annotation
+    normalizes for that.")
+  (on-move! [this f]
+    "Call `f` (no args) when a camera movement SETTLES — MapLibre's
+    moveend, which pan and zoom both conclude with. Deliberately not the
+    per-frame move event: clients re-derive viewport-dependent
+    annotations, which is settle-time work, not render-loop work. The
+    handler lives as long as the map does; the map view tears clients
+    down before it destroys the map, so clients guard with their own
+    disposed flag rather than unregistering."))
 
 (deftype MapLibreMap [^js gl-map]
   Map
@@ -96,7 +112,15 @@
   (move-marker! [_ marker lng-lat]
     (.setLngLat ^js marker (clj->js lng-lat)))
   (remove-marker! [_ marker]
-    (.remove ^js marker)))
+    (.remove ^js marker))
+  (bounds [_]
+    (let [^js b (.getBounds gl-map)]
+      {:geo/min-lat (.getSouth b)
+       :geo/max-lat (.getNorth b)
+       :geo/min-lon (.getWest b)
+       :geo/max-lon (.getEast b)}))
+  (on-move! [_ f]
+    (.on gl-map "moveend" (fn [_e] (f)))))
 
 (defn create!
   "Construct a real MapLibre map inside `container` (a DOM node) with `opts`
