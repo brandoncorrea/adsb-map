@@ -110,7 +110,7 @@ services:
       # that the app authenticates to with the service token below.
       - key: ADSB_ULTRAFEEDER_URL
         scope: RUN_TIME
-        value: https://feeder.bwawan.com
+        value: https://adsb.bwawan.com
 
       # Cloudflare Access service token. Set BOTH or NEITHER — half a credential
       # fails the boot loudly (adsb.ingest.config). SECRET means App Platform

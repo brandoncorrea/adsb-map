@@ -323,7 +323,7 @@ independent routes. Both must be closed; closing one is not closing the other.
 
 1. **The network path.** Port-forwarding the feeder and pointing DNS at it
    publishes your home IP, which geolocates to about a neighborhood. The tunnel
-   closes this: cloudflared dials *outward*, so `feeder.bwawan.com` resolves to
+   closes this: cloudflared dials *outward*, so `adsb.bwawan.com` resolves to
    Cloudflare's edge and the home network needs no inbound port and no public IP.
 2. **The feeder's own endpoints.** `/data/receiver.json` **is** the antenna's
    lat/lon, and `/data/aircraft.json` carries `r_dst`/`r_dir` — range and bearing
@@ -341,7 +341,7 @@ bearing), the receiver position never leaves ingest config, and no route proxies
 a secret".
 
 ```
-cloud app ──HTTPS + service-token headers──►  feeder.bwawan.com  (Cloudflare edge)
+cloud app ──HTTPS + service-token headers──►  adsb.bwawan.com  (Cloudflare edge)
                                                      │  Access "Service Auth" policy
                                                      ▼
                                               cloudflared (HOME) ──► dietpi:8100
@@ -354,7 +354,7 @@ cloud app ──HTTPS + service-token headers──►  feeder.bwawan.com  (Clou
   ultrafeeder's host:port and nothing else, with a `404` catch-all last. A tunnel
   is a hole in the home network; it should be the width of the one thing that
   needs to go through it, not the width of the LAN.
-- **A Cloudflare Access policy** gates the tunnel hostname (`feeder.bwawan.com`)
+- **A Cloudflare Access policy** gates the tunnel hostname (`adsb.bwawan.com`)
   with a **service token**: the hostname is not publicly readable, and the cloud
   app is the only client that holds the token. Make the token the policy's *only*
   principal — no email login alongside it, so a phished account cannot reach the
@@ -403,7 +403,7 @@ image. They are recorded here so go-live is a checklist, not a research project.
    tunnel: <tunnel-UUID>
    credentials-file: /home/dietpi/.cloudflared/<tunnel-UUID>.json
    ingress:
-     - hostname: feeder.bwawan.com
+     - hostname: adsb.bwawan.com
        service: http://dietpi:8100      # or http://localhost:8100 if
                                          # cloudflared runs on the feeder box
      - service: http_status:404          # catch-all, required last
@@ -411,14 +411,14 @@ image. They are recorded here so go-live is a checklist, not a research project.
    Note: cloudflared resolves `service:` from the home network, so use the LAN
    name/IP the feeder answers on (`dietpi:8100`, `localhost:8100`, or the LAN IP).
 4. **Route DNS** to the tunnel:
-   `cloudflared tunnel route dns adsb-feeder feeder.bwawan.com`. This creates the
+   `cloudflared tunnel route dns adsb-feeder adsb.bwawan.com`. This creates the
    proxied CNAME on the `bwawan.com` zone.
 5. **Run it** as a service: `cloudflared tunnel run adsb-feeder` (or
    `cloudflared service install` for a persistent systemd unit).
 
 *In the Cloudflare Zero Trust dashboard* (Access):
 
-6. **Create a self-hosted Access application** for `feeder.bwawan.com`.
+6. **Create a self-hosted Access application** for `adsb.bwawan.com`.
 7. **Add a policy with action _Service Auth_** (not Allow) whose only rule is
    *Include → Service Token → (the token from the next step)*. This is what makes
    the hostname unreadable without the token.
@@ -431,7 +431,7 @@ image. They are recorded here so go-live is a checklist, not a research project.
    or by replacing the `REPLACE_ME` placeholders in a *local, uncommitted* copy of
    the spec. `.do/app.yaml` already declares them `type: SECRET`:
    ```
-   ADSB_ULTRAFEEDER_URL=https://feeder.bwawan.com
+   ADSB_ULTRAFEEDER_URL=https://adsb.bwawan.com
    ADSB_FEEDER_AUTH_ID=<client-id>
    ADSB_FEEDER_AUTH_SECRET=<client-secret>
    ```
@@ -454,11 +454,11 @@ coordinates, and it is the one whose exposure is unrecoverable:
 # Without the token → the Access policy blocks it (302 to login / 403), NOT 200.
 for path in /data/receiver.json /data/aircraft.json; do
   printf '%s -> ' "$path"
-  curl -sS -o /dev/null -w '%{http_code}\n' "https://feeder.bwawan.com$path"
+  curl -sS -o /dev/null -w '%{http_code}\n' "https://adsb.bwawan.com$path"
 done
 
 # With the token → 200 and the JSON.
-curl -sS https://feeder.bwawan.com/data/aircraft.json \
+curl -sS https://adsb.bwawan.com/data/aircraft.json \
   -H "CF-Access-Client-Id: $ADSB_FEEDER_AUTH_ID" \
   -H "CF-Access-Client-Secret: $ADSB_FEEDER_AUTH_SECRET" | head
 ```
