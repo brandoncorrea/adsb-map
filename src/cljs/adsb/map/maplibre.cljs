@@ -30,7 +30,23 @@
     "Wholesale-replace the contents of GeoJSON source `id`. `data` is a
     CLOJURE FeatureCollection; the clj->js happens here, at the very
     edge, so callers and tests stay in Clojure data. This is the aircraft
-    hot path — called once per SSE frame, entirely outside React."))
+    hot path — called once per SSE frame, entirely outside React.")
+  (add-image! [this id image opts]
+    "Register an image under string `id` so a symbol layer can name it in
+    `icon-image`. `image` is anything MapLibre's addImage accepts (here an
+    ImageData). `opts` is a Clojure map — `{:sdf true}` makes the icon an
+    alpha mask MapLibre can tint via `icon-color`, which is what turns the
+    silhouette into the altitude ramp. Style must be loaded.")
+  (on-layer-click! [this layer-id f]
+    "Call `f` with the clicked feature's PROPERTIES — a Clojure map,
+    js->clj'd at this edge — when a feature in `layer-id` is clicked. The
+    only inbound seam crossing: MapLibre's event and JS props become
+    Clojure data here so the layer's click contract stays in Clojure.")
+  (on-layer-hover-cursor! [this layer-id]
+    "Show a pointer cursor while the mouse is over a feature in
+    `layer-id`, and restore the default on the way out — the affordance
+    that says these planes are clickable. Self-contained in the seam;
+    tests need only know it was wired."))
 
 (deftype MapLibreMap [^js gl-map]
   Map
@@ -44,7 +60,24 @@
   (set-source-data! [_ id data]
     ;; The layer owns ordering: the source exists before the first push
     ;; (added in the same on-load! callback that starts the pushes).
-    (.setData (.getSource gl-map id) (clj->js data))))
+    (.setData (.getSource gl-map id) (clj->js data)))
+  (add-image! [_ id image opts]
+    (.addImage gl-map id image (clj->js opts)))
+  (on-layer-click! [_ layer-id f]
+    (.on gl-map "click" layer-id
+         (fn [e]
+           (let [features (.-features e)]
+             (when (and features (pos? (.-length features)))
+               ;; Inbound edge: the JS properties object becomes Clojure
+               ;; data before it ever reaches the app.
+               (f (js->clj (.-properties (aget features 0))
+                           :keywordize-keys true)))))))
+  (on-layer-hover-cursor! [_ layer-id]
+    (let [canvas-style (.-style (.getCanvas gl-map))]
+      (.on gl-map "mouseenter" layer-id
+           (fn [_e] (set! (.-cursor canvas-style) "pointer")))
+      (.on gl-map "mouseleave" layer-id
+           (fn [_e] (set! (.-cursor canvas-style) ""))))))
 
 (defn create!
   "Construct a real MapLibre map inside `container` (a DOM node) with `opts`

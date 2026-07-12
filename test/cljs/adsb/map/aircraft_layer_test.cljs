@@ -10,6 +10,7 @@
     [adsb.fixtures :as fixtures]
     [adsb.map.aircraft-layer :as layer]
     [adsb.map.maplibre :as maplibre]
+    [adsb.map.style :as style]
     [adsb.map.view :as view]
     [adsb.stream]
     [adsb.views :as views]
@@ -35,7 +36,8 @@
 ;; and lets the test decide when the "load" event fires.
 
 (defn- recording-map []
-  (let [!rec (atom {:on-load nil :sources {} :layers [] :set-data []})]
+  (let [!rec (atom {:on-load nil :sources {} :layers [] :set-data []
+                    :images [] :on-layer-click nil :hover-layers []})]
     {:rec !rec
      :m   (reify maplibre/Map
             (destroy! [_] (swap! !rec assoc :destroyed? true))
@@ -43,7 +45,13 @@
             (add-source! [_ id source] (swap! !rec update :sources assoc id source))
             (add-layer! [_ l] (swap! !rec update :layers conj l))
             (set-source-data! [_ id data]
-              (swap! !rec update :set-data conj {:source id :data data})))}))
+              (swap! !rec update :set-data conj {:source id :data data}))
+            (add-image! [_ id image opts]
+              (swap! !rec update :images conj {:id id :image image :opts opts}))
+            (on-layer-click! [_ _layer-id f]
+              (swap! !rec assoc :on-layer-click f))
+            (on-layer-hover-cursor! [_ layer-id]
+              (swap! !rec update :hover-layers conj layer-id)))}))
 
 (defn- fire-load! [{:keys [rec]}] ((:on-load @rec)))
 
@@ -129,6 +137,50 @@
         (testing "an aircraft on the tarmac reads \"ground\", never 0"
           (is (= "ground" (get-in taxiing [:properties :altitude])))))
 
+      (layer/detach! handle))))
+
+;; ---------------------------------------------------------------------
+;; adsb-2yu.5: at load the layer registers its two SDF icons through the
+;; seam — the plane and the dot — so `icon-color` can tint them. No
+;; sprite, no network; the pixels are drawn and handed across as data.
+
+(deftest load-registers-the-plane-and-dot-icons-sdf
+  (rf-test/run-test-sync
+    (let [{:keys [m rec] :as fake} (recording-map)
+          handle (layer/attach! m)]
+      (fire-load! fake)
+      (let [images (:images @rec)]
+        (testing "both icons registered via the seam's add-image!"
+          (is (= #{style/plane-icon-id style/dot-icon-id}
+                 (into #{} (map :id) images))))
+        (testing "registered SDF, so the altitude/emergency colour can tint them"
+          (is (seq images))
+          (is (every? #(true? (get-in % [:opts :sdf])) images))))
+      (layer/detach! handle))))
+
+;; ---------------------------------------------------------------------
+;; adsb-2yu.5: THE CLICK CONTRACT. This layer owns exactly one intent —
+;; a click on an aircraft feature dispatches [:aircraft/select icao], the
+;; icao read from the clicked feature's properties. We assert the
+;; dispatch by spying re-frame's dispatch and invoking the handler the
+;; layer wired through the seam with a fake feature's props. We do NOT
+;; build UI or register the event — that is adsb-dgb.1's.
+
+(deftest clicking-a-feature-dispatches-select-with-its-icao
+  (rf-test/run-test-sync
+    (let [{:keys [m rec] :as fake} (recording-map)
+          handle     (layer/attach! m)
+          dispatched (atom [])]
+      (fire-load! fake)
+      (testing "the layer wired a click handler AND a hover cursor through the seam"
+        (is (fn? (:on-layer-click @rec)))
+        (is (= [layer/layer-id] (:hover-layers @rec))))
+      (with-redefs [rf/dispatch (fn [ev] (swap! dispatched conj ev))]
+        ;; The seam hands the app the clicked feature's properties as a
+        ;; Clojure map; drive the handler with one directly.
+        ((:on-layer-click @rec) {:icao "abc0e4" :callsign "UPS2717"}))
+      (is (= [[:aircraft/select "abc0e4"]] @dispatched)
+          "one selection dispatch, carrying the icao from the feature")
       (layer/detach! handle))))
 
 ;; ---------------------------------------------------------------------
