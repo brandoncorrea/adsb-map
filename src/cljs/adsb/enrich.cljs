@@ -131,7 +131,7 @@
                 (log-failure-once! prefix (.-message err))
                 (rf/dispatch [:enrich/shard-failed prefix])))))
 
-(rf/reg-fx :enrich/fetch! (fn [prefix] (fetch-shard! prefix)))
+(rf/reg-fx :enrich/fetch! fetch-shard!)
 
 ;; ---------------------------------------------------------------------
 ;; Events.

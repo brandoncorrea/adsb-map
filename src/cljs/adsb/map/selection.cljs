@@ -49,9 +49,9 @@
   under the `adsb-ring-draw` entrance. Built fresh per selection so the
   draw-in replays; static markup, no feeder data anywhere near it."
   []
-  (let [el     (js/document.createElement "div")
-        svg    (js/document.createElementNS svg-ns "svg")
-        circle (js/document.createElementNS svg-ns "circle")
+  (let [el     (.createElement js/document "div")
+        svg    (.createElementNS js/document svg-ns "svg")
+        circle (.createElementNS js/document svg-ns "circle")
         r      (/ ring-diameter-px 2)]
     (set! (.-className el) "adsb-selection-ring")
     (.setAttribute svg "viewBox" (str "0 0 " ring-diameter-px " " ring-diameter-px))
@@ -90,8 +90,7 @@
       (maplibre/move-marker! m marker lng-lat)
 
       :else
-      (do (when marker
-            (maplibre/remove-marker! m marker))
+      (do (some->> marker (maplibre/remove-marker! m))
           (swap! !state assoc
                  :marker (maplibre/add-marker! m (ring-element) lng-lat)
                  :icao   next-icao)))))
@@ -114,7 +113,5 @@
   [m !state]
   (let [{:keys [track marker]} @!state]
     (swap! !state assoc :track nil :marker nil :icao nil)
-    (when track
-      (r/dispose! track))
-    (when marker
-      (maplibre/remove-marker! m marker))))
+    (some-> track r/dispose!)
+    (some->> marker (maplibre/remove-marker! m))))

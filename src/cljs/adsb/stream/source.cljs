@@ -12,8 +12,7 @@
   The seam is deliberately dumb: it translates EventSource's three signals
   into plain callbacks and reports its ready state as a keyword. All the
   policy — decode, wholesale replacement, reconnect-with-backoff, connection
-  state — lives in adsb.stream, where it can be tested without the network."
-  (:require))
+  state — lives in adsb.stream, where it can be tested without the network.")
 
 (defprotocol Connection
   "A live SSE connection, behind a narrow seam. The only thing the client

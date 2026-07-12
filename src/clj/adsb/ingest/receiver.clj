@@ -15,47 +15,17 @@
   bearing) are likewise never copied by adsb.ingest.coerce — one
   aircraft's position plus its r_dst/r_dir locates the antenna
   exactly. Tests assert both absences."
-  (:require
-    [adsb.schema :as schema]
-    [cheshire.core :as json]
-    [clojure.string :as str]
-    [clojure.tools.logging :as log]
-    [malli.core :as m]
-    [org.httpkit.client :as http]))
-
-(declare env-position fetch-position!)
+  (:require [adsb.schema :as schema]
+            [cheshire.core :as json]
+            [clojure.string :as str]
+            [clojure.tools.logging :as log]
+            [malli.core :as m]
+            [org.httpkit.client :as http]))
 
 (def ^:const receiver-lat-env "ADSB_RECEIVER_LAT")
-
 (def ^:const receiver-lon-env "ADSB_RECEIVER_LON")
-
 (def ^:private receiver-json-path "/data/receiver.json")
-
 (def ^:const default-timeout-ms 5000)
-
-(defn resolve-position!
-  "The receiver position for the range gate, or nil when none can be
-  had — in which case the gate is disabled and that is logged ONCE
-  here, at setup, never per poll. `env` is an environment map
-  (string->string, pass (System/getenv) at the edge); `base-url` is
-  the validated feeder URL, or nil when there is nothing to ask;
-  `headers` are the optional static feeder-auth headers (the Cloudflare
-  Access service token — adsb.ingest.config/feeder-auth-headers) sent on
-  the receiver.json request, matching the aircraft.json poll. The env
-  override wins over the feeder. Coordinates are deliberately never
-  logged — the position is private."
-  [{:keys [env base-url timeout-ms headers]
-    :or   {timeout-ms default-timeout-ms}}]
-  (if-let [position (or (env-position env)
-                        (when base-url
-                          (fetch-position! base-url timeout-ms headers)))]
-    (do (log/info "Receiver position resolved; range gate enabled")
-        position)
-    (do (log/warn (str "No receiver position (" receiver-lat-env "/"
-                       receiver-lon-env
-                       " unset, receiver.json unavailable);"
-                       " range gate disabled"))
-        nil)))
 
 ;; ---------------------------------------------------------------------
 ;; Candidate coordinates -> position, or nil
@@ -76,9 +46,7 @@
 
 (defn- parse-coordinate [s]
   (when-not (str/blank? s)
-    (try
-      (Double/parseDouble s)
-      (catch NumberFormatException _ nil))))
+    (parse-double s)))
 
 (defn env-position
   "The receiver position from the ADSB_RECEIVER_LAT/LON entries of an
@@ -119,3 +87,27 @@
      (when (and (nil? error) (= 200 status))
        (let [{:keys [lat lon]} (parse-receiver body)]
          (->position lat lon))))))
+
+(defn resolve-position!
+  "The receiver position for the range gate, or nil when none can be
+  had — in which case the gate is disabled and that is logged ONCE
+  here, at setup, never per poll. `env` is an environment map
+  (string->string, pass (System/getenv) at the edge); `base-url` is
+  the validated feeder URL, or nil when there is nothing to ask;
+  `headers` are the optional static feeder-auth headers (the Cloudflare
+  Access service token — adsb.ingest.config/feeder-auth-headers) sent on
+  the receiver.json request, matching the aircraft.json poll. The env
+  override wins over the feeder. Coordinates are deliberately never
+  logged — the position is private."
+  [{:keys [env base-url timeout-ms headers]
+    :or   {timeout-ms default-timeout-ms}}]
+  (if-let [position (or (env-position env)
+                        (when base-url
+                          (fetch-position! base-url timeout-ms headers)))]
+    (do (log/info "Receiver position resolved; range gate enabled")
+        position)
+    (do (log/warn (str "No receiver position (" receiver-lat-env "/"
+                       receiver-lon-env
+                       " unset, receiver.json unavailable);"
+                       " range gate disabled"))
+        nil)))

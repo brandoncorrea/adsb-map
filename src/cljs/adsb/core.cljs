@@ -24,7 +24,7 @@
 (defn ^:dev/after-load mount!
   "Render the app shell into #app. Idempotent under hot reload."
   []
-  (when-let [el (js/document.getElementById "app")]
+  (when-let [el (.getElementById js/document "app")]
     (when (nil? @root)
       (reset! root (rdom/create-root el)))
     (rdom/render @root [views/app-root])))

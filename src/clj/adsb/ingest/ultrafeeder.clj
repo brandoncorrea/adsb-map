@@ -91,6 +91,3 @@
   ([base-url timeout-ms] (->source base-url timeout-ms nil))
   ([base-url timeout-ms headers]
    (->UltrafeederSource base-url timeout-ms headers (atom nil))))
-
-(comment
-  (source/fetch! (->source "http://dietpi.local:8100")))

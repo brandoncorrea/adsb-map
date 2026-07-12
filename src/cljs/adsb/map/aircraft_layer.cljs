@@ -215,7 +215,7 @@
   return its ImageData — white on transparent, ready to register SDF. No
   visible DOM: the canvas is never attached."
   [draw!]
-  (let [canvas (js/document.createElement "canvas")]
+  (let [canvas (.createElement js/document "canvas")]
     (set! (.-width canvas) icon-size-px)
     (set! (.-height canvas) icon-size-px)
     (let [ctx (.getContext canvas "2d")]
@@ -243,7 +243,7 @@
   place the frontend hot path touches a clock. The domain takes time as
   an argument; tests redef this for deterministic staleness."
   []
-  (js/Date.now))
+  (.now js/Date))
 
 (def ^:const tick-interval-ms
   "How often the client re-pushes the current picture so silent aircraft
@@ -406,9 +406,14 @@
   buffering (ns docstring)."
   ([m] (attach! m @theme/!theme))
   ([m theme]
-  (let [!state (atom {:disposed? false :track nil :tick nil
-                      :picture nil :history {}
-                      :raf nil :hidden? false :visibility-handler nil
+  (let [!state (atom {:disposed?          false
+                      :track              nil
+                      :tick               nil
+                      :picture            nil
+                      :history            {}
+                      :raf                nil
+                      :hidden?            false
+                      :visibility-handler nil
                       :last-projection-ms 0})]
     (maplibre/on-load!
       m
@@ -478,13 +483,13 @@
   track, tick, or loop was ever created."
   [!state]
   (let [{:keys [track tick raf visibility-handler]} @!state]
-    (swap! !state assoc :disposed? true :track nil :tick nil
-           :raf nil :visibility-handler nil)
-    (when track
-      (r/dispose! track))
-    (when tick
-      (clear-interval! tick))
-    (when raf
-      (cancel-animation-frame! raf))
-    (when visibility-handler
-      (off-visibility-change! visibility-handler))))
+    (swap! !state assoc
+           :disposed? true
+           :track nil
+           :tick nil
+           :raf nil
+           :visibility-handler nil)
+    (some-> track r/dispose!)
+    (some-> tick clear-interval!)
+    (some-> raf cancel-animation-frame!)
+    (some-> visibility-handler off-visibility-change!)))

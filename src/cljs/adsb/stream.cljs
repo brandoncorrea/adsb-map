@@ -74,7 +74,7 @@
   doubling from `base-backoff-ms` and capped at `max-backoff-ms`."
   [attempts]
   (min max-backoff-ms
-       (* base-backoff-ms (js/Math.pow 2 (dec attempts)))))
+       (* base-backoff-ms (.pow js/Math 2 (dec attempts)))))
 
 (defn- status-for-attempts
   "Connection status while retrying: honest about a stream that has failed
@@ -91,7 +91,7 @@
   session stats, :feeder feeder status}. Absent facts stay absent — the
   codec omits them, it does not default them."
   [data]
-  (let [envelope (-> (js/JSON.parse data)
+  (let [envelope (-> (.parse js/JSON data)
                      (js->clj :keywordize-keys true))]
     {:picture (wire/wire->picture envelope)
      :stats   (wire/wire->stats envelope)
@@ -118,8 +118,7 @@
   tests fake adsb.stream.source/connect!."
   []
   (clear-timer!)
-  (when-let [c (:connection @!conn)]
-    (source/close! c))
+  (some-> (:connection @!conn) source/close!)
   (let [c (source/connect!
             stream-url
             {:on-open  #(rf/dispatch [:stream/opened])
@@ -140,7 +139,7 @@
 
 (rf/reg-fx :stream/connect! (fn [_] (open!)))
 (rf/reg-fx :stream/clear-timer! (fn [_] (clear-timer!)))
-(rf/reg-fx :stream/schedule-reconnect! (fn [ms] (schedule-reconnect! ms)))
+(rf/reg-fx :stream/schedule-reconnect! schedule-reconnect!)
 
 ;; ---------------------------------------------------------------------
 ;; Events

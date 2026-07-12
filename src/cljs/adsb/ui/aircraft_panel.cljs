@@ -44,9 +44,9 @@
   never call it and drive :ui/tick explicitly instead."
   []
   (when (nil? @!clock)
-    (rf/dispatch [:ui/tick (js/Date.now)])
+    (rf/dispatch [:ui/tick (.now js/Date)])
     (reset! !clock
-            (js/setInterval #(rf/dispatch [:ui/tick (js/Date.now)])
+            (js/setInterval #(rf/dispatch [:ui/tick (.now js/Date)])
                             clock-interval-ms))))
 
 ;; ---------------------------------------------------------------------

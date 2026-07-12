@@ -151,8 +151,3 @@
             age-rate     default-age-rate}}]
    (->ReplaySource (or batch (load-fixture! fixture-path))
                    clock loop-ms age-rate (atom nil))))
-
-(comment
-  (let [src (->source)]
-    (source/open! src)
-    (count (source/fetch! src))))
