@@ -126,8 +126,11 @@
   "The cast-shadow prototype's toggle (design-direction §8, adsb-dgb.8).
   True prints the shadow layer under the aircraft; false withholds it
   without touching any other wiring — the visual pass flips this one
-  constant to accept or reject the invention."
-  true)
+  constant to accept or reject the invention. Overseer verdict 2026-07-12:
+  OFF — too busy at density and near-invisible on the night edition. The
+  instinct-altitude channel is being re-explored (adsb-dgb.12) before the
+  layer is deleted or replaced."
+  false)
 
 (def ^:const shadow-softness-stops
   "SDF halo width/blur (px) by altitude — the penumbra deepens as the
