@@ -35,6 +35,7 @@
   aircraft actually carries. See the close reason for the full rationale."
   (:require
     [adsb.aircraft :as aircraft]
+    [adsb.enrich :as enrich]
     [adsb.ui.alert :as alert]
     [clojure.string :as str]
     [re-frame.core :as rf]))
@@ -229,10 +230,16 @@
 (defn- aircraft-row
   "One roster row. `role=option` + `aria-selected` model the list as a
   single-select listbox; `data-icao` is what the delegated click reads.
-  Every string is feeder-origin and rendered as escaped hiccup text."
-  [aircraft selected-icao]
+  Every string is feeder-origin and rendered as escaped hiccup text.
+
+  The type code (adsb.enrich) is shown only when it is ALREADY cached — the
+  row reads the enrichment cache but never triggers a fetch, so a full roster
+  costs no network. It appears for aircraft whose shard a panel selection has
+  already warmed, and is simply omitted otherwise: cheap, or absent."
+  [aircraft selected-icao shards]
   (let [icao      (:aircraft/icao aircraft)
-        selected? (= icao selected-icao)]
+        selected? (= icao selected-icao)
+        type-code (enrich/type-code (enrich/record-for shards icao))]
     [:li.adsb-row
      {:role          "option"
       :data-icao     icao
@@ -241,16 +248,18 @@
       :class         (when selected? "adsb-row-selected")
       :tab-index     0}
      [:span.adsb-row-call (callsign-label aircraft)]
+     (when type-code
+       [:span.adsb-row-type {:data-testid (str "row-type:" icao)} type-code])
      [:span.adsb-row-alt {:data-testid (str "row-alt:" icao)}
       (altitude-label aircraft)]
      [:span.adsb-row-speed (speed-label aircraft)]
      (badges aircraft)]))
 
-(defn- aircraft-list [aircraft selected-icao]
+(defn- aircraft-list [aircraft selected-icao shards]
   [:ul.adsb-sidebar-list
    {:role "listbox" :aria-label "Aircraft" :on-click on-list-click!}
    (for [a aircraft]
-     ^{:key (:aircraft/icao a)} [aircraft-row a selected-icao])])
+     ^{:key (:aircraft/icao a)} [aircraft-row a selected-icao shards])])
 
 (defn sidebar
   "The aircraft roster, mounted permanently in the app root. A form-2
@@ -262,7 +271,11 @@
         selected  (rf/subscribe [:aircraft/selected-icao])
         sort-mode (rf/subscribe [:ui/sidebar-sort])
         pos-only  (rf/subscribe [:ui/sidebar-positioned-only?])
-        air-only  (rf/subscribe [:ui/sidebar-airborne-only?])]
+        air-only  (rf/subscribe [:ui/sidebar-airborne-only?])
+        ;; One subscription for the whole cache; rows do a pure lookup. The
+        ;; sidebar never fetches — it only shows type codes already warmed by
+        ;; a panel selection (adsb.enrich).
+        shards    (rf/subscribe [:enrich/shards])]
     (fn []
       (let [aircraft @roster]
         [:aside.adsb-sidebar {:aria-label "Aircraft list"}
@@ -272,5 +285,5 @@
          [sort-controls @sort-mode]
          [filter-controls @pos-only @air-only]
          (if (seq aircraft)
-           [aircraft-list aircraft @selected]
+           [aircraft-list aircraft @selected @shards]
            [:p.adsb-sidebar-empty "No aircraft"])]))))

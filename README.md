@@ -73,6 +73,56 @@ export ADSB_ULTRAFEEDER_URL="http://homeserver.local:8080"
 
 Then open http://localhost:8280.
 
+## Basemap
+
+The map draws on [OpenFreeMap](https://openfreemap.org)'s **liberty** style
+(`https://tiles.openfreemap.org/styles/liberty`) — a richly-rendered basemap
+with terrain, water, and labels.
+
+- **No token, no key.** OpenFreeMap's public instance needs no registration and
+  no API key, so **nothing secret ever reaches the browser bundle** — the map
+  stays a source of zero client-visible secrets (see
+  [`security-checklist.md`](docs/security-checklist.md) §3).
+- **Fair use.** The public instance permits **unlimited** map views and requests,
+  commercial use included, with no per-view caps — sustainable for a public
+  hobby site. Sustainability is donation-funded; if that ever changes, the
+  fallback is self-hosting [Protomaps](https://protomaps.com) PMTiles (no
+  external dependency at all) — no code change reaches the domain, only the
+  style URL in `adsb.map.view`.
+- **Attribution.** MapLibre renders the style's own required credit —
+  "OpenFreeMap © OpenMapTiles Data from OpenStreetMap" — automatically via the
+  attribution control, which the app leaves enabled.
+- **Variant vs provider.** This settles the *provider*; a later visual pass may
+  swap the *variant* (liberty → bright / positron / dark) by editing the one
+  style URL in [`src/cljs/adsb/map/view.cljs`](src/cljs/adsb/map/view.cljs).
+
+## Aircraft enrichment data
+
+The detail panel can show an airframe's **type, registration, and operator**,
+looked up by ICAO hex against a static, sharded database the browser fetches
+from the backend as plain files (`GET /db/<abc>.json`). This is enrichment, not
+observation: it never touches the SSE wire, never blocks the live map, and
+**degrades to absent** — an em-dash — whenever the database is missing or does
+not know a hex.
+
+The database is **optional** and **not committed**. Populate it with:
+
+```bash
+bb db:fetch     # downloads aircraft.csv.gz, shards it into resources/public/db/
+```
+
+- **Source:** [`tar1090-db`](https://github.com/wiedehopf/tar1090-db) —
+  `aircraft.csv.gz`, whose data is maintained by
+  [Mictronics](https://www.mictronics.de/aircraft-database/), a third-party
+  compilation of public aircraft-registration data.
+- **License:** the tar1090-db repository ships **no license file**, and the
+  Mictronics page states **no explicit terms**. Treat it as third-party data of
+  **unstated license** — which is exactly why it is fetched at build/dev time,
+  gitignored (`resources/public/db/`), and **never committed** to this repo.
+- **Degradation:** with no `resources/public/db/`, `/db/*.json` requests 404,
+  the client records the shard as absent (logging once), and every enrichment
+  row dashes. The map and the rest of the panel are unaffected.
+
 ## Layout
 
 Source is split by platform because the build tools require it. Inside each

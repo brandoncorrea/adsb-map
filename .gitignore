@@ -8,6 +8,12 @@
 # Editor
 .idea/
 
+# Aircraft enrichment database — third-party DATA fetched by `bb db:fetch`
+# (tar1090-db / Mictronics). Large and license-unstated: never committed; the
+# app degrades to absent when it is missing. See README 'Aircraft enrichment
+# data'.
+resources/public/db/
+
 # Build output
 .cpcache/
 .shadow-cljs/
@@ -16,3 +22,6 @@ resources/public/js/
 target/
 .clj-kondo/.cache/
 .nrepl-port
+
+# Secrets
+.env

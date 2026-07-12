@@ -28,6 +28,12 @@
 (rf/reg-event-db :test/set-picture
   (fn [db [_ picture]] (assoc db :aircraft/picture picture)))
 
+;; Seed the enrichment cache directly — the shard cache is normally populated
+;; by an async fetch (adsb.enrich), noise for a roster test. This stands up the
+;; exact :enrich/shards shape the sidebar reads.
+(rf/reg-event-db :test/set-shards
+  (fn [db [_ shards]] (assoc db :enrich/shards shards)))
+
 (defn- by-icao
   "A picture map keyed by each aircraft's icao — the shape :aircraft/picture
   holds."
@@ -162,6 +168,23 @@
           "the emergency row names what 7700 means")
       (is (nil? (.queryByText rtl/screen "EMG"))
           "and no longer whispers a bare abbreviation"))))
+
+(deftest type-code-shows-only-from-a-cached-shard
+  (testing "a row shows the enriched type code when its shard is cached, and
+            shows none — never fetching — when it is not"
+    (rf-test/run-test-sync
+      ;; ups (abc0e4) is in the cached 'abc' shard; the grounded N2173A
+      ;; (a1d645) has no shard cached, so its type stays absent.
+      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/on-the-ground])])
+      (rf/dispatch [:test/set-shards {"abc" {"abc0e4" {"t" "B744"
+                                                       "r" "N570UP"
+                                                       "o" "United Parcel Service"}}}])
+      (render-sidebar!)
+      (is (= "B744" (.-textContent
+                      (.getByTestId rtl/screen (str "row-type:" ups-icao))))
+          "the cached hex shows its type code")
+      (is (nil? (.queryByTestId rtl/screen "row-type:a1d645"))
+          "the uncached hex shows no type code — the sidebar never fetches"))))
 
 (deftest callsign-sort-is-alphabetical-with-icao-fallback
   (testing "callsign A→Z, and the callsign-less sort by their icao"

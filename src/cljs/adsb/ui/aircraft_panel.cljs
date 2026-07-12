@@ -20,6 +20,7 @@
   look."
   (:require
     [adsb.aircraft :as aircraft]
+    [adsb.enrich :as enrich]
     [adsb.ui.alert :as alert]
     [re-frame.core :as rf]))
 
@@ -93,10 +94,20 @@
   [kind label]
   [:span.adsb-badge {:class (str "adsb-badge-" kind) :role "status"} label])
 
+(defn- type-display
+  "Type for the panel: the long description when the database carries one
+  (\"Boeing 737-800\"), else the bare ICAO type code (\"B738\"), else nil
+  (→ dash). Reference data, so absence is ordinary, never an error."
+  [enrichment]
+  (or (enrich/type-desc enrichment)
+      (enrich/type-code enrichment)))
+
 (defn- panel-body
   "The panel for one selected aircraft. Every string here is feeder-origin
-  and rendered as escaped text (Boundary 4)."
-  [aircraft now-ms]
+  and rendered as escaped text (Boundary 4); the enrichment rows are
+  third-party reference data (adsb.enrich) and dash when the database is
+  missing or does not know this hex."
+  [aircraft now-ms enrichment]
   (let [{:aircraft/keys [icao callsign ground-speed-kt track-deg squawk
                          baro-rate-fpm position-suspect? mlat?]} aircraft
         seen           (seen-age-s aircraft now-ms)
@@ -119,6 +130,11 @@
         (when mlat? [badge "mlat" "MLAT"])])
      [:div.adsb-panel-facts
       [fact "ICAO" icao]
+      ;; Airframe reference data (adsb.enrich). Dashes when the static
+      ;; database is absent or does not know this hex — absent, never invented.
+      [fact "Type" (type-display enrichment)]
+      [fact "Registration" (enrich/registration enrichment)]
+      [fact "Operator" (enrich/operator enrichment)]
       [fact "Altitude" (altitude-display aircraft)]
       [fact "Ground speed" ground-speed-kt]
       [fact "Track" track-deg]
@@ -137,4 +153,11 @@
         now      (rf/subscribe [:ui/now-ms])]
     (fn []
       (when-let [aircraft @selected]
-        (panel-body aircraft @now)))))
+        (let [icao (:aircraft/icao aircraft)]
+          ;; Warm this hex's shard. Idempotent (adsb.enrich/:enrich/ensure is
+          ;; a no-op once the prefix is known) and async, so re-dispatching on
+          ;; each render neither blocks the render nor loops. The record fills
+          ;; in a beat later when the shard resolves; until then it is nil and
+          ;; the rows dash.
+          (rf/dispatch [:enrich/ensure icao])
+          (panel-body aircraft @now @(rf/subscribe [:enrich/record icao])))))))

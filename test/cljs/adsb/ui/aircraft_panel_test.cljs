@@ -25,6 +25,14 @@
 ;; up the exact app-db the panel reads.
 (rf/reg-event-db :test/set-picture (fn [db [_ picture]] (assoc db :aircraft/picture picture)))
 
+;; Seed the enrichment cache directly, bypassing the async fetch (adsb.enrich).
+(rf/reg-event-db :test/set-shards (fn [db [_ shards]] (assoc db :enrich/shards shards)))
+
+;; The panel dispatches [:enrich/ensure icao] on render, whose effect would
+;; make a real js/fetch. Neutralize it: these tests seed the cache directly and
+;; never want the network. (adsb.enrich's own suite drives the fetch seam.)
+(rf/reg-fx :enrich/fetch! (fn [_] nil))
+
 (def ^:private ups fixtures/ups-2717)
 (def ^:private ups-icao (:aircraft/icao fixtures/ups-2717))
 
@@ -82,6 +90,50 @@
             "absent altitude is an em-dash")
         (is (nil? (.queryByText rtl/screen "0"))
             "and nowhere does the panel invent a zero")))))
+
+(deftest enrichment-rows-render-and-degrade-to-a-dash
+  (testing "a hex the database knows shows type, registration, and operator"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture {ups-icao ups}])
+      (rf/dispatch [:test/set-shards
+                    {"abc" {"abc0e4" {"t" "B744"
+                                      "d" "Boeing 747-400"
+                                      "r" "N570UP"
+                                      "o" "United Parcel Service"}}}])
+      (rf/dispatch [:aircraft/select ups-icao])
+      (render-panel!)
+      (is (= "Boeing 747-400"
+             (.-textContent (.getByTestId rtl/screen "fact:Type")))
+          "Type prefers the long description")
+      (is (= "N570UP"
+             (.-textContent (.getByTestId rtl/screen "fact:Registration"))))
+      (is (= "United Parcel Service"
+             (.-textContent (.getByTestId rtl/screen "fact:Operator"))))))
+
+  (testing "with only a type code and no description, Type shows the code"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture {ups-icao ups}])
+      (rf/dispatch [:test/set-shards {"abc" {"abc0e4" {"t" "B744"}}}])
+      (rf/dispatch [:aircraft/select ups-icao])
+      (render-panel!)
+      (is (= "B744" (.-textContent (.getByTestId rtl/screen "fact:Type"))))
+      (is (= panel/em-dash
+             (.-textContent (.getByTestId rtl/screen "fact:Registration")))
+          "an absent registration dashes")))
+
+  (testing "a hex the database does not know dashes every enrichment row"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture {ups-icao ups}])
+      ;; Shard resolved but this hex is absent from it — the missing-DB case
+      ;; looks identical (no shard cached at all).
+      (rf/dispatch [:test/set-shards {"abc" :absent}])
+      (rf/dispatch [:aircraft/select ups-icao])
+      (render-panel!)
+      (is (= panel/em-dash (.-textContent (.getByTestId rtl/screen "fact:Type"))))
+      (is (= panel/em-dash
+             (.-textContent (.getByTestId rtl/screen "fact:Registration"))))
+      (is (= panel/em-dash
+             (.-textContent (.getByTestId rtl/screen "fact:Operator")))))))
 
 (deftest suspect-and-mlat-badges-show-only-when-true
   (testing "a position-suspect, MLAT-derived aircraft flies both badges"

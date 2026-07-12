@@ -14,7 +14,9 @@
    :task    (shell "npx playwright install chromium")}
 
   dev
-  {:doc     "Backend on :8280 + shadow-cljs watch + nREPL, together."
+  {:doc     "Backend on :8280 + shadow-cljs watch + nREPL, together.
+             Config comes from the environment, backfilled from .env by
+             adsb.env — bb does nothing special for it."
    :depends [-npm-install]
    :task    (run! p/check
               (doall
@@ -22,6 +24,16 @@
                            "clojure -M:dev"
                            "clojure -M:nrepl"]]
                   (p/process {:inherit true :shutdown p/destroy-tree} cmd))))}
+
+  db:fetch
+  {:doc     "Download the tar1090-db aircraft.csv.gz and shard it into
+             resources/public/db/ for browser-side enrichment (adsb.enrich).
+             DATA, not code: gitignored, never committed, third-party and
+             large. The app degrades to absent when the directory is missing,
+             so this is optional — run it to see type/registration/operator.
+             See README 'Aircraft enrichment data'."
+   :task    (do (load-file "script/aircraft_db.clj")
+                ((resolve 'aircraft-db/build!) {}))}
 
   test:clj
   {:doc  "JVM suite — clojure.test over test/clj and test/cljc."
