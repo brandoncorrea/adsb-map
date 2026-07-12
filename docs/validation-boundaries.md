@@ -215,7 +215,7 @@ fixtures use synthetic receiver coordinates (see `test/resources/README.md`).
 The same secret is why **the feeder is never proxied** (the adsb-kh4.4 mandate).
 Ultrafeeder's `/data/receiver.json` *is* the receiver position, and its
 `/data/aircraft.json` carries `r_dst`/`r_dir` on every aircraft — so no route,
-in the app or in the Caddy edge, may ever forward a feeder endpoint to a
+in the app or at any edge in front of it, may ever forward a feeder endpoint to a
 browser. The app polls the feeder privately (over the Access-gated tunnel) and
 re-serves a scrubbed picture; a passthrough route would undo every scrubbing
 decision above in one line. This holds even for "temporary" debugging routes —
@@ -223,9 +223,12 @@ the coverage boundary of the raw data triangulates the antenna all by itself.
 
 ## Boundary 2 — The HTTP API
 
-This boundary faces the whole internet: TLS terminates at a Caddy sidecar
-(`Caddyfile`; the app container publishes no port of its own), the proxy stamps
-the security headers, and everything below it is anonymous input from strangers.
+This boundary faces the whole internet: TLS terminates at DigitalOcean App
+Platform's router (`.do/app.yaml`) and the app container publishes no public port
+of its own. The app stamps its **own** security headers (`adsb.http.security`)
+rather than trusting the edge to do it, precisely because that edge is not ours —
+we neither write its config nor get told when it changes. Everything below is
+anonymous input from strangers.
 
 reitit does coercion with the same Malli schemas, declaratively:
 
@@ -260,10 +263,20 @@ input:
 
 - `X-Forwarded-For` is an ordinary header any client can write. It is honored
   **only** when `ADSB_TRUST_FORWARDED_FOR=true`, which is correct exactly when
-  the app is reachable solely through the trusted proxy (the compose deployment
-  — no published app port). Caddy replaces any client-supplied XFF with the real
-  client address, and only the **rightmost** entry — the one the proxy wrote —
-  is used.
+  the app is reachable solely through a trusted proxy — App Platform qualifies
+  (DigitalOcean's router is the only way in); a directly reachable app port does
+  not.
+- Trusting the header is only half of it. **Which** entry is the client depends
+  on how many proxies stand in front, and each one *appends* the peer it saw —
+  so the header reads left-to-right from attacker-written claim to trustworthy
+  last hop, and the client sits at index `(count - hops)`. That count is
+  `ADSB_TRUSTED_PROXY_HOPS` (`adsb.stream.broadcast/forwarded-ip`, default 1).
+  It is a property of the **deployment**, not of the code, so it cannot
+  be derived here and must be verified against the environment it runs in —
+  count the entries to the right of your own address, add one. Wrong low, and
+  every visitor is counted as a proxy's single address (the site locks at
+  `ADSB_SSE_MAX_PER_IP` strangers); wrong high, and the per-IP key becomes
+  client-chosen and spoofable, leaving only the total cap.
 - On direct connections the flag stays off and the **TCP peer** is counted —
   read from the socket, not from ring's `:remote-addr`, because http-kit
   populates `:remote-addr` from the *leftmost* `X-Forwarded-For` entry whenever

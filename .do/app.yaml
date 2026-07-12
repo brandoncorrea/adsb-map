@@ -1,0 +1,158 @@
+# DigitalOcean App Platform spec (adsb-9n6).
+#
+#   doctl apps create --spec .do/app.yaml         # first deploy
+#   doctl apps update <app-id> --spec .do/app.yaml
+#
+# This is the ONLY deployment (adsb-kh4.7 retired the compose + Caddy path — it
+# was config for a droplet nobody was going to provision, and an untested second
+# source of truth for the numbers below). App Platform builds the Dockerfile on
+# its own build infrastructure, runs the one container, terminates TLS, and
+# routes to it. So:
+#
+#   * there is no edge we control. Every security header the app needs it sets
+#     ITSELF (adsb.http.security) — CSP, HSTS, nosniff, Referrer-Policy,
+#     Permissions-Policy — which is what makes it safe to deploy behind a router
+#     whose config is not ours to write.
+#   * the container is not reachable except through DigitalOcean's router, which
+#     is what makes ADSB_TRUST_FORWARDED_FOR=true correct below. Read the note
+#     on ADSB_TRUSTED_PROXY_HOPS before believing the per-IP cap works.
+#   * the build never runs on the 512 MB instance. That matters: `bb build` runs
+#     shadow-cljs release, a JVM compiling ClojureScript, which wants far more
+#     memory than the thing it produces needs to run.
+#
+# Secrets (the feeder service token) are NOT in this file. Set them as
+# encrypted app-level secrets, either in the control panel or with
+# `doctl apps update <id> --spec` against a spec whose values you have replaced.
+# A committed spec with a real CF-Access secret in it is a leaked credential.
+
+name: adsb-map
+region: nyc
+
+services:
+  - name: web
+    dockerfile_path: Dockerfile
+    source_dir: /
+
+    github:
+      repo: brandoncorrea/adsb-map
+      branch: master
+      deploy_on_push: true
+
+    # 512 MB / 1 vCPU. The app's resident set is dominated by the JVM's fixed
+    # costs (metaspace, code cache, thread stacks), not by the picture, which is
+    # under a megabyte; the Dockerfile's JAVA_OPTS size the JVM for exactly this
+    # box. 1 vCPU is not a constraint: the broadcast tick serializes ONE frame
+    # per second and hands the same string to every client
+    # (adsb.stream.broadcast/broadcast!), so fan-out is a socket write, not an
+    # encode, per client.
+    instance_size_slug: basic-xxs
+    instance_count: 1
+
+    # Matches the Dockerfile's EXPOSE / PORT. App Platform injects PORT to match,
+    # and adsb.main reads it.
+    http_port: 8280
+
+    health_check:
+      http_path: /healthz
+      # /healthz is liveness of THIS process and is always 200 while the JVM
+      # serves; the feeder's health is reported in the BODY, never conflated
+      # with the status (adsb.http.handlers/health). So a feeder outage must not
+      # cause App Platform to kill and redeploy the container — and it won't,
+      # because this only ever reads the status code.
+      initial_delay_seconds: 40
+      period_seconds: 30
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 3
+
+    envs:
+      # ── The stream ──────────────────────────────────────────────────────────
+      # Anonymous, internet-facing, and long-lived. These bound what strangers
+      # can hold open (adsb.stream.broadcast). At the cap a new connect gets
+      # 503 + Retry-After.
+      - key: ADSB_SSE_MAX_CLIENTS
+        scope: RUN_TIME
+        value: "100"
+      - key: ADSB_SSE_MAX_PER_IP
+        scope: RUN_TIME
+        value: "4"
+
+      # Correct HERE because the container has no public port of its own: every
+      # connection provably arrived through DigitalOcean's router, so the
+      # X-Forwarded-For it appended is trustworthy.
+      - key: ADSB_TRUST_FORWARDED_FOR
+        scope: RUN_TIME
+        value: "true"
+
+      # ⚠ VERIFY THIS AGAINST THE DEPLOYED APP BEFORE TRUSTING THE PER-IP CAP.
+      #
+      # This says how many proxies stand between the internet and the container,
+      # which is what decides WHICH X-Forwarded-For entry is the real client
+      # (adsb.stream.broadcast/forwarded-ip). It is a fact about DigitalOcean's
+      # topology, not about this code, and it cannot be inferred from source.
+      #
+      # 1 is a GUESS — the simplest chain, one proxy in front. Nobody has counted
+      # DO's. If their router is actually two hops, then with 1 the rightmost
+      # entry is DO's own internal address — EVERY VISITOR ON EARTH counts as one
+      # IP, and the fifth stranger to open the map gets a 503 while the logs look
+      # fine.
+      #
+      # To check: deploy, hit the app from a known address, and read the
+      # X-Forwarded-For the container received. Count the entries to the right
+      # of your own address, add one, and put that number here.
+      - key: ADSB_TRUSTED_PROXY_HOPS
+        scope: RUN_TIME
+        value: "1"
+
+      # ── The feeder ──────────────────────────────────────────────────────────
+      # The home ultrafeeder over the Cloudflare Tunnel (adsb-kh4.3). cloudflared
+      # runs at HOME, next to the feeder — not here — so this is an https:// URL
+      # that the app authenticates to with the service token below.
+      - key: ADSB_ULTRAFEEDER_URL
+        scope: RUN_TIME
+        value: https://feeder.bwawan.com
+
+      # Cloudflare Access service token. Set BOTH or NEITHER — half a credential
+      # fails the boot loudly (adsb.ingest.config). SECRET means App Platform
+      # encrypts the value at rest and never shows it again; the placeholders
+      # below must be replaced at deploy time and never committed with real
+      # values in them.
+      - key: ADSB_FEEDER_AUTH_ID
+        scope: RUN_TIME
+        type: SECRET
+        value: REPLACE_ME
+      - key: ADSB_FEEDER_AUTH_SECRET
+        scope: RUN_TIME
+        type: SECRET
+        value: REPLACE_ME
+
+      # ── Privacy ─────────────────────────────────────────────────────────────
+      # The receiver position backs the range gate and the max-range stat. It is
+      # SECRET because it is the Overseer's home: the backend keeps it
+      # server-side and puts only the scalar max-range on the wire — never the
+      # position, never a bearing (adsb.wire, adsb.stats).
+      - key: ADSB_RECEIVER_LAT
+        scope: RUN_TIME
+        type: SECRET
+        value: REPLACE_ME
+      - key: ADSB_RECEIVER_LON
+        scope: RUN_TIME
+        type: SECRET
+        value: REPLACE_ME
+
+      # ── Smoke test ──────────────────────────────────────────────────────────
+      # Set to "replay" to serve the recorded fixture with NO feeder required.
+      # This is how to prove the deployment — and, more to the point, whether SSE
+      # survives DigitalOcean's router — before the tunnel exists. Unset for the
+      # live feeder.
+      # - key: ADSB_SOURCE
+      #   scope: RUN_TIME
+      #   value: replay
+
+ingress:
+  rules:
+    - component:
+        name: web
+      match:
+        path:
+          prefix: /

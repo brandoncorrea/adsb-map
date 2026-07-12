@@ -71,8 +71,38 @@ USER adsb
 
 # Config is environment-only (adsb.main/env->config). PORT defaults to 8280
 # (adsb.http.server/default-port); override any of these at runtime.
+#
+# JAVA_OPTS is TUNED FOR A SMALL CONTAINER (512 MB — App Platform's basic-xxs,
+# adsb-9n6) rather than left empty, because every JVM default here is wrong for
+# this app:
+#
+#   MaxRAMPercentage=35  Temurin defaults to 25% of the container limit, which is
+#                        fine, but it is a default nobody chose — and on a host
+#                        with no memory limit set (a bare `docker run`) the JVM
+#                        would size itself against the whole MACHINE. 35% of 512
+#                        MB is ~180 MB of heap for a working set (the picture:
+#                        icao -> aircraft) that is under a megabyte. Generous.
+#   UseSerialGC          G1 runs concurrent GC threads and carries per-thread
+#                        bookkeeping that costs real RSS. This app allocates a
+#                        few MB/s of short-lived garbage on ONE broadcast thread
+#                        at 1 Hz; a serial collector is both smaller and entirely
+#                        adequate, and its pauses are invisible at this scale.
+#   MaxMetaspaceSize     Clojure loads a LOT of classes — metaspace, not heap, is
+#                        the surprising half of a Clojure container's footprint.
+#                        Unbounded by default; bounded here so total RSS has a
+#                        ceiling we can actually reason about.
+#   Xss512k              The default 1 MB stack times http-kit's thread pool is
+#                        real memory. Nothing here recurses deeply.
+#   ExitOnOutOfMemoryError
+#                        Die, don't limp. A JVM thrashing against a hard container
+#                        limit serves a frozen map; a dead one gets restarted by
+#                        the platform and comes back with a fresh picture in
+#                        seconds. The stream is stateless by design (every frame
+#                        is the full picture), so a restart costs a reconnect.
+#
+# Override wholesale at runtime to retune; nothing below depends on these values.
 ENV PORT=8280 \
-    JAVA_OPTS=""
+    JAVA_OPTS="-XX:MaxRAMPercentage=35 -XX:+UseSerialGC -Xss512k -XX:MaxMetaspaceSize=128m -XX:+ExitOnOutOfMemoryError"
 
 EXPOSE 8280
 

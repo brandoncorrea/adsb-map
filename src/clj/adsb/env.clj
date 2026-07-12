@@ -9,7 +9,7 @@
 
   Precedence is the whole point: a real exported variable always beats the
   file. Production sets real environment variables and ships no .env, so in
-  Docker and on the droplet this is a no-op that reads a file that isn't
+  Docker and on App Platform this is a no-op that reads a file that isn't
   there. It can never shadow deployed config."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]))

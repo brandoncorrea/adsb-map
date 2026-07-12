@@ -38,23 +38,26 @@
   explicitly so a stray ADSB_SSE_* in the environment cannot bend a
   test."
   [{:keys [picture stats feeder interval-ms heartbeat-ms
-           max-clients max-per-ip trust-forwarded?]
-    :or   {picture          (constantly cast-picture)
-           stats            (constantly nil)
-           feeder           (constantly nil)
-           interval-ms      50
-           heartbeat-ms     60000
-           max-clients      100
-           max-per-ip       100
-           trust-forwarded? false}}]
-  (let [broadcaster (broadcast/start! {:picture          picture
-                                       :stats            stats
-                                       :feeder           feeder
-                                       :interval-ms      interval-ms
-                                       :heartbeat-ms     heartbeat-ms
-                                       :max-clients      max-clients
-                                       :max-per-ip       max-per-ip
-                                       :trust-forwarded? trust-forwarded?})
+           max-clients max-per-ip trust-forwarded? trusted-proxy-hops]
+    :or   {picture            (constantly cast-picture)
+           stats              (constantly nil)
+           feeder             (constantly nil)
+           interval-ms        50
+           heartbeat-ms       60000
+           max-clients        100
+           max-per-ip         100
+           trust-forwarded?   false
+           trusted-proxy-hops 1}}]
+  (let [broadcaster (broadcast/start!
+                      {:picture            picture
+                       :stats              stats
+                       :feeder             feeder
+                       :interval-ms        interval-ms
+                       :heartbeat-ms       heartbeat-ms
+                       :max-clients        max-clients
+                       :max-per-ip         max-per-ip
+                       :trust-forwarded?   trust-forwarded?
+                       :trusted-proxy-hops trusted-proxy-hops})
         srv         (server/start!
                       {:port           0
                        :stream-connect #(broadcast/connect! broadcaster %)})]
@@ -302,6 +305,36 @@
         (finally
           (stop-streaming-server! streaming))))))
 
+(deftest forwarded-ip-picks-the-entry-the-proxy-chain-vouches-for
+  (testing "one trusted hop — the proxy appended the peer it saw, so the
+            rightmost entry is the client and anything left of it is the
+            client's own writing"
+    (is (= "1.2.3.4" (broadcast/forwarded-ip 1 "1.2.3.4")))
+    (is (= "1.2.3.4" (broadcast/forwarded-ip 1 "9.9.9.9, 1.2.3.4"))))
+
+  (testing "two trusted hops — the rightmost entry is the inner proxy;
+            the client is one further left"
+    (is (= "1.2.3.4" (broadcast/forwarded-ip 2 "1.2.3.4, 10.0.0.7")))
+    (is (= "1.2.3.4"
+           (broadcast/forwarded-ip 2 "9.9.9.9, 1.2.3.4, 10.0.0.7"))))
+
+  (testing "a header shorter than the configured chain means the hop
+            count is misconfigured: clamp to the leftmost entry, which
+            weakens the per-IP cap but keeps distinct clients distinct.
+            Reaching past the left end instead would collapse every
+            visitor into one bucket — an outage, which is worse"
+    (is (= "1.2.3.4" (broadcast/forwarded-ip 5 "1.2.3.4, 10.0.0.7"))))
+
+  (testing "no header, or nothing in it, is not an address"
+    (is (nil? (broadcast/forwarded-ip 1 nil)))
+    (is (nil? (broadcast/forwarded-ip 1 "")))
+    (is (nil? (broadcast/forwarded-ip 1 " , , ")))
+    (is (= "1.2.3.4" (broadcast/forwarded-ip 1 "  ,  , 1.2.3.4 ,"))
+        "empty entries are noise, not hops"))
+
+  (testing "an IPv6 client survives the split (no colon confusion)"
+    (is (= "2001:db8::1" (broadcast/forwarded-ip 1 "2001:db8::1")))))
+
 (deftest forwarded-for-trust-model
   (testing "behind the trusted proxy, the rightmost X-Forwarded-For
             entry — the one the proxy appended — is the client, so
@@ -322,6 +355,35 @@
                         ;; must be counted as .8, which is already full
                         {"X-Forwarded-For" "198.51.100.1, 203.0.113.8"})]
           (is (= 503 (.statusCode refused))))
+        (finally
+          (.close (.body one))
+          (.close (.body two))
+          (stop-streaming-server! streaming)))))
+
+  (testing "two trusted hops: the rightmost entry is the INNER PROXY, not
+            the client, so the client is one further left. Counting the
+            rightmost here would bucket every visitor under the proxy's
+            single address — the outage this option exists to prevent"
+    (let [streaming (start-streaming-server! {:max-per-ip         1
+                                              :trust-forwarded?   true
+                                              :trusted-proxy-hops 2})
+          port      (:port streaming)
+          ;; what a two-hop edge produces: client, then the address the
+          ;; inner proxy saw (the outer proxy).
+          one       (stream-response!
+                      port {"X-Forwarded-For" "203.0.113.7, 10.0.0.7"})
+          two       (stream-response!
+                      port {"X-Forwarded-For" "203.0.113.8, 10.0.0.7"})]
+      (try
+        (is (= 200 (.statusCode one)))
+        (is (= 200 (.statusCode two))
+            "a second client behind the SAME inner proxy still has its
+             own budget — it is not counted as the proxy")
+        (let [refused (stream-response!
+                        port
+                        {"X-Forwarded-For" "198.51.100.1, 203.0.113.8, 10.0.0.7"})]
+          (is (= 503 (.statusCode refused))
+              "and the forged leftmost entry is still ignored"))
         (finally
           (.close (.body one))
           (.close (.body two))

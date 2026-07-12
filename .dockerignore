@@ -46,4 +46,3 @@ LICENSE
 # Docker files themselves
 Dockerfile
 .dockerignore
-compose.yaml

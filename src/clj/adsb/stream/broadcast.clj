@@ -40,14 +40,25 @@
   ordinary request header — any client can send one — so it is honored
   ONLY when :trust-forwarded? is set (ADSB_TRUST_FORWARDED_FOR=true),
   which is correct exactly when the app port is NOT directly reachable
-  and every connection arrives through the trusted reverse proxy (the
-  compose deployment: Caddy is the only published port). The proxy
-  APPENDS the TCP peer it saw to any inbound XFF, so the RIGHTMOST
-  entry is the only one the proxy vouches for — earlier entries are
-  attacker-writable and are ignored. Direct deployments leave the flag
-  off and the TCP peer address is used; a spoofed XFF is then just
-  bytes. (The peer is read from the socket itself, NOT from ring's
-  :remote-addr — see socket-peer-ip for the http-kit trap there.)"
+  and every connection arrives through a trusted reverse proxy (App
+  Platform: DigitalOcean's router is the only way in). Direct
+  deployments leave the flag off and the TCP peer address is used; a
+  spoofed XFF is then just bytes. (The peer is read from the socket
+  itself, NOT from ring's :remote-addr — see socket-peer-ip for the
+  http-kit trap there.)
+
+  Trusting the header is only half the question. The other half is WHICH
+  of its entries is the client, and that depends on how many proxies
+  stand in front — :trusted-proxy-hops / ADSB_TRUSTED_PROXY_HOPS, which
+  is a fact about the DEPLOYMENT and cannot be inferred from the code.
+  One trusted hop makes the rightmost entry the client. A managed
+  platform may front the app with more, and then the rightmost entry is
+  the platform's own internal address — which would count every visitor
+  on earth as ONE IP and lock the site the moment :max-per-ip strangers
+  are watching. We run on a managed platform whose chain we have not
+  measured, so the default is a GUESS: verify it against the deployed
+  environment before trusting the per-IP cap. forwarded-ip spells out
+  both failure directions."
   (:require
     [adsb.stream.sse :as sse]
     [adsb.wire :as wire]
@@ -70,6 +81,15 @@
 (def ^:const default-max-clients 100)
 
 (def ^:const default-max-per-ip 4)
+
+(def ^:const default-trusted-proxy-hops
+  "Trusted proxies between the internet and this app. See forwarded-ip:
+  this number decides WHICH X-Forwarded-For entry is the client, and the
+  correct value is a property of the deployment, not of the code — so
+  this default is the SIMPLEST GUESS (a single proxy in front), not a
+  measured fact. DigitalOcean's real chain must be counted from a live
+  request and set explicitly; until then the per-IP cap is unproven."
+  1)
 
 (def ^:const retry-after-s
   "Advisory Retry-After on a 503 rejection. One broadcast tick is 1 s,
@@ -138,19 +158,47 @@
           (catch Exception _ nil)))
       (:remote-addr request)))
 
+(defn forwarded-ip
+  "Pure: the client address named by an `X-Forwarded-For` header, given
+  the number of TRUSTED PROXY HOPS between the internet and this app.
+  nil when the header is absent or empty.
+
+  Every proxy in a chain APPENDS the peer it saw, so the header reads
+  left-to-right from (attacker-writable) client claim to (trustworthy)
+  last hop. With `hops` trusted proxies in front, the entry the outermost
+  trusted proxy observed — the real client — sits at index (count - hops):
+
+    hops=1, \"1.2.3.4\"                -> \"1.2.3.4\"   the client, no spoof
+    hops=1, \"9.9.9.9, 1.2.3.4\"       -> \"1.2.3.4\"   client spoofed 9.9.9.9; ignored
+    hops=2, \"1.2.3.4, 10.0.0.7\"      -> \"1.2.3.4\"   10.0.0.7 is the inner proxy
+    hops=2, \"9.9.9.9, 1.2.3.4, 10.0.0.7\" -> \"1.2.3.4\"
+
+  Getting `hops` RIGHT IS LOAD-BEARING, and being wrong fails in opposite
+  directions. Too LOW and this returns a proxy's own address, so every
+  visitor on earth is counted as one IP and the per-IP cap locks the site
+  after :max-per-ip strangers. Too HIGH and it reaches left past the
+  trusted chain into bytes the client chose, so the per-IP cap becomes
+  spoofable (the total cap still binds, so this is a weakened limit, not
+  an open door). Hence the clamp below is a floor at index 0, not a
+  wraparound: a header shorter than the configured chain means `hops` is
+  misconfigured, and we degrade to a weakened cap rather than to an
+  outage."
+  [hops header]
+  (when-some [entries (some->> (some-> header (str/split #","))
+                               (map str/trim)
+                               (remove str/blank?)
+                               seq
+                               vec)]
+    (nth entries (max 0 (- (count entries) hops)))))
+
 (defn- client-ip
-  "The address a client is counted under. The rightmost X-Forwarded-For
-  entry — the one the trusted proxy appended — when :trust-forwarded?
-  is set and the header is present; the TCP peer address otherwise.
-  See the ns docstring for why the flag must only be set behind the
-  proxy."
-  [trust-forwarded? request]
+  "The address a client is counted under: the X-Forwarded-For entry the
+  trusted proxy chain vouches for when :trust-forwarded? is set and the
+  header is present, the TCP peer address otherwise. See the ns docstring
+  for why the flag must only be set behind a proxy."
+  [trust-forwarded? hops request]
   (or (when trust-forwarded?
-        (some-> (get-in request [:headers "x-forwarded-for"])
-                (str/split #",")
-                peek
-                str/trim
-                not-empty))
+        (forwarded-ip hops (get-in request [:headers "x-forwarded-for"])))
       (socket-peer-ip request)))
 
 (defn- deny-reason
@@ -278,10 +326,11 @@
   and one full snapshot, and join the ticks that follow. The registry
   slot is claimed atomically on open and freed by on-close (the browser
   went away), by a failed send (drop-and-close), or by rejection."
-  [{:stream/keys [picture last-stats feeder trust-forwarded?]
+  [{:stream/keys [picture last-stats feeder trust-forwarded?
+                  trusted-proxy-hops]
     :as          broadcaster}
    request]
-  (let [ip (client-ip trust-forwarded? request)]
+  (let [ip (client-ip trust-forwarded? trusted-proxy-hops request)]
     (http-kit/as-channel
       request
       {:on-open  (fn [channel]
@@ -368,9 +417,18 @@
                       default false). Set ONLY when the app port is
                       reachable exclusively through the trusted proxy.
 
+    :trusted-proxy-hops  how many trusted proxies stand between the
+                      internet and this app, which is what says WHICH
+                      X-Forwarded-For entry is the client
+                      (ADSB_TRUSTED_PROXY_HOPS, default 1 — a guess, not
+                      a measurement). A managed platform may front the
+                      app with more than one, and we run on one: read
+                      forwarded-ip, then verify the real chain against
+                      the deployment rather than assuming it.
+
   Returns a broadcaster to hand to connect!, client-count, and stop!."
   [{:keys [picture stats feeder interval-ms heartbeat-ms
-           max-clients max-per-ip trust-forwarded?]
+           max-clients max-per-ip trust-forwarded? trusted-proxy-hops]
     :or   {stats        (constantly nil)
            feeder       (constantly nil)
            interval-ms  default-interval-ms
@@ -393,6 +451,10 @@
                      (if (some? trust-forwarded?)
                        trust-forwarded?
                        (env-flag? "ADSB_TRUST_FORWARDED_FOR"))
+                     :stream/trusted-proxy-hops
+                     (or trusted-proxy-hops
+                         (env-limit "ADSB_TRUSTED_PROXY_HOPS")
+                         default-trusted-proxy-hops)
                      :stream/last-reject-log-ms (atom 0)
                      :stream/frame-id   (atom 0)
                      :stream/executor   executor}]

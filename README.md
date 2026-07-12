@@ -184,26 +184,40 @@ JRE runtime that runs as a non-root user. Config is **environment-only** — not
 is baked into the image.
 
 The target is Docker in the cloud, internet-facing, reaching the home ultrafeeder
-over a Cloudflare Tunnel. cloudflared runs on the **home** network (never in this
-compose), exposing the feeder as a private hostname that only the app can read —
-see [Cloud-to-home feeder tunnel](#cloud-to-home-feeder-tunnel) below.
+over a Cloudflare Tunnel. cloudflared runs on the **home** network (never
+alongside the app), exposing the feeder as a private hostname that only the app
+can read — see [Cloud-to-home feeder tunnel](#cloud-to-home-feeder-tunnel) below.
 
-### Build and run
+### Deploy to App Platform
+
+[`.do/app.yaml`](.do/app.yaml) is the deployment — the only one. App Platform
+builds the `Dockerfile` on its own infrastructure, runs the single container,
+terminates TLS, and routes to it; there is no proxy of ours in front, which is
+exactly why the app stamps its own security headers rather than delegating them to
+an edge (see [TLS and the internet edge](#tls-and-the-internet-edge)).
+
+The spec documents every environment variable inline — **read it before the first
+deploy**, in particular the note on `ADSB_TRUSTED_PROXY_HOPS`, which must be
+verified against the running app rather than assumed (see
+[The client address](#the-client-address)).
 
 ```bash
-docker build -t adsb:latest .        # multi-stage build → slim JRE image
-docker compose up -d --build         # build + run app AND the TLS proxy
-docker compose logs -f app
+doctl apps create --spec .do/app.yaml        # first deploy
+doctl apps update <app-id> --spec .do/app.yaml
 ```
 
-Compose brings up two services: the `app`, reachable only on the compose
-network, and the Caddy `proxy` — the sole published ports (80/443). See
-[TLS and the internet edge](#tls-and-the-internet-edge).
+Secrets (`ADSB_FEEDER_AUTH_*`, `ADSB_RECEIVER_*`) are `REPLACE_ME` placeholders in
+the committed spec — set the real values as encrypted app-level secrets. Setting
+`ADSB_SOURCE=replay` proves the deployment, and that SSE survives the platform's
+router, with no feeder in the loop at all.
 
-Smoke-test the image alone (plain HTTP, no proxy, **no feeder required**) — the
+### Run the container locally
+
+Smoke-test the image (plain HTTP, no edge, **no feeder required**) — the
 recorded fixture Source stands in for the sky:
 
 ```bash
+docker build -t adsb:latest .             # multi-stage build → slim JRE image
 docker run --rm -p 8280:8280 -e ADSB_SOURCE=replay adsb:latest
 curl -s localhost:8280/healthz            # {"status":"ok","feeder-status":"ok"}
 curl -s localhost:8280/api/stream         # SSE frames stream until you ^C
@@ -229,41 +243,73 @@ All configuration is via environment variables (read once at boot,
 | `ADSB_FEEDER_AUTH_SECRET` | no² | — | The service-token **Client Secret** (`CF-Access-Client-Secret`). Never logged. |
 | `ADSB_SSE_MAX_CLIENTS` | no | `100` | Cap on concurrent SSE stream clients. At the cap a new connect gets `503` + `Retry-After`. |
 | `ADSB_SSE_MAX_PER_IP` | no | `4` | Concurrent SSE connections allowed per client IP. |
-| `ADSB_TRUST_FORWARDED_FOR` | no | `false` | Honor the proxy-appended `X-Forwarded-For` for the per-IP limit. Set `true` **only** when the app port is reachable exclusively through the trusted proxy (the compose deployment sets it). |
-| `ADSB_DOMAIN` | no³ | `map.bwawan.com` | Public hostname the Caddy proxy answers and gets certificates for. |
-| `ACME_EMAIL` | no³ | operator email | ACME account email for certificate-expiry warnings. |
-| `JAVA_OPTS` | no | — | Extra JVM flags (heap, GC, …) passed to `java`. |
+| `ADSB_TRUST_FORWARDED_FOR` | no | `false` | Honor the proxy-appended `X-Forwarded-For` for the per-IP limit. Set `true` **only** when the app port is reachable exclusively through a trusted proxy — both deployment specs set it. |
+| `ADSB_TRUSTED_PROXY_HOPS` | no | `1` | How many trusted proxies stand in front, which decides **which** `X-Forwarded-For` entry is the client. A property of the deployment — [verify it](#the-client-address), don't assume it. |
+| `ADSB_DEV_CSP` | no | `false` | `bb dev` only. Serves the relaxed dev Content-Security-Policy the shadow-cljs watch build needs. **Never set this in a deployment** — the boot warns loudly if you do. |
+| `JAVA_OPTS` | no | tuned for a 512 MB box | JVM flags. The `Dockerfile` ships a set sized for App Platform's `basic-xxs`; override wholesale to retune. |
 
 ¹ Required for the live feeder. Not required when `ADSB_SOURCE=replay`.
 ² Optional, but **both or neither** — supplying only one fails the boot loudly.
 Required when the feeder tunnel is gated by a Cloudflare Access policy (the cloud
 deployment); omit both for a trusted-LAN feeder.
-³ Read by the `proxy` (Caddy) service, not the app.
+
+There is no TLS or domain configuration here: App Platform terminates TLS and
+owns the certificate, so the app never sees one.
 
 ### TLS and the internet edge
 
-The app itself speaks plain HTTP and publishes **no port**. Internet exposure
-goes through the **Caddy sidecar** in `compose.yaml`: it terminates TLS with
-automatic Let's Encrypt certificates on 80/443 and stamps the security headers
-(strict CSP, HSTS, `nosniff`, `Referrer-Policy`, `Permissions-Policy`) on every
-response. The `Caddyfile` documents every header and directive inline — read it
-before changing either file.
+The app speaks plain HTTP and publishes **no public port**. TLS terminates at
+DigitalOcean's router, which is the only way in — the container is not otherwise
+reachable.
+
+**The edge is not ours, so the app trusts it with nothing.** Every security header
+— a strict allowlist CSP, HSTS, `nosniff`, `Referrer-Policy`, `Permissions-Policy`
+— is set in `adsb.http.security` and tested in
+`test/clj/adsb/http/security_test.clj`; http-kit's `Server` header is suppressed at
+the source rather than stripped downstream. Headers that live in a proxy config
+stop shipping the moment the proxy changes, and a dropped CSP fails *silently*,
+forever, while every health check stays green. Read that namespace, directive by
+directive, before changing the policy.
 
 Operational notes:
 
-- **Cloudflare DNS.** Works DNS-only or proxied. If the orange cloud is on, set
-  the zone's SSL mode to **Full (strict)** — never "Flexible" — and do the
-  *first* certificate issuance grey-cloud (details in the `Caddyfile` header).
-- **SSE is never buffered or compressed at the proxy** (`flush_interval -1`,
-  and the `encode` matcher excludes `text/event-stream`). If the map freezes
-  behind a different proxy someday, look there first.
-- **SSE limits live in the app**, not the proxy: `ADSB_SSE_MAX_CLIENTS` /
+- **SSE must not be buffered or compressed by the edge.** A proxy that buffers
+  `text/event-stream` holds frames until its buffer fills: the map freezes while
+  the logs look perfect. On a proxy we controlled this was a config line; on a
+  managed router it is an *assumption to verify*, and it is the open go-live
+  blocker (`adsb-ju1`). Hold `curl -N` on `/api/stream` against the deployed app
+  and watch for a steady ~1 frame/second.
+- **SSE limits live in the app**, not the edge: `ADSB_SSE_MAX_CLIENTS` /
   `ADSB_SSE_MAX_PER_IP` above. A proxy cannot count event-stream clients well.
-- **The feeder is never proxied.** No route — Caddy or app — forwards
+- **The feeder is never proxied.** No route — edge or app — forwards
   ultrafeeder's `/data/*`: those endpoints carry the receiver's coordinates
   (see `docs/validation-boundaries.md`, "The receiver position is itself a
   secret").
-- Validate proxy config changes with `caddy validate --config Caddyfile`.
+- **Cloudflare DNS** fronts `bwawan.com`. If the orange cloud is on for the app's
+  hostname, the zone's SSL mode must be **Full (strict)** — never "Flexible",
+  which would make the Cloudflare→origin hop plaintext.
+
+#### The client address
+
+The per-IP SSE cap counts connections per client address, and behind a proxy that
+address comes from `X-Forwarded-For` — a header any client can write. Two settings
+govern it, and **only the first is safe to assume**:
+
+- `ADSB_TRUST_FORWARDED_FOR=true` says the header can be believed at all. Correct
+  exactly when the app is unreachable except through the platform's router, which
+  is the case on App Platform.
+- `ADSB_TRUSTED_PROXY_HOPS` says **which entry** is the client. Every proxy
+  *appends* the peer it saw, so with `n` trusted hops in front the client is the
+  `n`-th entry from the right. This is a fact about DigitalOcean's topology, not
+  about our code, so it **must be measured, not guessed** — the default of `1` is
+  a guess, and it is the guess that fails closed.
+
+To measure it: deploy, hit the app from an address you know, and read the
+`X-Forwarded-For` the container received. Count the entries to the right of your
+own address and add one. Getting it wrong breaks the cap in opposite directions —
+too low and every visitor on earth is counted as one address, so the fifth stranger
+to open the map gets a `503` while the logs look fine; too high and the count keys
+on bytes the client chose, making the per-IP cap spoofable.
 
 ### Cloud-to-home feeder tunnel
 
@@ -271,6 +317,28 @@ The cloud container is internet-facing; the home ultrafeeder must not be. The
 connection between them is a **Cloudflare Tunnel** whose direction is the whole
 point: the cloud backend reaches *in* to the home feeder, and the feeder is
 reachable from nowhere else. No home port is ever forwarded.
+
+**The thing being protected is the receiver's position**, and it can leak by two
+independent routes. Both must be closed; closing one is not closing the other.
+
+1. **The network path.** Port-forwarding the feeder and pointing DNS at it
+   publishes your home IP, which geolocates to about a neighborhood. The tunnel
+   closes this: cloudflared dials *outward*, so `feeder.bwawan.com` resolves to
+   Cloudflare's edge and the home network needs no inbound port and no public IP.
+2. **The feeder's own endpoints.** `/data/receiver.json` **is** the antenna's
+   lat/lon, and `/data/aircraft.json` carries `r_dst`/`r_dir` — range and bearing
+   from the antenna — on every aircraft, which one aircraft position inverts to
+   the exact antenna location. **A tunnel hides your IP; it does not hide your
+   data.** An ungated tunnel hostname is a CDN-accelerated port-forward that hands
+   your coordinates to anyone who asks. The **Access service-token policy** is
+   what closes this one, and it is not optional.
+
+What the *app* re-serves is scrubbed by construction — `adsb.wire/aircraft->wire`
+is an allowlist projection (so `r_dst`, `r_dir`, and `rssi` cannot reach a
+browser), the stats map carries only the scalar `max-range-km` (a radius, no
+bearing), the receiver position never leaves ingest config, and no route proxies
+`/data/*`. See `docs/validation-boundaries.md`, "The receiver position is itself
+a secret".
 
 ```
 cloud app ──HTTPS + service-token headers──►  feeder.bwawan.com  (Cloudflare edge)
@@ -282,9 +350,15 @@ cloud app ──HTTPS + service-token headers──►  feeder.bwawan.com  (Clou
 - **cloudflared runs on the home network**, beside the ultrafeeder — not in this
   repo's compose. It dials out to Cloudflare, so the home network needs no inbound
   ports and no public IP.
+- **The tunnel is exactly one service wide.** The ingress rule forwards to the
+  ultrafeeder's host:port and nothing else, with a `404` catch-all last. A tunnel
+  is a hole in the home network; it should be the width of the one thing that
+  needs to go through it, not the width of the LAN.
 - **A Cloudflare Access policy** gates the tunnel hostname (`feeder.bwawan.com`)
   with a **service token**: the hostname is not publicly readable, and the cloud
-  app is the only client that holds the token.
+  app is the only client that holds the token. Make the token the policy's *only*
+  principal — no email login alongside it, so a phished account cannot reach the
+  feeder either.
 - **The app is a plain HTTPS client** of that hostname. It presents the token as
   two headers — `CF-Access-Client-Id` / `CF-Access-Client-Secret` — on every
   request (`aircraft.json` *and* `receiver.json`), threaded from
@@ -302,6 +376,14 @@ all yield a non-2xx from the edge, which the poll loop already treats as a feede
 outage: it backs off, and the browser shows the feeder as unhealthy. No special
 handling, and no way for a live SSE stream to masquerade as healthy over a dead
 feeder.
+
+**The residual leak, stated honestly.** The map shows a disc of coverage centered
+on the antenna, and anyone can estimate its center from where reception fades.
+That is inherent to publishing *any* live map from a single receiver, and no
+amount of scrubbing removes it. What everything above buys is that the disclosure
+stays at neighborhood resolution instead of being a lat/lon in a JSON endpoint. If
+that is still too much, the answer is not another header — it is not publishing
+the map publicly.
 
 #### Runbook
 
@@ -343,32 +425,48 @@ image. They are recorded here so go-live is a checklist, not a research project.
 8. **Create the service token** (Access → Service Auth → Service Tokens). Copy the
    **Client ID** and **Client Secret** — the secret is shown once.
 
-*On the cloud host:*
+*On the cloud side* (App Platform — see [Deploy to App Platform](#deploy-to-app-platform)):
 
-9. **Wire the env** (via the git-ignored `.env` next to `compose.yaml`, or the
-   host's secret store — never committed):
-   ```bash
+9. **Set the credentials as encrypted app-level secrets** — in the control panel,
+   or by replacing the `REPLACE_ME` placeholders in a *local, uncommitted* copy of
+   the spec. `.do/app.yaml` already declares them `type: SECRET`:
+   ```
    ADSB_ULTRAFEEDER_URL=https://feeder.bwawan.com
    ADSB_FEEDER_AUTH_ID=<client-id>
    ADSB_FEEDER_AUTH_SECRET=<client-secret>
    ```
-10. **Deploy:** `docker compose up -d --build`. A boot with only one of the two
-    auth vars fails loudly (`… must be set together`).
+   A real service-token secret committed to this repo is a leaked credential —
+   rotate it in Cloudflare, don't just amend the commit.
+10. **Deploy:** `doctl apps update <app-id> --spec .do/app.yaml`. A boot with only
+    one of the two auth vars fails loudly (`… must be set together`) rather than
+    silently fetching the feeder unauthenticated.
 
-**Verify** the Access policy actually gates the hostname:
+    Note the receiver position (`ADSB_RECEIVER_LAT`/`LON`) is *also* an encrypted
+    secret. You can omit both — the app reads `receiver.json` from the feeder over
+    the authenticated tunnel at boot — but setting them explicitly keeps the range
+    gate working even when `receiver.json` isn't served.
+
+**Verify** the Access policy actually gates the hostname. Check
+`receiver.json` — not just `aircraft.json` — because that endpoint *is* the
+coordinates, and it is the one whose exposure is unrecoverable:
 
 ```bash
 # Without the token → the Access policy blocks it (302 to login / 403), NOT 200.
-curl -sS -o /dev/null -w '%{http_code}\n' https://feeder.bwawan.com/data/aircraft.json
+for path in /data/receiver.json /data/aircraft.json; do
+  printf '%s -> ' "$path"
+  curl -sS -o /dev/null -w '%{http_code}\n' "https://feeder.bwawan.com$path"
+done
 
-# With the token → 200 and the aircraft JSON.
+# With the token → 200 and the JSON.
 curl -sS https://feeder.bwawan.com/data/aircraft.json \
   -H "CF-Access-Client-Id: $ADSB_FEEDER_AUTH_ID" \
   -H "CF-Access-Client-Secret: $ADSB_FEEDER_AUTH_SECRET" | head
 ```
 
-If the first request returns `200`, the policy is misconfigured — the hostname is
-public. Fix the Access application before go-live.
+If either unauthenticated request returns `200`, the policy is misconfigured and
+the hostname is public. Fix the Access application **before** go-live — and if
+`receiver.json` was reachable while the tunnel was up, treat the position as
+disclosed, because you cannot know who read it.
 
 ## License
 

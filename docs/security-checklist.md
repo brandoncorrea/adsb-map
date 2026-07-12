@@ -44,8 +44,8 @@ and never logged. The full contract, including the `r_dst`/`r_dir` trap, is in
 - [ ] Nothing receiver-relative reaches the wire — `r_dst`/`r_dir` are one
       aircraft position away from being the antenna's coordinates, and the wire
       privacy tests (`adsb.stream.broadcast-test/wire-privacy`) prove they don't
-- [ ] **The feeder is never proxied.** Neither Caddy nor the app forwards any
-      feeder endpoint: ultrafeeder's `/data/receiver.json` IS the receiver
+- [ ] **The feeder is never proxied.** No route, at any edge or in the app,
+      forwards a feeder endpoint: ultrafeeder's `/data/receiver.json` IS the receiver
       position, and `/data/aircraft.json` carries `r_dst`/`r_dir` on every
       aircraft. The app polls the feeder privately and re-serves a scrubbed
       picture; that indirection is load-bearing. A route that passes feeder
@@ -113,17 +113,23 @@ The server has **no authentication**, and it is now **on the open internet**
 no longer "make sure exposure is a choice" — the choice is made, and this section
 is the hardening that makes it survivable.
 
-**The exposure model:** browsers reach a Caddy sidecar (`Caddyfile` +
-`compose.yaml`) that terminates TLS with automatic Let's Encrypt certificates and
-stamps the security headers on every response. The app container publishes **no
-port**; the only way in is through the proxy. DNS is on Cloudflare — with the
-proxy toggle on, the zone must run **Full (strict)** so the Cloudflare→origin hop
-is verified TLS, never "Flexible". The audit items:
+**The exposure model:** browsers reach **DigitalOcean App Platform**
+(`.do/app.yaml`), whose router terminates TLS and is the only way in; the app
+container speaks plain HTTP and publishes no public port of its own. The edge is
+**not ours** — we do not write its config and cannot inspect it — and the whole
+posture below follows from taking that seriously (adsb-kh4.7 retired the earlier
+compose + Caddy edge; a proxy we controlled is no longer part of the model).
 
-- [ ] **The app port is not published.** `compose.yaml` publishes 80/443 on the
-      `proxy` service and nothing on `app`. A published 8280 is the plaintext,
-      header-less side door — and it also makes the app's trust in
-      `X-Forwarded-For` forgeable.
+**The security headers therefore ship from the app** (`adsb.http.security`), never
+from the edge: headers set in a proxy config stop shipping the moment the proxy
+changes, and a missing CSP fails silently and forever rather than failing a health
+check. DNS is on Cloudflare — with the proxy toggle on, the zone must run **Full
+(strict)** so the Cloudflare→origin hop is verified TLS, never "Flexible". The
+audit items:
+
+- [ ] **The app is not reachable except through the platform router.** A publicly
+      reachable 8280 is the plaintext side door — and it also makes the app's
+      trust in `X-Forwarded-For` forgeable.
 - [ ] **CORS is not `*`.** The SSE endpoint sets no `Access-Control-Allow-Origin`
       at all — same-origin only. A wildcard lets any page on the internet
       subscribe to the feed from its visitors' browsers.
@@ -134,19 +140,39 @@ is verified TLS, never "Flexible". The audit items:
       limit is an honest `503` + `Retry-After`; a disconnect frees the slot.
 - [ ] **The per-IP count keys on an address the client cannot choose.**
       `X-Forwarded-For` is honored only under `ADSB_TRUST_FORWARDED_FOR=true` —
-      set exactly when every connection provably arrives through the proxy — and
-      then only its **rightmost** (proxy-appended) entry. Direct connections use
-      the TCP peer, read **from the socket**: http-kit's ring `:remote-addr` is
-      silently substituted with the *leftmost* `X-Forwarded-For` entry whenever
-      the header is present, so `:remote-addr` is attacker-controlled and must
-      never be the key for any limit, audit log, or allowlist.
-- [ ] Security headers set **at the proxy** (see `Caddyfile`, directive by
-      directive): a strict allowlist CSP (§6 — no `unsafe-inline`, no
-      `unsafe-eval`), `Strict-Transport-Security` (180 days, no preload yet),
+      set exactly when every connection provably arrives through a trusted proxy.
+      Direct connections use the TCP peer, read **from the socket**: http-kit's
+      ring `:remote-addr` is silently substituted with the *leftmost*
+      `X-Forwarded-For` entry whenever the header is present, so `:remote-addr`
+      is attacker-controlled and must never be the key for any limit, audit log,
+      or allowlist.
+- [ ] **`ADSB_TRUSTED_PROXY_HOPS` matches the real chain**, and was *verified
+      against the deployed environment* rather than assumed. It decides which
+      `X-Forwarded-For` entry is the client
+      (`adsb.stream.broadcast/forwarded-ip`), and it is a fact about
+      DigitalOcean's topology, not about our code — so the default of `1` is a
+      guess until someone counts the entries in a real request.
+      It fails in both directions: too **low** and the count keys on a proxy's
+      own address, so every visitor on earth is one IP and the site locks after
+      `ADSB_SSE_MAX_PER_IP` strangers; too **high** and it reads bytes the client
+      chose, so the per-IP cap becomes spoofable (the total cap still binds).
+- [ ] Security headers set **by the app** (`adsb.http.security`, tested in
+      `test/clj/adsb/http/security_test.clj`), *not* by the edge — so they ship
+      whatever is in front, including an edge whose config we never see: a strict
+      allowlist CSP (§6 — no `unsafe-inline`, no `unsafe-eval`),
+      `Strict-Transport-Security` (180 days, no preload yet),
       `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and a
-      deny-everything `Permissions-Policy`. Note **geolocation is currently
-      denied**; if the map ever centers on the user, that one entry becomes
-      `geolocation=(self)` — deliberately.
+      deny-everything `Permissions-Policy`. http-kit's `Server` header is
+      suppressed at the source (`adsb.http.server/server-header`) rather than
+      stripped at a proxy. Note **geolocation is currently denied**; if the map
+      ever centers on the user, that one entry becomes `geolocation=(self)` —
+      deliberately.
+- [ ] **The relaxed dev CSP cannot reach production.** `ADSB_DEV_CSP=true` (set
+      by `bb dev`, and by no deployment spec) permits `unsafe-eval`, loopback
+      WebSockets, and inline style *attributes* — the shadow-cljs watch build's
+      module loader, hot-reload socket, and error HUD, none of which exist in the
+      release bundle. The boot logs a loud warning when it is on; that warning in
+      a production log **is** the incident.
 - [ ] Request size is bounded: http-kit runs with an 8 KB request-line/header
       ceiling and a 16 KB body ceiling (`adsb.http.server`) — this API accepts
       no bodies, so the only job of that number is to stop anonymous buffering.
@@ -212,14 +238,20 @@ leaving that default.
 - [ ] **No `js/eval`, no `set!` on `.-innerHTML`, no dynamic `<script>` injection.**
 - [ ] **No `href` or `src` built from feeder data.** A callsign is an anonymous
       stranger's string; it does not belong in a URL without validation.
-- [ ] A **Content-Security-Policy** is set at the proxy, and it includes neither
+- [ ] A **Content-Security-Policy** is set by the app, and it includes neither
       `unsafe-inline` nor `unsafe-eval` — verified in a real browser, not assumed.
-      The shipped policy (rationale per directive in `Caddyfile`):
+      The shipped policy (rationale per directive in `adsb.http.security`):
       `default-src 'none'`, `script-src 'self'`, `style-src 'self'` (Reagent and
-      MapLibre both style via the CSSOM, which CSP does not gate), `img-src 'self'
-      data: blob:`, `connect-src 'self' https://tiles.openfreemap.org`,
-      `worker-src blob:` + `child-src blob:` (MapLibre's tile workers),
-      `base-uri 'none'`, `form-action 'none'`, `frame-ancestors 'none'`
+      MapLibre both style via the CSSOM, which CSP does not gate), `font-src
+      'self'` (the self-hosted §5 faces in `resources/public/fonts`; the basemap
+      glyphs are PBF and ride `connect-src`), `img-src 'self' data: blob:`,
+      `connect-src 'self' https://tiles.openfreemap.org`, `worker-src blob:` +
+      `child-src blob:` (MapLibre's tile workers), `base-uri 'none'`,
+      `form-action 'none'`, `frame-ancestors 'none'`
+- [ ] **A new asset type means a new directive.** `default-src 'none'` refuses
+      anything unnamed, so the first self-hosted font, video, or manifest is a
+      silent 404-shaped failure in the console until its directive lands. This is
+      the policy working, not the policy breaking.
 - [ ] `:advanced` compilation for production builds (a smaller, harder-to-read
       bundle isn't security, but the absence of dev tooling and source maps is)
 
