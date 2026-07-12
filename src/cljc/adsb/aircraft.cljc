@@ -1,12 +1,95 @@
 (ns adsb.aircraft
-  "The aircraft domain model. Pure — no I/O, no clock; time is an
-  argument. The aircraft shape itself is defined in adsb.schema and
-  produced at the ingest boundary by adsb.ingest.coerce.")
+  "The aircraft domain model and the current picture of the sky. Pure —
+  no I/O, no clock; time is an argument. The aircraft shape itself is
+  defined in adsb.schema and produced at the ingest boundary by
+  adsb.ingest.coerce.
+
+  The picture is a plain map of icao -> aircraft. Each poll delivers a
+  full snapshot of what the feeder currently tracks; merge-batch folds
+  it in, and age-out drops aircraft the sky has gone quiet on. An
+  aircraft absent from a single poll is retained — it leaves the
+  picture by silence, never by absence from one snapshot.")
+
+(declare ->observation merge-observation)
 
 (def ^:const stale-threshold-ms 60000)
 
+(def ^:const age-out-threshold-ms
+  "Silence past this removes an aircraft from the picture entirely —
+  the long-silent cast member's fate (docs/testing-standards.md)."
+  300000)
+
+(defn positioned?
+  "True when the aircraft has ever reported a position. Position-less
+  is a lawful domain state — heard on the radio, never located — kept
+  in the picture and the sidebar, just never on the map."
+  [aircraft]
+  (contains? aircraft :aircraft/position))
+
 (defn stale?
   "True when the aircraft has not been heard from within the stale
-  threshold."
+  threshold. :aircraft/seen-at-ms is stamped by merge-batch."
   [{:aircraft/keys [seen-at-ms]} now-ms]
   (> (- now-ms seen-at-ms) stale-threshold-ms))
+
+(defn aged-out?
+  "True when the aircraft has been silent past the age-out threshold
+  and no longer belongs in the picture at all."
+  [{:aircraft/keys [seen-at-ms]} now-ms]
+  (> (- now-ms seen-at-ms) age-out-threshold-ms))
+
+(defn merge-batch
+  "Merge one coerced feeder batch — a full snapshot of what the feeder
+  currently tracks, captured at captured-at-ms — into the picture.
+
+  Present in both: the new observation replaces the old wholesale,
+  except position — the last-known position is retained when the new
+  observation has none, because an aircraft that momentarily stops
+  sending positions has not teleported to nowhere. Every other absent
+  field goes absent: the feeder already carries last-known values for
+  a live track, so a field it stopped reporting is a field it no
+  longer stands behind, and retaining it here would launder stale data
+  as current (docs/validation-boundaries.md — absent is not zero).
+
+  Newly appeared: added. Missing from this poll: retained untouched —
+  aircraft leave the picture by age-out, never by absence from one
+  snapshot."
+  [picture batch captured-at-ms]
+  (reduce
+    (fn [merged aircraft]
+      (update merged (:aircraft/icao aircraft)
+              merge-observation (->observation aircraft captured-at-ms)))
+    picture
+    batch))
+
+(defn age-out
+  "The picture without aircraft silent past the age-out threshold."
+  [picture now-ms]
+  (into {}
+        (remove (fn [[_icao aircraft]] (aged-out? aircraft now-ms)))
+        picture))
+
+(defn- ->observation
+  "Stamp an ingested aircraft with the absolute instant it was heard.
+  The feeder's seen is seconds-since-last-message at CAPTURE time, so
+  the observation instant is capture minus seen — treating arrival as
+  observation would make a message heard 250 s before capture look
+  fresh. Absent seen pins the observation to the capture itself: the
+  freshest instant we can honestly claim, so an aircraft can only be
+  older than the picture says, never fresher. The capture-relative
+  :aircraft/seen-s is dropped — it rots the moment the poll ends;
+  :aircraft/seen-at-ms is its durable form."
+  [{:aircraft/keys [seen-s] :as aircraft} captured-at-ms]
+  (-> aircraft
+      (dissoc :aircraft/seen-s)
+      (assoc :aircraft/seen-at-ms
+             (long (- captured-at-ms (* 1000 (or seen-s 0)))))))
+
+(defn- merge-observation
+  "One aircraft's step of merge-batch: the new observation wins, except
+  a position-less observation inherits the last-known position."
+  [previous observation]
+  (if (or (positioned? observation) (not (positioned? previous)))
+    observation
+    (assoc observation
+           :aircraft/position (:aircraft/position previous))))

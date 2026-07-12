@@ -72,6 +72,9 @@
    [:aircraft/track-deg {:optional true} number?]
    [:aircraft/baro-rate-fpm {:optional true} number?]
    [:aircraft/seen-s {:optional true} number?]
+   ;; Stamped by adsb.aircraft/merge-batch (capture time minus seen);
+   ;; absent on aircraft fresh from ingest.
+   [:aircraft/seen-at-ms {:optional true} number?]
    [:aircraft/rssi {:optional true} number?]])
 
 ;; ---------------------------------------------------------------------
