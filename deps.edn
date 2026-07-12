@@ -4,7 +4,12 @@
  {org.clojure/clojure            {:mvn/version "1.12.1"}
   ch.qos.logback/logback-classic {:mvn/version "1.5.18"}
   cheshire/cheshire              {:mvn/version "5.13.0"}
-  http-kit/http-kit              {:mvn/version "2.8.0"}
+  ;; 2.9.0-beta1: 2.8.x never fires :on-close (and never fails send!)
+  ;; for plain HTTP streaming — closeKey notifies the accept-time
+  ;; AsyncChannel, not the per-request one (#375 regression, fixed by
+  ;; #578) — so SSE clients would leak forever. Verified by
+  ;; adsb.stream.broadcast-test/disconnect-cleanup, which fails on 2.8.x.
+  http-kit/http-kit              {:mvn/version "2.9.0-beta1"}
   metosin/malli                  {:mvn/version "0.17.0"}
   metosin/reitit                 {:mvn/version "0.7.2"}
   org.clojure/tools.logging      {:mvn/version "1.3.0"}}
