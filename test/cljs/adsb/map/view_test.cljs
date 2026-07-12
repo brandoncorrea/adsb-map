@@ -16,8 +16,8 @@
 
 (use-fixtures :each
   {:before (fn []
-             (let [el (js/document.createElement "div")]
-               (.appendChild js/document.body el)
+             (let [el (.createElement js/document "div")]
+               (.appendChild (.-body js/document) el)
                (reset! !node el)))
    :after  (fn []
              (when-let [el @!node]
