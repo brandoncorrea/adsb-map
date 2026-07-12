@@ -26,11 +26,17 @@
                (reset! !node nil)))})
 
 (defn- fake-map
-  "A `Map` that records nothing but satisfies the protocol, so a mount can
-  create and later destroy it without touching WebGL."
+  "A `Map` that records nothing but satisfies the full protocol, so a mount
+  can create and later destroy it without touching WebGL. The load event
+  never fires here, so the aircraft layer stays dormant — its behavior is
+  adsb.map.aircraft-layer-test's business."
   []
   (reify maplibre/Map
-    (destroy! [_] nil)))
+    (destroy! [_] nil)
+    (on-load! [_ _f] nil)
+    (add-source! [_ _id _source] nil)
+    (add-layer! [_ _layer] nil)
+    (set-source-data! [_ _id _data] nil)))
 
 (deftest default-map-opts-privacy
   (testing "default center is a fixed, whole-degree regional point — never a receiver"
