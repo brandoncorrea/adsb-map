@@ -58,7 +58,7 @@ real-world decoder handling real-world radio. The traps, all of which are real:
 
 | Field | The trap |
 |---|---|
-| `alt_baro` | Is a **number**, *or* the **string `"ground"`**. Not `0`. The string. |
+| `alt_baro` | Is a **number**, *or* the **string `"ground"`**, *or* **absent entirely** — ~13% of real observations are bare mode_s targets carrying only `hex`/`messages`/`rssi`/`seen`. Not `0`. |
 | `lat` / `lon` | Frequently **absent entirely**. An aircraft can be heard for minutes before it ever transmits a position — or never. |
 | `flight` | The callsign, **space-padded to 8 characters** (`"UPS2717 "`). Trim it. Also often absent. |
 | `hex` | Usually a 6-char ICAO address, but may be **prefixed with `~`** for non-ICAO (TIS-B / ADS-R) targets. |
@@ -76,12 +76,17 @@ default is how you end up drawing a 747 parked in the Atlantic.
 
 ### Validate once, at the edge
 
+The coercion path lives in `src/cljc/adsb/ingest/coerce.cljc`:
+
 ```clojure
 (defn ->aircraft
-  "Coerce one raw feeder entry into a domain aircraft, or nil if it can't be."
+  "Coerce one raw feeder entry into a domain aircraft, or nil when it
+  cannot be one."
   [raw]
-  (when-let [coerced (m/coerce schema/raw-aircraft raw mt/json-transformer)]
-    (aircraft/normalize coerced)))
+  (some-> raw
+          coerce-raw               ; Malli schema pass; nil when invalid
+          raw->aircraft            ; feeder vocabulary -> domain keys
+          drop-implausible-fields))
 ```
 
 Past this function, the rest of the system may **trust the data completely**. The
@@ -89,8 +94,25 @@ domain does not re-check. Handlers do not re-check. The UI does not re-check. Th
 what a boundary *is* — the place where you pay the cost once so that nobody
 downstream has to pay it again, or forget to.
 
-If you find yourself writing `(when (:aircraft/position a) ...)` deep in the UI, ask
-why an unpositioned aircraft got that far. The answer is usually that the boundary
+### What is dropped, and what is kept
+
+Decided in adsb-bvi.3, reconciling this document with the state store
+(adsb-nqf.2):
+
+- **No usable identity — `hex` missing or malformed → drop the entry.** An
+  aircraft we cannot name is an aircraft we cannot track, dedupe, or age out.
+- **Schema-invalid → drop the entry**, with one bounded log line (below).
+- **No position — `lat`/`lon` never reported → keep the aircraft**, as a domain
+  aircraft without `:aircraft/position`. Roughly a quarter of real observations
+  are heard-but-never-positioned; they belong in the sidebar and the counts.
+  They simply produce no map feature.
+- **A schema-valid but implausible field → drop the field, keep the aircraft**
+  (see the plausibility layer below).
+
+So `(when (:aircraft/position a) ...)` in the one place that derives map
+features is correct and expected — position-less is a lawful domain state, not
+a validation failure. What remains a smell is *re-validating* an aircraft deep
+in the UI: if a component is checking types or re-running schemas, the boundary
 leaked.
 
 ### One bad aircraft must not kill the batch
@@ -101,12 +123,15 @@ one log line** — not an exception, not an empty map, not a dropped poll cycle.
 ```clojure
 (defn ->aircraft-batch [raw-entries]
   (->> raw-entries
-       (keep #(try
-                (->aircraft %)
-                (catch #?(:clj Exception :cljs :default) e
-                  (log/warn "Rejected aircraft" {:hex (:hex %) :error (ex-message e)})
-                  nil)))
+       (keep ->aircraft-or-log!)
        vec))
+
+(defn- ->aircraft-or-log! [raw]
+  (try
+    (or (->aircraft raw)
+        (log-rejection! raw (rejection-reason raw)))
+    (catch #?(:clj Exception :cljs :default) e
+      (log-rejection! raw (ex-message e)))))
 ```
 
 The ingest loop is a long-running process fed by a noisy radio. It **must not die.**
@@ -128,8 +153,13 @@ the right type. It's also nonsense — the product of a corrupted burst, a decod
 bug, or somebody with an SDR having fun.
 
 ```clojure
-(def plausible-altitude-ft [:int {:min -1500 :max 60000}])
-(def plausible-ground-speed-kt [:int {:min 0 :max 1000}])
+;; Real ground speeds arrive as doubles (450.5), so these are number
+;; bounds, not :int.
+(def plausible-altitude-ft
+  [:and number? [:>= -1500] [:<= 60000]])
+
+(def plausible-ground-speed-kt
+  [:and number? [:>= 0] [:<= 1000]])
 ```
 
 Decide explicitly, per field, what to do when plausibility fails — and write the
@@ -137,11 +167,13 @@ decision down:
 
 - **Out of receiver range** (a position further away than physics allows for your
   antenna's horizon) → **drop it.** It didn't come from the sky you can see.
+  (Lands in adsb-nqf.3 — not built yet.)
 - **Absurd altitude or speed** → **drop the field, keep the aircraft.** The rest of
   its data may be fine, and a plane with a garbled altitude is still a plane.
+  (Built in adsb-bvi.3: `drop-implausible-fields`.)
 - **Impossible position jump** (400 nm in one second) → **flag it, don't drop it.**
   This is the fingerprint of spoofing, and silently discarding it means you'd never
-  know. Surface it.
+  know. Surface it. (Lands in adsb-nqf.3 — not built yet.)
 
 The temptation is to silently clamp bad values into range. **Don't.** Clamping turns
 "this data is wrong" into "this data is fine," which is the opposite of what a

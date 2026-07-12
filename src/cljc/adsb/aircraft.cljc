@@ -1,6 +1,7 @@
 (ns adsb.aircraft
   "The aircraft domain model. Pure — no I/O, no clock; time is an
-  argument. The full model is TODO(adsb-bvi.3).")
+  argument. The aircraft shape itself is defined in adsb.schema and
+  produced at the ingest boundary by adsb.ingest.coerce.")
 
 (def ^:const stale-threshold-ms 60000)
 

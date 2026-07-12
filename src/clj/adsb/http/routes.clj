@@ -7,29 +7,12 @@
   Boundary 2)."
   (:require
     [adsb.http.handlers :as handlers]
+    [adsb.schema :as schema]
     [muuntaja.core :as muuntaja]
     [reitit.coercion.malli :as coercion-malli]
     [reitit.ring :as ring]
     [reitit.ring.coercion :as coercion]
     [reitit.ring.middleware.muuntaja :as muuntaja-mw]))
-
-;; TODO(adsb-bvi.3): consolidate with src/cljc/adsb/schema.cljc once its
-;; icao-address schema lands. Defined here for now so this bead does not
-;; block on that one; the two must not drift.
-(def icao-address
-  "An ICAO 24-bit address as it appears in a URL: six hex digits,
-  optionally prefixed with ~ for non-ICAO (TIS-B / ADS-R) targets.
-  Stays a string — never keywordized."
-  [:re {:error/message "icao must be 6 hex digits, optionally ~-prefixed"}
-   #"(?i)~?[0-9a-f]{6}"])
-
-;; TODO(adsb-bvi.3): replace with the real aircraft schema from
-;; src/cljc/adsb/schema.cljc. Minimal placeholder so responses are
-;; schema-checked today; the live store (adsb-nqf.2) will return maps
-;; that satisfy the full schema.
-(def aircraft-response
-  "The 200 body for aircraft-detail: an open domain-aircraft map."
-  [:map [:aircraft/icao :string]])
 
 (def health-response
   [:map
@@ -41,8 +24,8 @@
     {:get {:responses {200 {:body health-response}}
            :handler   handlers/health}}]
    ["/api/aircraft/:icao"
-    {:get {:parameters {:path [:map [:icao icao-address]]}
-           :responses  {200 {:body aircraft-response}}
+    {:get {:parameters {:path [:map [:icao schema/icao-address]]}
+           :responses  {200 {:body schema/aircraft}}
            :handler    (handlers/aircraft-detail state-lookup)}}]])
 
 (defn router

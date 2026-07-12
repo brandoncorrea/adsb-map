@@ -132,7 +132,7 @@ actually produces:**
 |---|---|---|
 | `ups-2717` | Cargo 747, cruising, complete data | The happy path. Use this unless you need otherwise. |
 | `on-the-ground` | `alt_baro` is the **string** `"ground"` | The coercion trap. Altitude isn't always a number. |
-| `never-positioned` | Heard on the radio, no `lat`/`lon` ever | Must be dropped. Most common real-world case. |
+| `never-positioned` | Heard on the radio, no `lat`/`lon` ever | Kept, with no `:aircraft/position` — in the sidebar, never on the map (adsb-bvi.3). Most common real-world case. |
 | `squawking-7700` | Squawk `7700`, general emergency | The alerting path. |
 | `long-silent` | `seen` 300 seconds ago | Must age out of the map. |
 | `mlat-derived` | Position from multilateration, not ADS-B | Lower confidence; flagged differently. |

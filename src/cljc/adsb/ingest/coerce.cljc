@@ -1,0 +1,139 @@
+(ns adsb.ingest.coerce
+  "The ingest trust boundary: raw feeder entries in, domain aircraft out.
+
+  Everything downstream trusts what leaves this namespace completely —
+  see docs/validation-boundaries.md. One malformed entry must never kill
+  a batch, and the poll loop feeding it must never die; a reject costs
+  one bounded log line, never the whole payload."
+  (:require
+    [adsb.schema :as schema]
+    [clojure.string :as str]
+    [malli.core :as m]
+    [malli.error :as me]
+    [malli.transform :as mt]
+    #?(:clj [clojure.tools.logging :as log])))
+
+(declare ->aircraft-or-log! coerce-raw raw->aircraft
+         drop-implausible-fields)
+
+(defn ->aircraft-batch
+  "Coerce a whole feeder batch into domain aircraft. A malformed entry
+  yields the rest of the batch plus one log line — never an exception."
+  [raw-entries]
+  (->> raw-entries
+       (keep ->aircraft-or-log!)
+       vec))
+
+(defn ->aircraft
+  "Coerce one raw feeder entry into a domain aircraft, or nil when it
+  cannot be one (not schema-valid, or no usable hex identity).
+
+  Position-less aircraft are kept: heard-but-never-positioned is the
+  most common real class of input, and it belongs in the sidebar even
+  though it gets no map feature. See docs/validation-boundaries.md."
+  [raw]
+  (some-> raw
+          coerce-raw
+          raw->aircraft
+          drop-implausible-fields))
+
+;; ---------------------------------------------------------------------
+;; Schema pass
+
+(def ^:private valid-raw? (m/validator schema/raw-aircraft))
+
+(def ^:private explain-raw (m/explainer schema/raw-aircraft))
+
+(def ^:private decode-raw
+  (m/decoder schema/raw-aircraft (mt/json-transformer)))
+
+(defn- coerce-raw
+  "Schema-checked, JSON-decoded raw entry, or nil when it isn't one."
+  [raw]
+  (when (map? raw)
+    (let [entry (decode-raw raw)]
+      (when (valid-raw? entry)
+        entry))))
+
+;; ---------------------------------------------------------------------
+;; Feeder vocabulary -> domain vocabulary
+
+(defn- raw->aircraft
+  "Rename feeder fields into namespaced domain keys. Absent (or null)
+  stays absent — an aircraft with no reported altitude is not at sea
+  level, and one with no reported speed is not stationary."
+  [{:keys [hex flight alt_baro lat lon squawk gs track baro_rate
+           seen rssi]}]
+  (let [callsign (some-> flight str/trim not-empty)]
+    (cond-> {:aircraft/icao (str/lower-case hex)}
+      callsign (assoc :aircraft/callsign callsign)
+      (and lat lon) (assoc :aircraft/position {:geo/lat lat
+                                               :geo/lon lon})
+      (number? alt_baro) (assoc :aircraft/altitude-ft alt_baro)
+      ;; alt_baro is the string "ground" on the tarmac, not a number.
+      (= "ground" alt_baro) (assoc :aircraft/on-ground? true)
+      squawk (assoc :aircraft/squawk squawk)
+      gs (assoc :aircraft/ground-speed-kt gs)
+      track (assoc :aircraft/track-deg track)
+      baro_rate (assoc :aircraft/baro-rate-fpm baro_rate)
+      seen (assoc :aircraft/seen-s seen)
+      rssi (assoc :aircraft/rssi rssi))))
+
+;; ---------------------------------------------------------------------
+;; Plausibility pass — a separate layer from schema validity
+
+(def ^:private plausible-altitude?
+  (m/validator schema/plausible-altitude-ft))
+
+(def ^:private plausible-ground-speed?
+  (m/validator schema/plausible-ground-speed-kt))
+
+(defn- drop-implausible-fields
+  "An absurd-but-well-typed value (400,000 ft; 3,000 kt) costs the
+  FIELD, never the aircraft — and is never clamped into range."
+  [{:aircraft/keys [altitude-ft ground-speed-kt] :as aircraft}]
+  (cond-> aircraft
+    (and altitude-ft (not (plausible-altitude? altitude-ft)))
+    (dissoc :aircraft/altitude-ft)
+
+    (and ground-speed-kt (not (plausible-ground-speed? ground-speed-kt)))
+    (dissoc :aircraft/ground-speed-kt)))
+
+;; ---------------------------------------------------------------------
+;; Rejection logging — one bounded line per reject
+
+(def ^:private max-logged-hex-chars 24)
+
+(def ^:private max-logged-reason-chars 240)
+
+(defn- bounded
+  "A loggable slice of anything, truncated so a hostile entry cannot
+  fill the disk through the log."
+  [x limit]
+  (let [s (str x)]
+    (subs s 0 (min (count s) limit))))
+
+(defn- rejection-reason
+  [raw]
+  (me/humanize (explain-raw raw)))
+
+(defn- log-rejection!
+  "One bounded log line per rejected entry — enough context to debug,
+  never the whole payload. Returns nil so `keep` drops the entry."
+  [raw reason]
+  (let [context {:hex (bounded (when (map? raw) (:hex raw))
+                               max-logged-hex-chars)
+                 :error (bounded reason max-logged-reason-chars)}]
+    #?(:clj (log/warn "Rejected aircraft" context)
+       :cljs (js/console.warn "Rejected aircraft" (pr-str context)))
+    nil))
+
+(defn- ->aircraft-or-log!
+  "->aircraft with the batch's survival guarantee: a schema reject logs
+  and yields nil; an unexpected throw is caught, logged, and yields nil."
+  [raw]
+  (try
+    (or (->aircraft raw)
+        (log-rejection! raw (rejection-reason raw)))
+    (catch #?(:clj Exception :cljs :default) e
+      (log-rejection! raw (ex-message e)))))
