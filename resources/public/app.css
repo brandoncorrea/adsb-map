@@ -34,14 +34,233 @@ body {
   z-index: 1;
   display: flex;
   align-items: center;
+  gap: 16px;
   height: 44px;
   padding: 0 16px;
   background: rgba(20, 22, 26, 0.85);
   color: #f5f6f7;
+  font-size: 13px;
 }
 
 .adsb-title {
   font-size: 15px;
   font-weight: 600;
   letter-spacing: 0.02em;
+}
+
+/* Live vital signs. The counts sit next to the title; the connection chip is
+   pushed to the far right so the map's health is always in the same place. */
+.adsb-counts {
+  color: #cdd2d8;
+}
+
+.adsb-count-total,
+.adsb-count-positioned {
+  font-weight: 600;
+  color: #f5f6f7;
+}
+
+.adsb-count-sep {
+  opacity: 0.6;
+}
+
+.adsb-clock {
+  color: #aab2bd;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* Connection chip — distinct per state (a dot colour AND a text label; colour
+   alone is not accessible), pushed right. :down is a filled red alarm so a
+   frozen map cannot read as a live one. */
+.adsb-conn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+  line-height: 1.4;
+  border: 1px solid transparent;
+}
+
+.adsb-conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.adsb-conn-live {
+  color: #3ddc84;
+  background: rgba(61, 220, 132, 0.12);
+  border-color: rgba(61, 220, 132, 0.4);
+}
+
+.adsb-conn-reconnecting {
+  color: #f0b429;
+  background: rgba(240, 180, 41, 0.12);
+  border-color: rgba(240, 180, 41, 0.4);
+}
+
+.adsb-conn-down {
+  color: #fff;
+  background: #d21e1e;
+  border-color: #ff5a5a;
+}
+
+/* Altitude legend — a corner overlay, tucked bottom-left, out of the header's
+   way. Static chrome; every swatch is painted from an adsb.map.style constant. */
+.adsb-legend {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  z-index: 1;
+  display: flex;
+  gap: 20px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 14px;
+  background: rgba(20, 22, 26, 0.85);
+  color: #f5f6f7;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.adsb-legend-heading {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #aab2bd;
+}
+
+.adsb-legend-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.adsb-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.7;
+}
+
+.adsb-legend-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  flex: none;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.adsb-legend-label {
+  white-space: nowrap;
+}
+
+/* Aircraft roster — a scrollable list docked top-right, below the header, over
+   the map. NEUTRAL PLACEHOLDER only: structure and legibility, no committed
+   look. The visual pass is bead adsb-dgb.5. */
+.adsb-sidebar {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  max-width: 80vw;
+  background: rgba(20, 22, 26, 0.85);
+  color: #f5f6f7;
+  font-size: 13px;
+}
+
+.adsb-sidebar-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.adsb-sidebar-count {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.adsb-sidebar-sort,
+.adsb-sidebar-filters {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+}
+
+.adsb-sort-btn,
+.adsb-filter-btn {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: transparent;
+  color: #cdd2d8;
+  font: inherit;
+  cursor: pointer;
+}
+
+.adsb-sort-btn-active,
+.adsb-filter-btn-active {
+  color: #14161a;
+  background: #f5f6f7;
+  border-color: #f5f6f7;
+  font-weight: 600;
+}
+
+.adsb-sidebar-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.adsb-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.adsb-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.adsb-row-selected {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.adsb-row-call {
+  font-weight: 600;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.adsb-row-alt,
+.adsb-row-speed {
+  font-variant-numeric: tabular-nums;
+  color: #cdd2d8;
+}
+
+.adsb-row-badges {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.adsb-sidebar-empty {
+  padding: 12px;
+  color: #aab2bd;
 }
