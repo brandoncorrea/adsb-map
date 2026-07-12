@@ -17,9 +17,17 @@
                  below; licensing in fonts/LICENSE.md). Hierarchy is
                  weight and case, never a change of voice — bold stamps
                  for titles (the header title carries the 2px magenta
-                 pen underline), caps-tracked bold for block headings,
-                 italic for fact labels and captions. Mono numbers are
-                 inherently tabular.
+                 pen underline), caps-tracked bold for block headings.
+                 Mono numbers are inherently tabular.
+     captions    PRINTED (§5, bead adsb-fon): the smallest labels —
+                 fact labels, stats labels, count units, shelf labels —
+                 print in Space Grotesk Medium (OFL; Space Mono's own
+                 proportional derivative — one hand at two widths),
+                 upright, uppercase, tracked 0.12em, at --t-2. Grotesk
+                 stays in exactly this lane: never titles, body, or
+                 data. The system's original italic strained at panel
+                 sizes (Overseer finding) and is retired from small
+                 labels.
      scale       major third, 1.25 @ 13px — tokens --t-2 … --t2.
                  Deliberately shallow; the size is spent on the DATA.
      spacing     compact, 4px base — tokens --s1 … --s5, header 36px.
@@ -53,6 +61,15 @@
   font-weight: 700;
   font-display: swap;
   src: url("/fonts/space-mono-700.woff2") format("woff2");
+}
+
+/* The caption voice (§5 captions): Space Mono's proportional sibling. */
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/space-grotesk-500.woff2") format("woff2");
 }
 
 :root {
@@ -244,9 +261,8 @@ body {
   color: var(--ink);
 }
 
-.adsb-count-unit {
-  font-style: italic; /* fact labels speak in italic (§5) */
-}
+/* .adsb-count-unit takes the printed caption voice — the grouped rule
+   at the end of the chrome section owns it. */
 
 .adsb-count-sep {
   opacity: 0.6;
@@ -421,7 +437,7 @@ body {
 }
 
 .adsb-stats-label {
-  font-style: italic;
+  /* voice: the printed caption rule below */
   color: var(--faded-ink);
 }
 
@@ -596,9 +612,8 @@ body {
 }
 
 .adsb-fact-label {
-  font-style: italic; /* the annotation's caption voice (§5) */
+  /* voice: the printed caption rule below */
   color: var(--faded-ink);
-  font-size: var(--t-1);
 }
 
 .adsb-fact-value {
@@ -826,9 +841,7 @@ body {
 }
 
 .adsb-stack-shelf-label {
-  font-size: var(--t-2);
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  /* voice: the printed caption rule below */
   color: var(--faded-ink);
   margin-right: var(--s1);
 }
@@ -967,6 +980,24 @@ body {
 /* =====================================================================
    THE STACK — END BOUNDED SECTION
    ===================================================================== */
+
+/* ── The printed caption voice (§5 captions, bead adsb-fon) ──────────
+   One rule, one voice: every small label on the chart prints in Space
+   Grotesk — Space Mono's proportional sibling — upright, uppercase,
+   tracked, at --t-2. The individual blocks above keep only their own
+   colour and geometry; the VOICE lives here and nowhere else. Placed
+   after them on purpose: equal specificity, later wins. */
+.adsb-count-unit,
+.adsb-stats-label,
+.adsb-fact-label,
+.adsb-stack-shelf-label {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-style: normal;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: var(--t-2);
+}
 
 /* ── Phone (Q9c: a designed stance, not a degradation) ───────────────
    The header holds its 36px: the clock and the counts' unit words step

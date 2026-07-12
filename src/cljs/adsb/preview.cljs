@@ -9,12 +9,12 @@
 
     :typography   the three bake-off systems (Marginalia / Drafting
                   Room / The Annotation)
-    :labels       the caption VOICE (bead adsb-fon): scribbled — each
-                  system exactly as drawn — vs three PRINTED voices,
-                  upright caps-tracked small labels in mono, Space
-                  Grotesk, or Inter. Staged on the Overseer's finding
-                  that italic Title Case captions strain at panel
-                  sizes while upper-case sans reads easily
+    :labels       the caption VOICE (bead adsb-fon): CROWNED —
+                  printed-grotesk ships (§5 captions, picked
+                  2026-07-12: Space Grotesk caps-tracked small labels
+                  over the italic that strained at panel sizes). The
+                  scribbled italic and the mono/Inter printed voices
+                  stay browsable as the audition record
     :scale        modular type scales — the candidates' natives plus
                   their neighbors
     :spacing      spacing scales — 4px airy / 8px strict / compact
@@ -72,9 +72,9 @@
               ["drafting-room" "Drafting Room"]]}
    {:key     :labels
     :label   "Captions"
-    :options [["scribbled" "Scribbled (as drawn)"]
+    :options [["printed-grotesk" "Printed Grotesk"]
+              ["scribbled" "Scribbled (italic)"]
               ["printed-mono" "Printed mono"]
-              ["printed-grotesk" "Printed Grotesk"]
               ["printed-inter" "Printed Inter"]]}
    {:key     :scale
     :label   "Scale"

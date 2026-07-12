@@ -174,9 +174,9 @@ layout. The bake-off staged three complete systems on the running app
 (bead `adsb-dgb.10`), the in-app preview let the Overseer browse and MIX
 dimensions independently (`#/preview`, bead `adsb-dgb.11`), and he picked
 from live mixes on 2026-07-12. **The winning mix**
-(`typography=annotation scale=major-13 spacing=compact-4
-palette=wine-pen`), the editorial-serif hypothesis losing to its most
-radical rival:
+(`typography=annotation labels=printed-grotesk scale=major-13
+spacing=compact-4 palette=wine-pen`), the editorial-serif hypothesis
+losing to its most radical rival:
 
 - **Type system — THE ANNOTATION.** Everything written on the chart is
   written by one hand, the plotter's: **Space Mono** (OFL; self-hosted
@@ -184,14 +184,25 @@ radical rival:
   in regular, bold, and italic. Hierarchy is weight and case, never a
   change of voice — bold stamps for titles (the header title carries a
   2px magenta pen underline), caps-tracked bold for block headings (the
-  legend's print in the pen), *italic* for fact labels and captions.
-  Mono numbers are inherently tabular.
+  legend's print in the pen). Mono numbers are inherently tabular.
+- **Caption voice — PRINTED, in Space Grotesk.** Refined by the Overseer
+  after the crowning (bead `adsb-fon`, picked 2026-07-12): the system's
+  original *italic Title Case* small labels strain at panel sizes, so
+  the smallest labels — fact labels, stats labels, the header's count
+  units, shelf labels — take the plotter's PRINTING hand instead:
+  **Space Grotesk** (OFL; Space Mono's own proportional derivative, so
+  still one hand at two widths) Medium, upright, uppercase, tracked
+  0.12em, at `--t-2`. Grotesk stays in exactly this lane — small caps
+  labels only, never titles, body, or data — where the siblings
+  harmonize instead of competing. Space Mono's italic remains in the
+  family for larger captions should one ever need a voice.
 - **Modular scale — major third, 1.25 @ 13px.** Tokens 8.5 / 10.5 / 13 /
   16 / 20px (`--t-2 … --t2`). Deliberately shallow, true to the system's
   own thesis — and it spends its size on the DATA rather than the title
-  stamp: captions and mono data print at 10.5px. Caption sizes are
-  per-system, never forced smaller (the dgb.11 lesson: --t-2 captions
-  are legible only in caps-tracked gothic).
+  stamp: mono data prints at 10.5px. The printed caption voice sits at
+  8.5px and holds, which is the dgb.11 lesson made law: `--t-2` captions
+  are legible only caps-tracked and upright — exactly what the printed
+  voice is, and what the retired italic was not.
 - **Spacing — compact, 4px base.** Tokens 2 / 4 / 8 / 12 / 16px
   (`--s1 … --s5`); header 36px. The chrome defers to the map (§10): a
   working chart's margin notes are dense, the mono's own letter-air
