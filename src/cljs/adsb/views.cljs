@@ -4,7 +4,8 @@
   the design direction (adsb-bvi.5) is not chosen yet, so this commits to none
   of the proposed looks — just structure and a home for future chrome."
   (:require
-    [adsb.map.view :as map-view]))
+    [adsb.map.view :as map-view]
+    [adsb.ui.aircraft-panel :as aircraft-panel]))
 
 (defn header
   "Placeholder header bar. Holds the app name today; sidebar toggles, filters,
@@ -20,4 +21,8 @@
   []
   [:div.adsb-shell
    [header]
-   [map-view/map-view]])
+   [map-view/map-view]
+   ;; A sibling of the map, not a child — the panel is Reagent chrome and the
+   ;; map owns no React inside it. Renders nothing until an aircraft is
+   ;; selected (adsb.ui.aircraft-panel).
+   [aircraft-panel/aircraft-panel]])

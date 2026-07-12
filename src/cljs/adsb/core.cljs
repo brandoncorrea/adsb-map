@@ -5,6 +5,8 @@
   (:require
     [adsb.events]
     [adsb.stream :as stream]
+    [adsb.subs]
+    [adsb.ui.aircraft-panel :as aircraft-panel]
     [adsb.views :as views]
     [re-frame.core :as rf]
     [reagent.dom.client :as rdom]))
@@ -28,4 +30,7 @@
   []
   (rf/dispatch-sync [:app/initialize-db])
   (mount!)
+  ;; The coarse UI clock that drives the panel's seen-age and prunes a
+  ;; selection whose aircraft has aged out. Idempotent under hot reload.
+  (aircraft-panel/start-clock!)
   (stream/start!))
