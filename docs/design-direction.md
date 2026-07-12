@@ -131,7 +131,8 @@ there, not logic.
   hover (desktop) / tap (phone); full detail on selection, in an index-card
   panel drawn like chart marginalia (paper panel, ink rule, mono data).
 - **Selection mark:** a dashed compass-pencil ring that draws itself in.
-- **The cast shadow (§8)** carries altitude-as-instinct once proven.
+- **Perspective size (§8)** carries altitude-as-instinct — the shadow it
+  replaced is recorded there.
 
 ## 5. Typography — scheduled, not settled
 
@@ -171,20 +172,26 @@ life. The chart responds the way a chartroom would — **marked and annotated**
 - The glyph draws larger (existing `emergency-icon-size`) and emergency
   color overrides every other channel, as `style.cljs` already guarantees.
 
-## 8. Invention I — the cast shadow *(prototype before load-bearing)*
+## 8. Invention I — the instinct-altitude channel *(verdict rendered)*
 
-Color is a precise altitude channel but a weak instant one. So every aircraft
-**throws a shadow onto the paper**: offset and softness scale with altitude —
-a plane on the deck has its shadow tucked beneath it; one at FL380 floats far
-off the page. Vertical rate rides free: a closing shadow reads as descent
-before any number does.
+Color is a precise altitude channel but a weak instant one. The original
+commission here was a **cast shadow** — offset and softness scaling with
+altitude. It was prototyped honestly (adsb-dgb.8) and **rejected by the
+Overseer**: too busy at real traffic density, and near-invisible on the
+night stock, where there is little room left to darken. A drop-line tether
+was auditioned in the same exploration (adsb-dgb.12) — exquisite at night,
+but its verticals slice through dense clusters, and a chart has no verticals.
 
-Candidate implementation: a second symbol layer under the aircraft layer —
-same silhouette as a pre-softened sprite, ink-colored at low alpha (day
-`rgba(44,42,36,·)`, night deep black-blue), data-driven `icon-offset` by
-altitude, alpha falling as altitude rises. Must hold 60fps at hundreds of
-aircraft and stay legible at density; **prove it in a prototype bead, and if
-it fails, it dies without dragging the rest of the direction down.**
+The crowned channel is **perspective size** (adsb-b23): low is near is
+large, high is far is small — `icon-size` ramps from 1.25 on the deck to
+0.55 at FL400, front-loaded so the low sky, where the drama lives, keeps its
+resolution. Geometry carries no ink, so the night edition reads identically
+to day. Emergency size (1.6) overrides absolutely — a plane in distress is
+never allowed to look far away — and the MLAT demotion composes with the
+altitude size as a ×0.78 factor rather than colliding with it.
+
+Altitude now sings in three-part harmony: **color for precision, size for
+instinct, the Stack (§9) for the profile.**
 
 ## 9. Invention II — the Stack *(prototype before load-bearing)*
 
@@ -233,7 +240,8 @@ In order, because risk fronts the queue:
 4. **Ink silhouette** SDF icon to replace the functional glyph.
 5. **Chrome:** chart title-block header, index-card selection panel, NOTAM
    strip, edge-arrow, selection ring, easing per §6.
-6. **File separate prototype beads** for the cast shadow (§8) and the Stack
-   (§9) — the visual pass must not block on the inventions, and the sidebar
-   stays absent (not replaced by a stopgap table) while the Stack is proven.
-7. **File the typography bake-off bead** (§5) once the layout stands.
+6. ~~File separate prototype beads~~ **Done — and both verdicts are in**:
+   the instinct channel is perspective size (§8, shadow rejected); the Stack
+   (§9) is built and load-bearing.
+7. ~~File the typography bake-off bead~~ **Done — pick pending** on the
+   in-app `#/preview` pages (adsb-dgb.10).
