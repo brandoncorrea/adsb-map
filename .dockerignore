@@ -1,0 +1,49 @@
+# Build context hygiene: keep the image build reproducible and small. Anything
+# the build regenerates, or that has no business in an image, stays out.
+
+# Version control / issue tracker / editor state
+.git
+.gitignore
+.github
+.beads
+.dolt
+*.db
+.beads-credential-key
+.idea
+.claude
+.codex
+.agents
+.mcp.json
+
+# Local build/runtime output — all rebuilt inside the image
+target
+.cpcache
+.shadow-cljs
+.clj-kondo/.cache
+.nrepl-port
+
+# Node deps — reinstalled from the lockfile with `npm ci`
+node_modules
+
+# Frontend release bundle — the build's `shadow-cljs release app` regenerates it
+resources/public/js
+
+# Optional third-party enrichment DATA — fetched by `bb db:fetch`, never shipped
+resources/public/db
+
+# Secrets and local env — config comes from the environment at runtime
+.env
+*.env
+
+# Docs / meta not needed to build the artifact
+docs
+archetypes
+test
+script
+*.md
+LICENSE
+
+# Docker files themselves
+Dockerfile
+.dockerignore
+compose.yaml

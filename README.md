@@ -176,6 +176,56 @@ bd update <id> --claim
 bd close <id>
 ```
 
+## Deployment
+
+The app ships as a container: a multi-stage [`Dockerfile`](Dockerfile) builds the
+uberjar (`bb build`) in a full toolchain image and copies just the jar into a slim
+JRE runtime that runs as a non-root user. Config is **environment-only** — nothing
+is baked into the image.
+
+The target is Docker in the cloud, internet-facing, reaching the home ultrafeeder
+over a tunnel (see the `cloudflared` sidecar stub in [`compose.yaml`](compose.yaml)).
+
+### Build and run
+
+```bash
+docker build -t adsb:latest .        # multi-stage build → slim JRE image
+docker compose up -d --build         # build + run via compose.yaml
+docker compose logs -f app
+```
+
+Smoke-test the deployment with **no feeder required** — the recorded fixture
+Source stands in for the sky:
+
+```bash
+docker run --rm -p 8280:8280 -e ADSB_SOURCE=replay adsb:latest
+curl -s localhost:8280/healthz            # {"status":"ok","feeder-status":"ok"}
+curl -s localhost:8280/api/stream         # SSE frames stream until you ^C
+open http://localhost:8280                # the live map
+```
+
+The image declares a `HEALTHCHECK` that polls `/healthz`; `docker ps` shows the
+container as `healthy` once it is serving.
+
+### Configuration
+
+All configuration is via environment variables (read once at boot,
+`adsb.main/env->config`). A misconfigured live boot fails loudly on line one.
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `PORT` | no | `8280` | Port the JVM binds inside the container. |
+| `ADSB_ULTRAFEEDER_URL` | yes¹ | — | Base URL of the home ultrafeeder (over the tunnel). Validated at boot; must be `http`/`https` with a host. |
+| `ADSB_SOURCE` | no | live feeder | Set to `replay` to serve the recorded fixture — **no feeder needed**. Any other value (or unset) uses the live ultrafeeder. |
+| `ADSB_RECEIVER_LAT` | no | feeder's `receiver.json`, else off | Receiver latitude for the range gate and max-range stat. |
+| `ADSB_RECEIVER_LON` | no | feeder's `receiver.json`, else off | Receiver longitude, paired with the above. |
+| `JAVA_OPTS` | no | — | Extra JVM flags (heap, GC, …) passed to `java`. |
+
+¹ Required for the live feeder. Not required when `ADSB_SOURCE=replay`.
+
+The tunnel to the home feeder (`ADSB_ULTRAFEEDER_URL`) and TLS/hardening for
+internet exposure are tracked separately (beads `adsb-kh4.3`, `adsb-kh4.4`).
+
 ## License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.

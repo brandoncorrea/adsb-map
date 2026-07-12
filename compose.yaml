@@ -1,0 +1,66 @@
+# Cloud-host deployment for the adsb app.
+#
+# The app runs internet-facing in the cloud and reaches the HOME ultrafeeder
+# over a tunnel (epic adsb-kh4). This file defines the app service; the tunnel
+# sidecar is stubbed below (adsb-kh4.3).
+#
+#   docker compose build      # build the image from ./Dockerfile
+#   docker compose up -d       # run it
+#   docker compose logs -f app
+#
+# Config is environment-only. Set values in a local `.env` next to this file
+# (compose auto-loads it) or export them in the shell — never bake secrets or
+# host addresses into the image.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: adsb:latest
+    restart: unless-stopped
+    ports:
+      # host:container — publish the app. Front this with TLS at the edge
+      # (adsb-kh4.4) before exposing it to the internet directly.
+      - "${ADSB_HOST_PORT:-8280}:8280"
+    environment:
+      # PORT the JVM binds inside the container (matches the published port above).
+      PORT: "8280"
+
+      # The home ultrafeeder, reached over the tunnel. Placeholder: once the
+      # cloudflared sidecar (adsb-kh4.3) is live this points at the tunnel-local
+      # address it exposes — e.g. http://cloudflared:8080 or the tunnel hostname.
+      # TODO(adsb-kh4.3): replace with the real tunnel address for the feeder.
+      ADSB_ULTRAFEEDER_URL: "${ADSB_ULTRAFEEDER_URL:-http://cloudflared:8080}"
+
+      # Receiver position for the range gate + max-range stat. Optional: without
+      # it the app falls back to the feeder's receiver.json, else disables the
+      # gate. Kept out of the image; supply per-deployment.
+      ADSB_RECEIVER_LAT: "${ADSB_RECEIVER_LAT:-}"
+      ADSB_RECEIVER_LON: "${ADSB_RECEIVER_LON:-}"
+
+      # Ingest source. Leave unset for the live ultrafeeder. Set to "replay" to
+      # serve the recorded fixture with NO feeder required — handy for a smoke
+      # test of the deployment before the tunnel exists.
+      ADSB_SOURCE: "${ADSB_SOURCE:-}"
+
+      # Extra JVM flags (heap, GC, etc.) if needed.
+      JAVA_OPTS: "${JAVA_OPTS:-}"
+    # The image already declares a HEALTHCHECK (wget /healthz); compose inherits
+    # it. Override here only if you need different timings.
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # TODO(adsb-kh4.3): cloudflared tunnel sidecar — cloud-to-home connectivity
+  # for the feeder. When that bead lands, uncomment and configure so `app` can
+  # reach the home ultrafeeder over the tunnel and point ADSB_ULTRAFEEDER_URL
+  # (above) at this service. Sketch only — do NOT enable as-is.
+  #
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest
+  #   restart: unless-stopped
+  #   command: tunnel run
+  #   environment:
+  #     TUNNEL_TOKEN: "${CLOUDFLARED_TUNNEL_TOKEN:?set the tunnel token}"
+  #   # The app talks to the feeder through this container's tunnel-local
+  #   # listener; no ports need publishing to the host.
+  # ───────────────────────────────────────────────────────────────────────────
