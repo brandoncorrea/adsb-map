@@ -25,6 +25,17 @@
                            "clojure -M:nrepl"]]
                   (p/process {:inherit true :shutdown p/destroy-tree} cmd))))}
 
+  dev-
+  {:doc     "shadow-cljs watch + nREPL, together.
+             Config comes from the environment, backfilled from .env by
+             adsb.env — bb does nothing special for it."
+   :depends [-npm-install]
+   :task    (run! p/check
+              (doall
+                (for [cmd ["npx shadow-cljs watch app"
+                           "clojure -M:nrepl"]]
+                  (p/process {:inherit true :shutdown p/destroy-tree} cmd))))}
+
   db:fetch
   {:doc     "Download the tar1090-db aircraft.csv.gz and shard it into
              resources/public/db/ for browser-side enrichment (adsb.enrich).

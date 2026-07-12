@@ -1,10 +1,7 @@
-{:source-paths ["src/cljc" "src/cljs" "test/cljc" "test/cljs"]
-
- :dependencies
- [[reagent "1.2.0"]
-  [re-frame "1.4.3"]
-  [day8.re-frame/test "0.1.7"]
-  [metosin/malli "0.17.0"]]
+;; Classpath — source paths and dependencies alike — comes from deps.edn's
+;; :cljs alias, not from here. One source of truth: malli is shared with the
+;; backend, and two declarations of it are two chances to drift.
+{:deps {:aliases [:cljs]}
 
  ;; 8080 serves the app shell (index.html + basemap) during `bb dev`
  ;; / `shadow-cljs watch app` — adsb-2yu.1. 8290 serves the compiled

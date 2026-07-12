@@ -18,7 +18,8 @@
   to the wire, never logged (privacy: adsb-nqf.3 / adsb-kbm.2). The
   stats fn emits only the scalar max range, not the position it measured
   from (adsb.stats)."
-  (:require [adsb.http.server :as server]
+  (:require [adsb.env :as env]
+            [adsb.http.server :as server]
             [adsb.ingest.config :as config]
             [adsb.ingest.plausibility :as plausibility]
             [adsb.ingest.poll :as poll]
@@ -69,18 +70,24 @@
       (state/apply-batch! (System/currentTimeMillis))))
 
 (defn- build-source!
-  "Select the ingest Source from config and return [source feeder-url].
-  ADSB_SOURCE=replay swaps the live feeder for the recorded-fixture
-  Source (adsb.ingest.replay) — bb dev with no feeder reachable — and
-  needs no feeder URL, so feeder-url is nil and the range gate falls back
-  to the env override or off. Otherwise the live ultrafeeder Source sits
-  behind a validated feeder URL: a missing or malformed URL still fails
-  loudly here, before anything starts (Boundary 3)."
-  [{:keys [source ultrafeeder-url]}]
+  "Select the ingest Source from config and return
+  [source feeder-url feeder-auth-headers]. ADSB_SOURCE=replay swaps the
+  live feeder for the recorded-fixture Source (adsb.ingest.replay) — bb
+  dev with no feeder reachable — and needs no feeder URL or auth, so both
+  trailing values are nil and the range gate falls back to the env
+  override or off. Otherwise the live ultrafeeder Source sits behind a
+  validated feeder URL and the optional Cloudflare Access service token
+  (adsb.ingest.config/feeder-auth-headers): a missing or malformed URL, or
+  half a service-token credential, still fails loudly here, before
+  anything starts (Boundary 3)."
+  [{:keys [source ultrafeeder-url env]}]
   (if (config/replay-source? source)
-    [(replay/->source) nil]
-    (let [feeder-url (config/validate-feeder-url ultrafeeder-url)]
-      [(ultrafeeder/->source feeder-url) feeder-url])))
+    [(replay/->source) nil nil]
+    (let [feeder-url (config/validate-feeder-url ultrafeeder-url)
+          headers    (config/feeder-auth-headers env)]
+      [(ultrafeeder/->source feeder-url ultrafeeder/default-timeout-ms headers)
+       feeder-url
+       headers])))
 
 (defn start!
   "Boot the backend from config and return the running system:
@@ -94,7 +101,9 @@
     4. broadcast the picture over SSE; the broadcast tick doubles as
        the age-out cadence (its picture fn is adsb.state/age-out!) and
        computes the session stats (adsb.stats) from the receiver
-       position and the source's message-count side-channel
+       position and the source's message-count side-channel. The feeder's
+       health (poll/status) rides every frame too, so a live stream over a
+       dead feeder cannot masquerade as healthy in the browser (adsb.wire)
     5. serve HTTP with real feeder status on /healthz and the stream
        on /api/stream
 
@@ -103,9 +112,10 @@
   is producing a picture, since there is no feeder whose reachability to
   report."
   [{:keys [port env] :as config}]
-  (let [[source feeder-url] (build-source! config)
+  (let [[source feeder-url feeder-auth] (build-source! config)
         receiver-position (receiver/resolve-position! {:env      env
-                                                       :base-url feeder-url})
+                                                       :base-url feeder-url
+                                                       :headers  feeder-auth})
         accumulator       (stats/create)
         poller            (poll/start!
                             {:source    source
@@ -141,15 +151,15 @@
   nil)
 
 (defn -main
-  "Boot from the process environment and park the main thread. We block
-  on a never-delivered promise so the JVM stays up until the container
-  stops it."
+  "Boot from the environment and park the main thread. We block on a
+  never-delivered promise so the JVM stays up until the container stops
+  it.
+
+  adsb.env/read!, not System/getenv directly: a local .env backfills what
+  the process environment does not define, so every entry point — uberjar,
+  `bb dev`, a bare `clojure -M:dev`, the REPL — boots the same way. A real
+  exported variable always wins, and production ships no .env."
   [& _args]
   (log/info "adsb starting")
-  (start! (env->config (System/getenv)))
+  (start! (env->config (env/read!)))
   @(promise))
-
-(comment
-  (env->config {})
-  (def system (start! (env->config (System/getenv))))
-  (stop! system))
