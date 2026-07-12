@@ -1,11 +1,11 @@
 # Cloud-host deployment for the adsb app.
 #
-# The app runs internet-facing in the cloud and reaches the HOME ultrafeeder
-# over a tunnel (epic adsb-kh4). This file defines the app service; the tunnel
-# sidecar is stubbed below (adsb-kh4.3).
+# The app runs internet-facing in the cloud behind the Caddy `proxy` sidecar
+# (TLS + security headers, adsb-kh4.4) and reaches the HOME ultrafeeder over a
+# tunnel (epic adsb-kh4).
 #
 #   docker compose build      # build the image from ./Dockerfile
-#   docker compose up -d       # run it
+#   docker compose up -d       # run app + proxy
 #   docker compose logs -f app
 #
 # Config is environment-only. Set values in a local `.env` next to this file
@@ -19,13 +19,28 @@ services:
       dockerfile: Dockerfile
     image: adsb:latest
     restart: unless-stopped
-    ports:
-      # host:container — publish the app. Front this with TLS at the edge
-      # (adsb-kh4.4) before exposing it to the internet directly.
-      - "${ADSB_HOST_PORT:-8280}:8280"
+    # NO published ports — deliberately (adsb-kh4.4). The app speaks plain
+    # HTTP and enforces nothing at the transport; the ONLY way in from the
+    # internet is the `proxy` service below, which terminates TLS and sets
+    # the security headers. Publishing 8280 here would reopen the
+    # unauthenticated plaintext side door AND make the app's trust in
+    # X-Forwarded-For (below) forgeable.
     environment:
-      # PORT the JVM binds inside the container (matches the published port above).
+      # PORT the JVM binds inside the container (the proxy dials app:8280).
       PORT: "8280"
+
+      # SSE connection limits (adsb.stream.broadcast, adsb-kh4.4). The stream
+      # is anonymous and internet-facing; these bound what strangers can hold
+      # open. Defaults shown; at the cap a new connect gets 503 + Retry-After.
+      ADSB_SSE_MAX_CLIENTS: "${ADSB_SSE_MAX_CLIENTS:-100}"
+      ADSB_SSE_MAX_PER_IP: "${ADSB_SSE_MAX_PER_IP:-4}"
+
+      # Honor the proxy-appended X-Forwarded-For for the per-IP limit. Safe
+      # HERE because the app has no published port — every connection
+      # provably came through Caddy, which overwrites any client-supplied
+      # XFF with the real client IP. Set to "false" if you ever publish the
+      # app port directly (and then don't do that on the internet).
+      ADSB_TRUST_FORWARDED_FOR: "true"
 
       # The home ultrafeeder, reached over the Cloudflare Tunnel (adsb-kh4.3).
       # This is the PUBLIC hostname of the tunnel — cloudflared runs on the HOME
@@ -61,6 +76,38 @@ services:
     # it. Override here only if you need different timings.
 
   # ───────────────────────────────────────────────────────────────────────────
+  # TLS edge (adsb-kh4.4): Caddy terminates HTTPS with automatic Let's
+  # Encrypt certificates and applies the security headers (CSP, HSTS, …).
+  # Everything about WHAT it serves — headers, SSE flush, the do-not-proxy-
+  # the-feeder rule — lives in ./Caddyfile; read it before changing this.
+  #
+  # Works with Cloudflare DNS proxied (orange cloud → set SSL mode to
+  # "Full (strict)") or DNS-only; details in the Caddyfile header comment.
+  # ───────────────────────────────────────────────────────────────────────────
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      # The ONLY internet-facing ports in this deployment.
+      - "80:80"     # ACME HTTP-01 + redirect to HTTPS
+      - "443:443"   # HTTPS
+      - "443:443/udp"  # HTTP/3
+    environment:
+      # The public hostname Caddy answers (and gets a certificate) for.
+      ADSB_DOMAIN: "${ADSB_DOMAIN:-map.bwawan.com}"
+      # ACME account email for certificate expiry warnings. Must be
+      # non-empty — an empty value would feed Caddy a bare `email` directive.
+      ACME_EMAIL: "${ACME_EMAIL:-bwancor@gmail.com}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates + ACME account state. Persist them or every restart
+      # re-issues against Let's Encrypt rate limits.
+      - caddy-data:/data
+      - caddy-config:/config
+
+  # ───────────────────────────────────────────────────────────────────────────
   # No cloudflared sidecar here — by design (adsb-kh4.3).
   #
   # The direction of the tunnel is the whole point: the CLOUD backend reaches
@@ -81,3 +128,7 @@ services:
   # Overseer's Cloudflare account (go-live: adsb-kh4.6). The full step-by-step
   # is in README.md → Deployment → "Cloud-to-home feeder tunnel".
   # ───────────────────────────────────────────────────────────────────────────
+
+volumes:
+  caddy-data:
+  caddy-config:

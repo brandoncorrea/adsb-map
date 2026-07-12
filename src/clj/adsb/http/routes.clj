@@ -4,13 +4,19 @@
   muuntaja negotiates JSON. Static assets — the compiled frontend — are
   served from resources/public. Coercion failures become a 400 in
   middleware, before any handler runs (docs/validation-boundaries.md,
-  Boundary 2)."
+  Boundary 2). An unhandled handler exception becomes a generic 500 —
+  without the middleware below, http-kit writes the exception MESSAGE
+  into the response body, and an exception message is an internal
+  detail (hostnames, config), not something an anonymous internet
+  client gets to read (adsb-kh4.4)."
   (:require [adsb.http.handlers :as handlers]
             [adsb.schema :as schema]
+            [clojure.tools.logging :as log]
             [muuntaja.core :as muuntaja]
             [reitit.coercion.malli :as coercion-malli]
             [reitit.ring :as ring]
             [reitit.ring.coercion :as coercion]
+            [reitit.ring.middleware.exception :as exception]
             [reitit.ring.middleware.muuntaja :as muuntaja-mw]))
 
 (def health-response
@@ -32,15 +38,30 @@
            :responses  {200 {:body schema/aircraft}}
            :handler    (handlers/aircraft-detail state-lookup)}}]])
 
+(def ^:private exception-middleware
+  "Every unhandled exception: a full log line here, a generic 500 to
+  the client. Coercion errors never reach this — the inner
+  coerce-exceptions-middleware already turned them into a 400."
+  (exception/create-exception-middleware
+    {::exception/default
+     (fn [exception _request]
+       (log/error exception "unhandled exception in HTTP handler")
+       {:status 500
+        :body   {:error "internal error"}})}))
+
 (defn router
   "The reitit router with Malli coercion and muuntaja content
-  negotiation wired in as route data."
+  negotiation wired in as route data. Middleware order matters:
+  format sits outside exception handling so the generic 500 is still
+  JSON-encoded; exception handling sits outside coercion so a handler
+  blow-up is caught even mid-coercion."
   [dependencies]
   (ring/router
     (routes dependencies)
     {:data {:coercion   coercion-malli/coercion
             :muuntaja   muuntaja/instance
             :middleware [muuntaja-mw/format-middleware
+                         exception-middleware
                          coercion/coerce-exceptions-middleware
                          coercion/coerce-request-middleware
                          coercion/coerce-response-middleware]}}))

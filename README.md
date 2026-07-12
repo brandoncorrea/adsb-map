@@ -192,12 +192,16 @@ see [Cloud-to-home feeder tunnel](#cloud-to-home-feeder-tunnel) below.
 
 ```bash
 docker build -t adsb:latest .        # multi-stage build → slim JRE image
-docker compose up -d --build         # build + run via compose.yaml
+docker compose up -d --build         # build + run app AND the TLS proxy
 docker compose logs -f app
 ```
 
-Smoke-test the deployment with **no feeder required** — the recorded fixture
-Source stands in for the sky:
+Compose brings up two services: the `app`, reachable only on the compose
+network, and the Caddy `proxy` — the sole published ports (80/443). See
+[TLS and the internet edge](#tls-and-the-internet-edge).
+
+Smoke-test the image alone (plain HTTP, no proxy, **no feeder required**) — the
+recorded fixture Source stands in for the sky:
 
 ```bash
 docker run --rm -p 8280:8280 -e ADSB_SOURCE=replay adsb:latest
@@ -223,14 +227,43 @@ All configuration is via environment variables (read once at boot,
 | `ADSB_RECEIVER_LON` | no | feeder's `receiver.json`, else off | Receiver longitude, paired with the above. |
 | `ADSB_FEEDER_AUTH_ID` | no² | — | Cloudflare Access service-token **Client ID**, sent as the `CF-Access-Client-Id` header on every feeder request. |
 | `ADSB_FEEDER_AUTH_SECRET` | no² | — | The service-token **Client Secret** (`CF-Access-Client-Secret`). Never logged. |
+| `ADSB_SSE_MAX_CLIENTS` | no | `100` | Cap on concurrent SSE stream clients. At the cap a new connect gets `503` + `Retry-After`. |
+| `ADSB_SSE_MAX_PER_IP` | no | `4` | Concurrent SSE connections allowed per client IP. |
+| `ADSB_TRUST_FORWARDED_FOR` | no | `false` | Honor the proxy-appended `X-Forwarded-For` for the per-IP limit. Set `true` **only** when the app port is reachable exclusively through the trusted proxy (the compose deployment sets it). |
+| `ADSB_DOMAIN` | no³ | `map.bwawan.com` | Public hostname the Caddy proxy answers and gets certificates for. |
+| `ACME_EMAIL` | no³ | operator email | ACME account email for certificate-expiry warnings. |
 | `JAVA_OPTS` | no | — | Extra JVM flags (heap, GC, …) passed to `java`. |
 
 ¹ Required for the live feeder. Not required when `ADSB_SOURCE=replay`.
 ² Optional, but **both or neither** — supplying only one fails the boot loudly.
 Required when the feeder tunnel is gated by a Cloudflare Access policy (the cloud
 deployment); omit both for a trusted-LAN feeder.
+³ Read by the `proxy` (Caddy) service, not the app.
 
-TLS/hardening for internet exposure is tracked separately (bead `adsb-kh4.4`).
+### TLS and the internet edge
+
+The app itself speaks plain HTTP and publishes **no port**. Internet exposure
+goes through the **Caddy sidecar** in `compose.yaml`: it terminates TLS with
+automatic Let's Encrypt certificates on 80/443 and stamps the security headers
+(strict CSP, HSTS, `nosniff`, `Referrer-Policy`, `Permissions-Policy`) on every
+response. The `Caddyfile` documents every header and directive inline — read it
+before changing either file.
+
+Operational notes:
+
+- **Cloudflare DNS.** Works DNS-only or proxied. If the orange cloud is on, set
+  the zone's SSL mode to **Full (strict)** — never "Flexible" — and do the
+  *first* certificate issuance grey-cloud (details in the `Caddyfile` header).
+- **SSE is never buffered or compressed at the proxy** (`flush_interval -1`,
+  and the `encode` matcher excludes `text/event-stream`). If the map freezes
+  behind a different proxy someday, look there first.
+- **SSE limits live in the app**, not the proxy: `ADSB_SSE_MAX_CLIENTS` /
+  `ADSB_SSE_MAX_PER_IP` above. A proxy cannot count event-stream clients well.
+- **The feeder is never proxied.** No route — Caddy or app — forwards
+  ultrafeeder's `/data/*`: those endpoints carry the receiver's coordinates
+  (see `docs/validation-boundaries.md`, "The receiver position is itself a
+  secret").
+- Validate proxy config changes with `caddy validate --config Caddyfile`.
 
 ### Cloud-to-home feeder tunnel
 

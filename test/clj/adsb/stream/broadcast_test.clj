@@ -16,7 +16,8 @@
   (:import
     (java.io BufferedReader)
     (java.net Socket URI)
-    (java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers)))
+    (java.net.http HttpClient HttpRequest HttpRequest$Builder HttpResponse
+                   HttpResponse$BodyHandlers)))
 
 (def ^:private captured-at-ms 1720713600000)
 
@@ -33,18 +34,27 @@
 (defn- start-streaming-server!
   "A broadcaster plus the real http server on an ephemeral port.
   Updates every 50 ms by default so tests read frames fast; heartbeats
-  effectively off unless a test turns them up."
-  [{:keys [picture stats feeder interval-ms heartbeat-ms]
-    :or   {picture      (constantly cast-picture)
-           stats        (constantly nil)
-           feeder       (constantly nil)
-           interval-ms  50
-           heartbeat-ms 60000}}]
-  (let [broadcaster (broadcast/start! {:picture      picture
-                                       :stats        stats
-                                       :feeder       feeder
-                                       :interval-ms  interval-ms
-                                       :heartbeat-ms heartbeat-ms})
+  effectively off unless a test turns them up. Limits are pinned
+  explicitly so a stray ADSB_SSE_* in the environment cannot bend a
+  test."
+  [{:keys [picture stats feeder interval-ms heartbeat-ms
+           max-clients max-per-ip trust-forwarded?]
+    :or   {picture          (constantly cast-picture)
+           stats            (constantly nil)
+           feeder           (constantly nil)
+           interval-ms      50
+           heartbeat-ms     60000
+           max-clients      100
+           max-per-ip       100
+           trust-forwarded? false}}]
+  (let [broadcaster (broadcast/start! {:picture          picture
+                                       :stats            stats
+                                       :feeder           feeder
+                                       :interval-ms      interval-ms
+                                       :heartbeat-ms     heartbeat-ms
+                                       :max-clients      max-clients
+                                       :max-per-ip       max-per-ip
+                                       :trust-forwarded? trust-forwarded?})
         srv         (server/start!
                       {:port           0
                        :stream-connect #(broadcast/connect! broadcaster %)})]
@@ -55,16 +65,28 @@
   (server/stop!)
   (broadcast/stop! broadcaster))
 
+(defn- stream-response!
+  "GET /api/stream (optionally with extra headers) and return the raw
+  HttpResponse — status and headers inspectable, body an InputStream."
+  ^HttpResponse [port headers]
+  (let [request (reduce-kv (fn [builder header-name header-value]
+                             (.header ^HttpRequest$Builder builder
+                                      header-name header-value))
+                           (-> (HttpRequest/newBuilder
+                                 (URI. (str "http://localhost:" port
+                                            "/api/stream")))
+                               (.GET))
+                           headers)]
+    (.send (HttpClient/newHttpClient) (.build ^HttpRequest$Builder request)
+           (HttpResponse$BodyHandlers/ofInputStream))))
+
 (defn- open-stream!
   "GET /api/stream and return a line reader over the live body."
   ^BufferedReader [port]
-  (let [request  (-> (HttpRequest/newBuilder
-                       (URI. (str "http://localhost:" port "/api/stream")))
-                     (.GET)
-                     (.build))
-        response (.send (HttpClient/newHttpClient) request
-                        (HttpResponse$BodyHandlers/ofInputStream))]
-    (io/reader (.body response))))
+  (io/reader (.body (stream-response! port {}))))
+
+(defn- retry-after [^HttpResponse response]
+  (.orElse (.firstValue (.headers response) "Retry-After") nil))
 
 (defn- read-frame!
   "One SSE frame — the lines up to a blank line — or ::timeout. The
@@ -208,6 +230,118 @@
         (is (true? (eventually #(zero? (connected))))
             "the client is dropped once the socket is gone")
         (finally
+          (stop-streaming-server! streaming))))))
+
+;; ---------------------------------------------------------------------
+;; Connection limits (adsb-kh4.4) — the stream is anonymous and
+;; internet-facing, so admission is bounded in the registry itself.
+
+(defn- open-admitted!
+  "Open a stream and consume its snapshot, so the client is admitted,
+  ready, and receiving ticks. Returns the reader; the caller closes."
+  ^BufferedReader [port]
+  (doto (open-stream! port)
+    (read-frame!)))
+
+(deftest total-connection-cap
+  (testing "at the concurrent-client cap a new connect is refused with
+            503 + Retry-After, while admitted clients keep streaming"
+    (let [streaming (start-streaming-server! {:max-clients 2})
+          port      (:port streaming)
+          admitted  [(open-admitted! port) (open-admitted! port)]]
+      (try
+        (let [refused (stream-response! port {})]
+          (is (= 503 (.statusCode refused)))
+          (is (some? (retry-after refused))
+              "a polite client is told when to come back")
+          (is (str/includes? (slurp (.body refused)) "server-full")))
+        (is (= "update" (frame-event (read-frame! (first admitted))))
+            "a rejection costs the admitted clients nothing")
+        (finally
+          (doseq [^BufferedReader reader admitted] (.close reader))
+          (stop-streaming-server! streaming))))))
+
+(deftest per-ip-connection-cap
+  (testing "one IP's concurrent connections are capped even when the
+            server as a whole has room"
+    (let [streaming (start-streaming-server! {:max-clients 100
+                                              :max-per-ip  1})
+          port      (:port streaming)
+          admitted  (open-admitted! port)]
+      (try
+        (let [refused (stream-response! port {})]
+          (is (= 503 (.statusCode refused)))
+          (is (str/includes? (slurp (.body refused)) "ip-full")))
+        (finally
+          (.close admitted)
+          (stop-streaming-server! streaming))))))
+
+(deftest disconnect-frees-the-slot
+  (testing "a client's disconnect releases its slot; the next connect
+            at what was a full house is admitted"
+    (let [streaming (start-streaming-server! {:max-clients 1})
+          port      (:port streaming)
+          connected #(broadcast/client-count (:broadcaster streaming))
+          socket    (Socket. "localhost" (int port))]
+      (try
+        (let [writer (io/writer (.getOutputStream socket))]
+          (.write writer (str "GET /api/stream HTTP/1.1\r\n"
+                              "Host: localhost\r\n"
+                              "Accept: text/event-stream\r\n\r\n"))
+          (.flush writer))
+        (is (true? (eventually #(= 1 (connected)))))
+        (is (= 503 (.statusCode (stream-response! port {})))
+            "the house is full while the first client holds the slot")
+        (.close socket)
+        (is (true? (eventually #(zero? (connected))))
+            "the disconnect frees the slot")
+        (let [reader (open-admitted! port)]
+          (is (= 1 (connected))
+              "the next client takes the freed slot with a full snapshot")
+          (.close reader))
+        (finally
+          (stop-streaming-server! streaming))))))
+
+(deftest forwarded-for-trust-model
+  (testing "behind the trusted proxy, the rightmost X-Forwarded-For
+            entry — the one the proxy appended — is the client, so
+            distinct clients get distinct per-IP budgets and earlier
+            attacker-written entries are ignored"
+    (let [streaming (start-streaming-server! {:max-per-ip       1
+                                              :trust-forwarded? true})
+          port      (:port streaming)
+          one       (stream-response! port {"X-Forwarded-For" "203.0.113.7"})
+          two       (stream-response! port {"X-Forwarded-For" "203.0.113.8"})]
+      (try
+        (is (= 200 (.statusCode one)))
+        (is (= 200 (.statusCode two))
+            "a different forwarded client has its own budget")
+        (let [refused (stream-response!
+                        port
+                        ;; leftmost forged, rightmost proxy-appended:
+                        ;; must be counted as .8, which is already full
+                        {"X-Forwarded-For" "198.51.100.1, 203.0.113.8"})]
+          (is (= 503 (.statusCode refused))))
+        (finally
+          (.close (.body one))
+          (.close (.body two))
+          (stop-streaming-server! streaming)))))
+
+  (testing "on a direct connection (no trusted proxy) X-Forwarded-For is
+            an anonymous client's bytes and is ignored — the TCP peer is
+            what gets counted"
+    (let [streaming (start-streaming-server! {:max-per-ip       1
+                                              :trust-forwarded? false})
+          port      (:port streaming)
+          admitted  (stream-response! port {})]
+      (try
+        (is (= 200 (.statusCode admitted)))
+        (let [refused (stream-response! port
+                                        {"X-Forwarded-For" "203.0.113.9"})]
+          (is (= 503 (.statusCode refused))
+              "a forged header does not buy a second budget"))
+        (finally
+          (.close (.body admitted))
           (stop-streaming-server! streaming))))))
 
 ;; ---------------------------------------------------------------------

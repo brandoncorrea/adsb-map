@@ -9,7 +9,8 @@ touches ingest, the HTTP surface, secrets, or dependencies.
 
 - The ultrafeeder feed — **unauthenticated radio**, and therefore genuinely
   untrusted. See `validation-boundaries.md`; read it before this file.
-- The HTTP API — anonymous, unauthenticated, open to anyone who reaches the port
+- The HTTP API — anonymous, unauthenticated, and **internet-facing**
+  (`map.bwawan.com`, behind the TLS proxy — see §4)
 - Configuration — decides what hosts the server talks to
 - Maven and npm dependencies — run with full privileges
 
@@ -27,19 +28,33 @@ the coverage boundary of every aircraft you can see, and it's trivially derivabl
 a map of your own data even if you never state it. A public map of "aircraft near
 me" is a public map of *where I live*.
 
-- [ ] The receiver's lat/lon is **not** in the client bundle unless the map is
-      genuinely meant to be public
-- [ ] The receiver's lat/lon is **not** committed to git — it comes from env
-- [ ] If the app is exposed beyond the LAN, this was a **deliberate** decision, made
-      knowing the above
-- [ ] If publishing publicly: consider showing coverage without pinning the exact
-      receiver site, and think about whether the *absence* of aircraft below your
-      horizon quietly triangulates you anyway
+The app **is** public now — `map.bwawan.com`, deliberately, with the above
+understood (adsb-kh4.4). That decision does not soften this section; it hardens
+it. **The receiver position is a server-side secret** (the Overseer's mandate on
+adsb-kh4.4): it lives only inside ingest configuration, is never attached to a
+domain aircraft, never stored in the state picture, never serialized to the wire,
+and never logged. The full contract, including the `r_dst`/`r_dir` trap, is in
+`validation-boundaries.md` (Boundary 1, plausibility layer).
+
+- [ ] The receiver's lat/lon is **not** in the client bundle — and the map's
+      default center is a fixed, whole-degree-rounded regional point
+      (`adsb.map.view/default-center`), never the receiver
+- [ ] The receiver's lat/lon is **not** committed to git — it comes from env;
+      committed fixtures use synthetic receiver coordinates
+- [ ] Nothing receiver-relative reaches the wire — `r_dst`/`r_dir` are one
+      aircraft position away from being the antenna's coordinates, and the wire
+      privacy tests (`adsb.stream.broadcast-test/wire-privacy`) prove they don't
+- [ ] **The feeder is never proxied.** Neither Caddy nor the app forwards any
+      feeder endpoint: ultrafeeder's `/data/receiver.json` IS the receiver
+      position, and `/data/aircraft.json` carries `r_dst`/`r_dir` on every
+      aircraft. The app polls the feeder privately and re-serves a scrubbed
+      picture; that indirection is load-bearing. A route that passes feeder
+      responses through — "just for debugging" included — is a **High** finding.
 
 ### Red Flag
 The receiver coordinates hard-coded in a `.cljs` file. They will ship to every
 browser that loads the page, they will be in your git history forever, and they are
-your house.
+your house. Same severity for a reverse-proxy route pointed at the feeder.
 
 ## 1. Secrets & Environment
 
@@ -93,29 +108,62 @@ not just a licensing one, and it's a reason to stay on it.
 
 ## 4. The HTTP Surface
 
-The server has **no authentication.** Anyone who can reach the port sees everything.
-That's an acceptable design for a LAN service and an unacceptable one on the open
-internet — the checklist is about making sure that's a choice, not an accident.
+The server has **no authentication**, and it is now **on the open internet**
+(`map.bwawan.com`, adsb-kh4.4). Anyone on earth can reach it, so the posture is
+no longer "make sure exposure is a choice" — the choice is made, and this section
+is the hardening that makes it survivable.
 
-- [ ] The server **binds to the LAN interface, not `0.0.0.0`**, unless public exposure
-      is intended
-- [ ] **CORS is not `*`.** The SSE endpoint should permit your own origin. A wildcard
-      lets any page on the internet subscribe to your feed.
-- [ ] SSE connections are **bounded** — a connection limit, and a timeout on idle
-      clients. An unbounded SSE endpoint is a free denial-of-service: each connection
-      holds a thread or a channel, and nothing stops one client opening ten thousand.
-- [ ] Security headers set: `X-Content-Type-Options: nosniff`,
-      `Referrer-Policy: strict-origin-when-cross-origin`, and a `Content-Security-Policy`
-      that permits only your tile origin and your own scripts
-- [ ] `Permissions-Policy` denies what the app doesn't use (camera, microphone,
-      payment). Note that **geolocation may be legitimately needed** if you center the
-      map on the user — decide deliberately.
-- [ ] Stack traces are not returned to clients. An exception is a log line, not a
-      response body.
+**The exposure model:** browsers reach a Caddy sidecar (`Caddyfile` +
+`compose.yaml`) that terminates TLS with automatic Let's Encrypt certificates and
+stamps the security headers on every response. The app container publishes **no
+port**; the only way in is through the proxy. DNS is on Cloudflare — with the
+proxy toggle on, the zone must run **Full (strict)** so the Cloudflare→origin hop
+is verified TLS, never "Flexible". The audit items:
+
+- [ ] **The app port is not published.** `compose.yaml` publishes 80/443 on the
+      `proxy` service and nothing on `app`. A published 8280 is the plaintext,
+      header-less side door — and it also makes the app's trust in
+      `X-Forwarded-For` forgeable.
+- [ ] **CORS is not `*`.** The SSE endpoint sets no `Access-Control-Allow-Origin`
+      at all — same-origin only. A wildcard lets any page on the internet
+      subscribe to the feed from its visitors' browsers.
+- [ ] **SSE connections are bounded in the app**, not the proxy (a proxy can't
+      count event-stream clients well): a total cap (`ADSB_SSE_MAX_CLIENTS`,
+      default 100) and a per-IP cap (`ADSB_SSE_MAX_PER_IP`, default 4), enforced
+      atomically in the stream registry (`adsb.stream.broadcast`). Over the
+      limit is an honest `503` + `Retry-After`; a disconnect frees the slot.
+- [ ] **The per-IP count keys on an address the client cannot choose.**
+      `X-Forwarded-For` is honored only under `ADSB_TRUST_FORWARDED_FOR=true` —
+      set exactly when every connection provably arrives through the proxy — and
+      then only its **rightmost** (proxy-appended) entry. Direct connections use
+      the TCP peer, read **from the socket**: http-kit's ring `:remote-addr` is
+      silently substituted with the *leftmost* `X-Forwarded-For` entry whenever
+      the header is present, so `:remote-addr` is attacker-controlled and must
+      never be the key for any limit, audit log, or allowlist.
+- [ ] Security headers set **at the proxy** (see `Caddyfile`, directive by
+      directive): a strict allowlist CSP (§6 — no `unsafe-inline`, no
+      `unsafe-eval`), `Strict-Transport-Security` (180 days, no preload yet),
+      `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and a
+      deny-everything `Permissions-Policy`. Note **geolocation is currently
+      denied**; if the map ever centers on the user, that one entry becomes
+      `geolocation=(self)` — deliberately.
+- [ ] Request size is bounded: http-kit runs with an 8 KB request-line/header
+      ceiling and a 16 KB body ceiling (`adsb.http.server`) — this API accepts
+      no bodies, so the only job of that number is to stop anonymous buffering.
+- [ ] Stack traces **and exception messages** are not returned to clients. An
+      unhandled handler exception is a log line and a generic `{"error":
+      "internal error"}` 500 (`adsb.http.routes/exception-middleware`). Without
+      it, http-kit writes `(.getMessage e)` — hostnames, config — into the body.
+- [ ] The proxy never buffers the event stream: `flush_interval -1` on the
+      `reverse_proxy`, and `encode` matches an explicit content-type list that
+      excludes `text/event-stream` (a compressor is a buffer wearing a hat).
 
 ### Red Flag
 `{"Access-Control-Allow-Origin" "*"}` on the SSE route. It's the default in every
-tutorial and it means any website you visit can silently read your feed.
+tutorial and it means any website you visit can silently read your feed. Second
+red flag, local to this stack: any limit or log keyed on http-kit's
+`:remote-addr` — that value is the client's own `X-Forwarded-For` when it sends
+one.
 
 ## 5. Clojure-Specific Code Hazards
 
@@ -164,8 +212,14 @@ leaving that default.
 - [ ] **No `js/eval`, no `set!` on `.-innerHTML`, no dynamic `<script>` injection.**
 - [ ] **No `href` or `src` built from feeder data.** A callsign is an anonymous
       stranger's string; it does not belong in a URL without validation.
-- [ ] A **Content-Security-Policy** is set, and it does not include `unsafe-inline`
-      or `unsafe-eval`
+- [ ] A **Content-Security-Policy** is set at the proxy, and it includes neither
+      `unsafe-inline` nor `unsafe-eval` — verified in a real browser, not assumed.
+      The shipped policy (rationale per directive in `Caddyfile`):
+      `default-src 'none'`, `script-src 'self'`, `style-src 'self'` (Reagent and
+      MapLibre both style via the CSSOM, which CSP does not gate), `img-src 'self'
+      data: blob:`, `connect-src 'self' https://tiles.openfreemap.org`,
+      `worker-src blob:` + `child-src blob:` (MapLibre's tile workers),
+      `base-uri 'none'`, `form-action 'none'`, `frame-ancestors 'none'`
 - [ ] `:advanced` compilation for production builds (a smaller, harder-to-read
       bundle isn't security, but the absence of dev tooling and source maps is)
 

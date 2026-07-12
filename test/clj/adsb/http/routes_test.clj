@@ -65,6 +65,17 @@
       (is (= 200 (:status response)))
       (is (= "a1b2c3" (:aircraft/icao (decode-body response)))))))
 
+(deftest handler-exceptions-stay-inside
+  (testing "an unhandled handler exception is a generic 500 — the
+            exception message is a log line, never a response body"
+    (let [handler  (routes/handler
+                     {:state-lookup
+                      (fn [_] (throw (ex-info "secret internal detail"
+                                              {:feeder "dietpi.local"})))})
+          response (handler (json-request "/api/aircraft/a1b2c3"))]
+      (is (= 500 (:status response)))
+      (is (= {:error "internal error"} (decode-body response))))))
+
 (deftest static-serving
   (testing "the compiled frontend is served from resources/public"
     (let [response (empty-handler (json-request "/js/main.js"))]

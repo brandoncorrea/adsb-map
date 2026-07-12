@@ -35,7 +35,8 @@ worry you:
 
 1. **The ultrafeeder feed** — unauthenticated radio, relayed as JSON. The primary
    boundary. Everything below is secondary.
-2. **The HTTP API** — query params and paths, from any browser that finds the port.
+2. **The HTTP API** — query params, paths, and headers, from anyone on the
+   internet (`map.bwawan.com`, adsb-kh4.4).
 3. **Configuration and environment** — the feeder URL is operator-supplied, and it
    determines what host the server makes requests to.
 4. **Dependencies** — Maven and npm packages run with full privileges at build and
@@ -211,7 +212,20 @@ are the same secret wearing an aircraft costume — one aircraft's position plus
 selective copy that never carries them. Tests assert both absences; committed
 fixtures use synthetic receiver coordinates (see `test/resources/README.md`).
 
+The same secret is why **the feeder is never proxied** (the adsb-kh4.4 mandate).
+Ultrafeeder's `/data/receiver.json` *is* the receiver position, and its
+`/data/aircraft.json` carries `r_dst`/`r_dir` on every aircraft — so no route,
+in the app or in the Caddy edge, may ever forward a feeder endpoint to a
+browser. The app polls the feeder privately (over the Access-gated tunnel) and
+re-serves a scrubbed picture; a passthrough route would undo every scrubbing
+decision above in one line. This holds even for "temporary" debugging routes —
+the coverage boundary of the raw data triangulates the antenna all by itself.
+
 ## Boundary 2 — The HTTP API
+
+This boundary faces the whole internet: TLS terminates at a Caddy sidecar
+(`Caddyfile`; the app container publishes no port of its own), the proxy stamps
+the security headers, and everything below it is anonymous input from strangers.
 
 reitit does coercion with the same Malli schemas, declaratively:
 
@@ -229,6 +243,32 @@ reitit does coercion with the same Malli schemas, declaratively:
   the API contract.
 - **Never build a query from a string.** No SQL today, but when history lands (bead
   pending), the parameterized-query rule arrives with it.
+- **What strangers can hold open is bounded.** The SSE stream is the expensive
+  resource here — each connection holds a channel forever — so admission is
+  enforced in the stream registry itself (`adsb.stream.broadcast`): a total cap
+  (`ADSB_SSE_MAX_CLIENTS`, default 100) and a per-IP cap (`ADSB_SSE_MAX_PER_IP`,
+  default 4). Over a limit is a `503` with `Retry-After`; disconnects free the
+  slot. Request lines and bodies are capped in http-kit (`adsb.http.server`).
+- **Unhandled exceptions leave as a generic 500.** The message goes to the log;
+  the client gets `{"error": "internal error"}` — an exception message is an
+  internal detail, and http-kit would otherwise hand it over verbatim.
+
+### The client-address trust model
+
+The per-IP cap needs to know who's connecting, and "who" is itself untrusted
+input:
+
+- `X-Forwarded-For` is an ordinary header any client can write. It is honored
+  **only** when `ADSB_TRUST_FORWARDED_FOR=true`, which is correct exactly when
+  the app is reachable solely through the trusted proxy (the compose deployment
+  — no published app port). Caddy replaces any client-supplied XFF with the real
+  client address, and only the **rightmost** entry — the one the proxy wrote —
+  is used.
+- On direct connections the flag stays off and the **TCP peer** is counted —
+  read from the socket, not from ring's `:remote-addr`, because http-kit
+  populates `:remote-addr` from the *leftmost* `X-Forwarded-For` entry whenever
+  the header exists. That makes bare `:remote-addr` attacker-chosen; nothing in
+  this codebase may use it for limits, logs, or allowlists.
 
 ## Boundary 3 — Configuration
 

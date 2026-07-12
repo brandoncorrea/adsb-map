@@ -1,0 +1,103 @@
+# Caddyfile — TLS termination + security headers for the adsb app (adsb-kh4.4).
+#
+# Caddy runs as the `proxy` sidecar in compose.yaml and is the ONLY published
+# port. The app itself is reachable exclusively on the compose network, which
+# is what makes ADSB_TRUST_FORWARDED_FOR=true in the app safe: every SSE
+# connection provably arrived through this proxy, and Caddy REPLACES any
+# client-supplied X-Forwarded-For with the real client IP (inbound XFF is only
+# ever passed through for peers listed in trusted_proxies, and none are).
+#
+# TLS: automatic Let's Encrypt certificates. The bwawan.com zone lives on
+# Cloudflare; both DNS modes work:
+#
+#   * DNS-only (grey cloud): browsers talk straight to Caddy. Nothing to
+#     configure — Caddy issues and renews via HTTP-01/TLS-ALPN on 80/443.
+#   * Proxied (orange cloud): set the zone's SSL mode to **Full (strict)** so
+#     Cloudflare validates this origin certificate — "Flexible" would silently
+#     downgrade the Cloudflare→origin hop to plaintext. For the FIRST
+#     issuance, start grey-cloud (TLS-ALPN cannot pass a TLS-terminating
+#     proxy); once the cert exists, flip to orange. Renewals use HTTP-01,
+#     which Cloudflare passes through on /.well-known/acme-challenge/.
+#
+# Validate after editing:  caddy validate --config Caddyfile
+# (or: docker compose run --rm --entrypoint caddy proxy validate --config /etc/caddy/Caddyfile)
+
+{
+	# ACME account email — expiry warnings go here. Override in .env.
+	email {$ACME_EMAIL:bwancor@gmail.com}
+}
+
+{$ADSB_DOMAIN:map.bwawan.com} {
+	# ── Compression ─────────────────────────────────────────────────────
+	# Compress the static app (the compiled frontend is ~1 MB of JS), but
+	# ONLY the listed types: the default match set includes text/* which
+	# would wrap the SSE stream (text/event-stream) in an encoder whose
+	# buffering can hold frames back. The stream ships uncompressed.
+	encode zstd gzip {
+		match {
+			header Content-Type text/html*
+			header Content-Type text/css*
+			header Content-Type text/javascript*
+			header Content-Type application/javascript*
+			header Content-Type application/json*
+			header Content-Type image/svg+xml*
+		}
+	}
+
+	# ── Security headers (adsb-kh4.4; docs/security-checklist.md §4) ────
+	header {
+		# CSP: strict, allowlist-only. The app is CSP-friendly — no inline
+		# scripts, no eval, no third-party JS. Directive by directive:
+		#   default-src 'none'    deny anything not explicitly allowed
+		#   script-src 'self'     the compiled bundle (/js/main.js) only
+		#   style-src 'self'      app.css + vendored maplibre-gl.css; both
+		#                         Reagent/React and MapLibre set element
+		#                         styles via the CSSOM, which CSP does not
+		#                         gate, so NO 'unsafe-inline' is needed
+		#   img-src               'self' for static assets; data: for the
+		#                         inline SVG icons in maplibre-gl.css;
+		#                         blob: for MapLibre-decoded sprite images
+		#   connect-src           'self' for the SSE stream + API; the tile
+		#                         origin for style/tiles/glyphs/sprites,
+		#                         which MapLibre loads with fetch
+		#   worker-src blob:      MapLibre spawns its tile workers from a
+		#                         blob: URL (child-src is the legacy alias
+		#                         some engines still consult)
+		#   base-uri/form-action 'none'   the app has no <base> and no forms
+		#   frame-ancestors 'none'        never embeddable (anti-clickjack)
+		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://tiles.openfreemap.org; worker-src blob:; child-src blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+
+		# HSTS: browsers pin HTTPS for 180 days. Deliberately no `preload`
+		# (hard to undo) and no includeSubDomains (this host has none);
+		# raise max-age once the deployment has soaked.
+		Strict-Transport-Security "max-age=15552000"
+
+		# Never MIME-sniff a response into a different type.
+		X-Content-Type-Options "nosniff"
+
+		# Send no referrer anywhere — the app navigates nowhere that needs
+		# one, and the URL is nobody's business.
+		Referrer-Policy "no-referrer"
+
+		# Deny every powerful feature; the app uses none of them. If the
+		# map ever centers on the user, geolocation moves to =(self) — a
+		# deliberate decision, per the checklist.
+		Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+
+		# Advertise less.
+		-Server
+	}
+
+	# ── The app ─────────────────────────────────────────────────────────
+	# ONLY the app. The feeder (ultrafeeder / readsb) is never proxied
+	# here: its /data/* endpoints carry the receiver's coordinates and
+	# per-aircraft receiver-relative fields — the operator's home address
+	# (docs/validation-boundaries.md). The app polls the feeder privately
+	# and re-serves a scrubbed picture; that indirection is load-bearing.
+	reverse_proxy app:8280 {
+		# SSE: never buffer the event stream. Caddy already disables
+		# buffering when it sees Content-Type: text/event-stream, but the
+		# map is dead if this ever regresses, so it is pinned explicitly.
+		flush_interval -1
+	}
+}

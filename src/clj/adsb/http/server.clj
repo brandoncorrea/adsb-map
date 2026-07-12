@@ -10,6 +10,20 @@
 
 (def ^:const default-port 8280)
 
+(def ^:const max-request-line-bytes
+  "Ceiling on the HTTP request line and each header line. The whole API
+  is short GET paths; anything longer is a scanner or an attack, and
+  http-kit answers it 414 before a handler runs (internet exposure,
+  adsb-kh4.4)."
+  8192)
+
+(def ^:const max-request-body-bytes
+  "Ceiling on a request body. This API accepts no bodies at all — every
+  route is a GET — so the only job of this number is to stop an
+  anonymous client streaming megabytes at the default 8 MB buffer.
+  http-kit answers an over-limit body 413 before a handler runs."
+  16384)
+
 (defonce ^:private server (atom nil))
 
 (defn start!
@@ -25,7 +39,10 @@
                                  (dissoc options :port))
              srv          (http-kit/run-server
                             (routes/handler dependencies)
-                            {:port port :legacy-return-value? false})]
+                            {:port                  port
+                             :legacy-return-value?  false
+                             :max-line              max-request-line-bytes
+                             :max-body              max-request-body-bytes})]
          (log/info "adsb http server listening on port"
                    (http-kit/server-port srv))
          (reset! server srv)))))

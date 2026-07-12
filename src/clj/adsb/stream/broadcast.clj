@@ -20,20 +20,61 @@
   backlog of deltas — the server buffers at most one bounded frame per
   tick until the OS gives up on the socket and send! starts failing.
   A dropped client reconnects and gets a fresh snapshot; nothing is
-  owed to it."
+  owed to it.
+
+  ## Connection limits (adsb-kh4.4)
+
+  The app is internet-facing and the stream is anonymous, so admission
+  is bounded HERE, in the registry — the reverse proxy cannot count
+  event-stream clients reliably. Two caps, both configurable:
+
+    * a total cap on concurrent SSE clients (ADSB_SSE_MAX_CLIENTS,
+      default 100) — at cap, a new connect gets 503 + Retry-After
+    * a per-IP cap (ADSB_SSE_MAX_PER_IP, default 4) — one browser
+      opening a handful of tabs is fine; one client opening hundreds
+      of connections is a denial of service and gets 503
+
+  ## The X-Forwarded-For trust model
+
+  Per-IP counting needs the client's address. `X-Forwarded-For` is an
+  ordinary request header — any client can send one — so it is honored
+  ONLY when :trust-forwarded? is set (ADSB_TRUST_FORWARDED_FOR=true),
+  which is correct exactly when the app port is NOT directly reachable
+  and every connection arrives through the trusted reverse proxy (the
+  compose deployment: Caddy is the only published port). The proxy
+  APPENDS the TCP peer it saw to any inbound XFF, so the RIGHTMOST
+  entry is the only one the proxy vouches for — earlier entries are
+  attacker-writable and are ignored. Direct deployments leave the flag
+  off and the TCP peer address is used; a spoofed XFF is then just
+  bytes. (The peer is read from the socket itself, NOT from ring's
+  :remote-addr — see socket-peer-ip for the http-kit trap there.)"
   (:require
     [adsb.stream.sse :as sse]
     [adsb.wire :as wire]
     [cheshire.core :as json]
+    [clojure.string :as str]
     [clojure.tools.logging :as log]
     [org.httpkit.server :as http-kit])
   (:import
+    (java.lang.reflect Field)
+    (java.net InetSocketAddress)
+    (java.nio.channels SelectionKey SocketChannel)
     (java.util.concurrent Executors ScheduledExecutorService
-                          ThreadFactory TimeUnit)))
+                          ThreadFactory TimeUnit)
+    (org.httpkit.server AsyncChannel)))
 
 (def ^:const default-interval-ms 1000)
 
 (def ^:const default-heartbeat-ms 15000)
+
+(def ^:const default-max-clients 100)
+
+(def ^:const default-max-per-ip 4)
+
+(def ^:const retry-after-s
+  "Advisory Retry-After on a 503 rejection. One broadcast tick is 1 s,
+  so slots churn fast; 30 s keeps a polite client from hammering."
+  30)
 
 (def ^:const snapshot-event "snapshot")
 
@@ -54,13 +95,101 @@
                      (wire/picture->wire picture stats feeder now-ms))))
 
 ;; ---------------------------------------------------------------------
-;; The registry and the slow-consumer policy
+;; The registry, admission, and the slow-consumer policy
+;;
+;; The registry is a map channel -> {:client/ip ip :client/ready? bool}.
+;; A client is admitted (and holds a slot) the moment its channel opens,
+;; but becomes :client/ready? — visible to the broadcast tick — only
+;; after the SSE headers and snapshot went out, so the tick can never
+;; write an update frame onto a channel whose response head hasn't been
+;; sent yet.
 
-(defn- register! [{:stream/keys [clients]} channel]
-  (swap! clients conj channel))
+(def ^:private async-channel-key-field
+  "Reflective access to AsyncChannel's private SelectionKey; nil when
+  http-kit's internals no longer match. See socket-peer-ip for why the
+  reach past the ring map is necessary at all."
+  (delay
+    (try
+      (doto (.getDeclaredField AsyncChannel "key")
+        (.setAccessible true))
+      (catch Exception _ nil))))
+
+(defn- socket-peer-ip
+  "The TCP peer's IP, read from the socket itself. Ring's :remote-addr
+  is NOT that under http-kit: HttpRequest.getRemoteAddr silently
+  substitutes the LEFTMOST X-Forwarded-For entry whenever the header is
+  present — i.e. an anonymous direct client gets to name its own
+  address by sending one header. A per-IP cap keyed on :remote-addr
+  would be forgeable, so the cap counts the socket. Falls back to
+  :remote-addr if the reflective read ever stops working (a future
+  http-kit rearranging its internals): a degraded count beats a dead
+  stream, and the total cap still binds."
+  [request]
+  (or (when-some [^Field field @async-channel-key-field]
+        (try
+          (when-some [channel (:async-channel request)]
+            (let [^SelectionKey key (.get field channel)
+                  socket-channel    (.channel key)]
+              (when (instance? SocketChannel socket-channel)
+                (let [address (.getRemoteAddress ^SocketChannel socket-channel)]
+                  (when (instance? InetSocketAddress address)
+                    (.getHostAddress
+                      (.getAddress ^InetSocketAddress address)))))))
+          (catch Exception _ nil)))
+      (:remote-addr request)))
+
+(defn- client-ip
+  "The address a client is counted under. The rightmost X-Forwarded-For
+  entry — the one the trusted proxy appended — when :trust-forwarded?
+  is set and the header is present; the TCP peer address otherwise.
+  See the ns docstring for why the flag must only be set behind the
+  proxy."
+  [trust-forwarded? request]
+  (or (when trust-forwarded?
+        (some-> (get-in request [:headers "x-forwarded-for"])
+                (str/split #",")
+                peek
+                str/trim
+                not-empty))
+      (socket-peer-ip request)))
+
+(defn- deny-reason
+  "Pure: why a client at ip may NOT join the registry — :server-full or
+  :ip-full — or nil when there is room."
+  [clients ip {:keys [max-clients max-per-ip]}]
+  (cond
+    (>= (count clients) max-clients)
+    :server-full
+
+    (>= (count (filter #(= ip (:client/ip %)) (vals clients))) max-per-ip)
+    :ip-full
+
+    :else nil))
+
+(defn- try-register!
+  "Atomically admit channel under the limits. Returns nil on admission,
+  else the :server-full / :ip-full reason. Check and insert happen in
+  one swap so two racing connects cannot both squeeze past the cap."
+  [{:stream/keys [clients limits]} channel ip]
+  (let [[old new] (swap-vals! clients
+                              (fn [registry]
+                                (if (deny-reason registry ip limits)
+                                  registry
+                                  (assoc registry channel
+                                         {:client/ip     ip
+                                          :client/ready? false}))))]
+    (when-not (contains? new channel)
+      (deny-reason old ip limits))))
+
+(defn- mark-ready! [{:stream/keys [clients]} channel]
+  (swap! clients
+         (fn [registry]
+           (cond-> registry
+             (contains? registry channel)
+             (assoc-in [channel :client/ready?] true)))))
 
 (defn- unregister! [{:stream/keys [clients]} channel]
-  (swap! clients disj channel))
+  (swap! clients dissoc channel))
 
 (defn- drop-client!
   "The slow-consumer policy's teeth: a channel whose send! reported
@@ -75,8 +204,42 @@
 
 (defn- broadcast!
   [{:stream/keys [clients] :as broadcaster} frame]
-  (doseq [channel @clients]
+  (doseq [[channel {:client/keys [ready?]}] @clients
+          :when ready?]
     (send-or-drop! broadcaster channel frame)))
+
+(def ^:const ^:private reject-log-interval-ms
+  "Rejections are anonymous-input noise; log at most one line per
+  interval so a hammering client cannot fill the disk."
+  10000)
+
+(defn- log-rejection!
+  [{:stream/keys [last-reject-log-ms]} reason ip]
+  (let [now-ms    (System/currentTimeMillis)
+        [old new] (swap-vals! last-reject-log-ms
+                              #(if (>= (- now-ms %) reject-log-interval-ms)
+                                 now-ms
+                                 %))]
+    (when (not= old new)
+      (log/warn "SSE connect rejected" reason "for" ip
+                "(further rejections muted for"
+                (/ reject-log-interval-ms 1000) "s)"))))
+
+(defn- reject!
+  "Answer an over-limit connect with an honest 503 + Retry-After and
+  close the channel. Sent through the async channel because admission
+  is decided in :on-open — the first send! of a response map writes the
+  real status line."
+  [broadcaster channel reason ip]
+  (log-rejection! broadcaster reason ip)
+  (http-kit/send! channel
+                  {:status  503
+                   :headers {"Content-Type" "application/json"
+                             "Retry-After"  (str retry-after-s)}
+                   :body    (json/generate-string
+                              {:error  "stream at capacity"
+                               :reason (name reason)})}
+                  true))
 
 ;; ---------------------------------------------------------------------
 ;; The tick and the heartbeat
@@ -109,26 +272,34 @@
 ;; Connect
 
 (defn connect!
-  "The GET /api/stream handler body: switch the request to an http-kit
-  async channel, send the SSE headers and one full snapshot, and join
-  the registry for the ticks that follow. The registry entry is removed
-  by on-close (the browser went away) or by a failed send
-  (drop-and-close)."
-  [{:stream/keys [picture last-stats feeder] :as broadcaster} request]
-  (http-kit/as-channel
-    request
-    {:on-open  (fn [channel]
-                 (let [now-ms (System/currentTimeMillis)
-                       frame  (picture-frame! broadcaster snapshot-event
-                                              (picture now-ms) @last-stats
-                                              (feeder) now-ms)]
-                   (when (and (http-kit/send! channel {:status  200
-                                                       :headers sse/headers}
-                                              false)
-                              (http-kit/send! channel frame false))
-                     (register! broadcaster channel))))
-     :on-close (fn [channel _status]
-                 (unregister! broadcaster channel))}))
+  "The GET /api/stream handler body: admit the client under the
+  connection limits (503 + Retry-After when over — ns docstring),
+  switch the request to an http-kit async channel, send the SSE headers
+  and one full snapshot, and join the ticks that follow. The registry
+  slot is claimed atomically on open and freed by on-close (the browser
+  went away), by a failed send (drop-and-close), or by rejection."
+  [{:stream/keys [picture last-stats feeder trust-forwarded?]
+    :as          broadcaster}
+   request]
+  (let [ip (client-ip trust-forwarded? request)]
+    (http-kit/as-channel
+      request
+      {:on-open  (fn [channel]
+                   (if-some [reason (try-register! broadcaster channel ip)]
+                     (reject! broadcaster channel reason ip)
+                     (let [now-ms (System/currentTimeMillis)
+                           frame  (picture-frame! broadcaster snapshot-event
+                                                  (picture now-ms) @last-stats
+                                                  (feeder) now-ms)]
+                       (if (and (http-kit/send! channel
+                                                {:status  200
+                                                 :headers sse/headers}
+                                                false)
+                                (http-kit/send! channel frame false))
+                         (mark-ready! broadcaster channel)
+                         (drop-client! broadcaster channel)))))
+       :on-close (fn [channel _status]
+                   (unregister! broadcaster channel))})))
 
 ;; ---------------------------------------------------------------------
 ;; Lifecycle
@@ -155,6 +326,18 @@
                         (long period-ms)
                         TimeUnit/MILLISECONDS))
 
+(defn- env-limit
+  "An SSE limit from the process environment: a positive integer, or
+  nil (unset, blank, or nonsense — a garbled limit falls back to the
+  compiled default rather than to zero, which would be an outage)."
+  [var-name]
+  (when-some [value (System/getenv var-name)]
+    (when-some [n (parse-long (str/trim value))]
+      (when (pos? n) n))))
+
+(defn- env-flag? [var-name]
+  (= "true" (some-> (System/getenv var-name) str/trim str/lower-case)))
+
 (defn start!
   "Start the broadcast tick and the heartbeat. Options:
 
@@ -171,8 +354,23 @@
     :interval-ms   update tick period (default 1000, ~1 Hz)
     :heartbeat-ms  heartbeat comment period (default 15000)
 
+  Connection limits (ns docstring) — an explicit option wins, else the
+  environment variable, else the compiled default. The env fallback
+  lives here, at the lifecycle seam, so every entry point that starts a
+  broadcaster gets the same operator-tunable limits:
+
+    :max-clients      total concurrent SSE cap
+                      (ADSB_SSE_MAX_CLIENTS, default 100)
+    :max-per-ip       concurrent cap per client IP
+                      (ADSB_SSE_MAX_PER_IP, default 4)
+    :trust-forwarded? honor the proxy-appended X-Forwarded-For for the
+                      per-IP count (ADSB_TRUST_FORWARDED_FOR=true,
+                      default false). Set ONLY when the app port is
+                      reachable exclusively through the trusted proxy.
+
   Returns a broadcaster to hand to connect!, client-count, and stop!."
-  [{:keys [picture stats feeder interval-ms heartbeat-ms]
+  [{:keys [picture stats feeder interval-ms heartbeat-ms
+           max-clients max-per-ip trust-forwarded?]
     :or   {stats        (constantly nil)
            feeder       (constantly nil)
            interval-ms  default-interval-ms
@@ -183,7 +381,19 @@
                      :stream/stats      stats
                      :stream/feeder     feeder
                      :stream/last-stats (atom nil)
-                     :stream/clients    (atom #{})
+                     :stream/clients    (atom {})
+                     :stream/limits
+                     {:max-clients (or max-clients
+                                       (env-limit "ADSB_SSE_MAX_CLIENTS")
+                                       default-max-clients)
+                      :max-per-ip  (or max-per-ip
+                                       (env-limit "ADSB_SSE_MAX_PER_IP")
+                                       default-max-per-ip)}
+                     :stream/trust-forwarded?
+                     (if (some? trust-forwarded?)
+                       trust-forwarded?
+                       (env-flag? "ADSB_TRUST_FORWARDED_FOR"))
+                     :stream/last-reject-log-ms (atom 0)
                      :stream/frame-id   (atom 0)
                      :stream/executor   executor}]
     (schedule! executor interval-ms #(broadcast-picture! broadcaster))
@@ -199,7 +409,7 @@
   "Stop the ticks and close every client. Idempotent."
   [{:stream/keys [^ScheduledExecutorService executor clients]}]
   (.shutdownNow executor)
-  (doseq [channel @clients]
+  (doseq [channel (keys @clients)]
     (http-kit/close channel))
-  (reset! clients #{})
+  (reset! clients {})
   nil)
