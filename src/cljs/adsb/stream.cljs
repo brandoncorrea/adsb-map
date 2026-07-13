@@ -142,7 +142,10 @@
 
 (rf/reg-fx :stream/connect! (fn [_] (open!)))
 (rf/reg-fx :stream/clear-timer! (fn [_] (clear-timer!)))
-(rf/reg-fx :stream/schedule-reconnect! schedule-reconnect!)
+;; Called through a wrapper, not passed by value: reg-fx captures whatever it is
+;; handed, so naming the fn directly would freeze the ORIGINAL at registration
+;; and a test's with-redefs would arm a real timer while its fake sat unused.
+(rf/reg-fx :stream/schedule-reconnect! (fn [ms] (schedule-reconnect! ms)))
 
 ;; ---------------------------------------------------------------------
 ;; Events
@@ -174,8 +177,46 @@
     {:db                  (assoc db :stream/connection :live :stream/attempts 0)
      :stream/clear-timer! nil}))
 
-;; A full-picture frame arrived: wholesale-replace the picture and the
-;; session stats. Receiving a frame is itself proof we are live.
+(def ^:const silent-after-frames
+  "How many consecutive frames of ZERO message rate before we are willing to
+  call the feeder silent (~1 Hz, so ~10 seconds).
+
+  There is a threshold at all because the light must not flicker. The server
+  rounds the rate to a whole number, so a genuinely dribbling feeder samples as
+  `0` now and then, and a dot that flipped amber on one such sample would blink
+  — which §7 forbids the chrome outright, and which would teach the reader to
+  ignore the one signal that must never be ignored.
+
+  It is small because the fact is urgent: a dead SDR behind a healthy container
+  is exactly the failure that LOOKS like a calm sky, and ten seconds of provable
+  silence is already a strange thing for a working antenna."
+  10)
+
+(defn silent-frames
+  "How many frames in a row the feeder has reported no messages at all.
+
+  Pure, and a counter rather than a clock: it needs no time, only the sequence
+  of samples, which is what makes it testable without pretending to own a clock.
+
+  A rate of ZERO is a fact and counts. A rate of NIL is not a fact — the feeder
+  reports no counter, or this is the first sample and there is nothing to
+  difference — and an unknown is never evidence of silence. Absent is not zero,
+  the same rule the whole domain keeps."
+  [previous message-rate]
+  (cond
+    (nil? message-rate)  0
+    (pos? message-rate)  0
+    :else                (inc (or previous 0))))
+
+;; A full-picture frame arrived: wholesale-replace the picture and the session
+;; stats. Receiving a frame is itself proof we are live.
+;;
+;; :feeder/silent-frames is the count of consecutive frames carrying no
+;; messages. The FEEDER'S OWN STATUS CANNOT SEE THIS: the server sets :ok on a
+;; successful poll of aircraft.json, which says the container is up and serving
+;; — not that the radio behind it is hearing anything. An SDR can die behind a
+;; perfectly healthy container, and the picture just quietly ages out. This
+;; counter is what the derived :feeder/health (adsb.subs) reads to catch it.
 (rf/reg-event-db
   :stream/received
   (fn [db [_ data]]
@@ -184,6 +225,8 @@
         :aircraft/picture picture
         :stats/session stats
         :feeder/status (:feeder/status feeder)
+        :feeder/silent-frames (silent-frames (:feeder/silent-frames db)
+                                             (:stats/message-rate stats))
         :stream/connection :live))))
 
 ;; An EventSource error. If the browser is still CONNECTING it owns the

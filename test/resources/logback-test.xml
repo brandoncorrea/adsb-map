@@ -1,0 +1,33 @@
+<!-- The test suite's logging voice. Logback prefers logback-test.xml over
+     logback.xml wherever both are on the classpath, so this file shadows
+     resources/logback.xml for `clojure -X:test` and nothing else — the
+     production config is untouched.
+
+     Most of what the suite printed was DELIBERATE: it starts and stops http
+     servers, rejects malformed aircraft, and refuses SSE clients on purpose,
+     and every one of those announced itself at INFO or WARN. That is the
+     expected output of a PASSING test, and it drowned the one line that
+     matters — the failure.
+
+     The level stays at INFO and the CONSOLE is filtered instead. That
+     distinction is load-bearing, not fussiness: tools.logging asks the logger
+     `enabled?` BEFORE it calls log*, so lowering the root level to ERROR does
+     not merely hide a warning — it stops the call from happening at all, and
+     the tests that assert on what was logged by redefining log* (coerce-test,
+     receiver-test) see nothing and fail. Filtering at the appender leaves
+     every log call firing exactly as it does in production and only declines
+     to print it. What still reaches the terminal is ERROR and above, which
+     nothing in the suite provokes on purpose — so if one prints, it is news. -->
+<configuration>
+  <appender name="console" class="ch.qos.logback.core.ConsoleAppender">
+    <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+      <level>ERROR</level>
+    </filter>
+    <encoder>
+      <pattern>%d{HH:mm:ss.SSS} %-5level %logger{24} - %msg%n</pattern>
+    </encoder>
+  </appender>
+  <root level="INFO">
+    <appender-ref ref="console"/>
+  </root>
+</configuration>

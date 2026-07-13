@@ -12,8 +12,7 @@
   (:require [adsb.css.decl :refer [decl]]))
 
 (def styles
-  [[:.adsb-stats-label
-    :.adsb-fact-label
+  [[:.adsb-fact-label
     :.adsb-mayday-label
     :.adsb-stack-shelf-label
     (decl :font-family    "\"Space Grotesk\", system-ui, sans-serif"

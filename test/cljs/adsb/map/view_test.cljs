@@ -11,14 +11,16 @@
     [adsb.map.maplibre :as maplibre]
     [adsb.map.theme :as theme]
     [adsb.map.view :as view]
+    [adsb.test-dom :as test-dom]
     [adsb.views :as views]
-    [cljs.test :refer-macros [deftest is testing use-fixtures]]
-    [reagent.core :as r]
-    [reagent.dom :as rdom]))
+    [cljs.test :refer-macros [deftest is testing use-fixtures]]))
 
 ;; A throwaway DOM node per mounting test, cleaned up after each — and the
-;; theme ratom restored, since the mount path syncs it.
+;; theme ratom restored, since the mount path syncs it. The root is held
+;; alongside the node: a React 18 root is unmounted through the handle
+;; create-root returned, not by naming the node again.
 (def ^:private !node (atom nil))
+(def ^:private !root (atom nil))
 
 (use-fixtures :each
   {:before (fn []
@@ -26,11 +28,19 @@
                (.appendChild (.-body js/document) el)
                (reset! !node el)))
    :after  (fn []
+             (when-let [root @!root]
+               (test-dom/unmount! root)
+               (reset! !root nil))
              (when-let [el @!node]
-               (rdom/unmount-component-at-node el)
                (.remove el)
                (reset! !node nil))
              (theme/set-theme! :day))})
+
+(defn- mount-shell!
+  "Mount the app shell into this test's node, remembering the root so the
+  fixture can tear it down even if the test never unmounts by hand."
+  []
+  (reset! !root (test-dom/mount! [views/app-root] @!node)))
 
 ;; A minimal basemap style, as `load-style!` would deliver it — one
 ;; background layer, so the edition print is observable on its paint.
@@ -146,9 +156,7 @@
                                        (fake-map !destroyed))
                     view/load-style! stub-load-style!
                     theme/system-theme (constantly :day)]
-        (rdom/render [views/app-root] @!node)
-        (r/flush) ;; Reagent batches renders; force the mount to run now.
-        ;; NB: reagent 1.2.0 exposes `flush`, not `flush!` (the name in the docs).
+        (mount-shell!)
 
         (is (= 1 (count @calls)) "the map is created once, on mount")
         (let [opts (first @calls)]
@@ -171,8 +179,7 @@
                     theme/watch-system! (fn [f]
                                           (reset! !flip f)
                                           (fn [] (swap! !unwatched inc)))]
-        (rdom/render [views/app-root] @!node)
-        (r/flush)
+        (mount-shell!)
         (is (some? @!flip) "the mount registered a system-theme watch")
         (is (= 1 (count @calls)))
 
@@ -186,6 +193,7 @@
             "the chrome-visible theme followed, so the legend re-inks")
 
         (testing "unmount removes the watch and destroys the night print"
-          (rdom/unmount-component-at-node @!node)
+          (test-dom/unmount! @!root)
+          (reset! !root nil) ;; torn down here; the fixture must not do it twice
           (is (= 1 @!unwatched))
           (is (= 2 @!destroyed)))))))

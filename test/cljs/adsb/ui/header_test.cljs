@@ -9,7 +9,7 @@
   (:require
     ["@testing-library/react" :as rtl]
     [adsb.events]
-    [adsb.stream]                                 ; registers :aircraft/picture + :stream/connection
+    [adsb.stream :as stream]                      ; registers :aircraft/picture + :stream/connection; owns the silence threshold
     [adsb.stream.source :as source]               ; the connect! seam, stubbed at boot
     [adsb.subs]
     [adsb.ui.header :as header]
@@ -29,8 +29,8 @@
   (fn [db [_ status]] (assoc db :stream/connection status)))
 (rf/reg-event-db :test/set-feeder
   (fn [db [_ status]] (assoc db :feeder/status status)))
-(rf/reg-event-db :test/set-stats
-  (fn [db [_ stats]] (assoc db :stats/session stats)))
+(rf/reg-event-db :test/set-silent-frames
+  (fn [db [_ n]] (assoc db :feeder/silent-frames n)))
 
 (defn- render-header! []
   (rtl/cleanup)
@@ -38,21 +38,49 @@
 
 ;; ---------------------------------------------------------------------
 
-(deftest the-session-scalars-read-from-the-header
-  (testing "max range and message rate are vitals, and they now sit with the
-            other vitals rather than in a bordered chip over the map
-            (adsb-33i). The readout is adsb.ui.stats' own component, subs and
-            absent-is-a-dash rule intact — only its address changed"
+(deftest a-reachable-feeder-that-hears-nothing-is-not-ok
+  ;; THE BUG THIS STATE EXISTS FOR. The server sets :feeder/status :ok on a
+  ;; successful POLL of aircraft.json (adsb.ingest.poll/mark-ok!) — the container
+  ;; is up and serving. That says nothing about the radio behind it. An SDR can
+  ;; die while the container stays perfectly healthy: the poll keeps succeeding,
+  ;; the feeder keeps claiming :ok, its message counter stops advancing, the
+  ;; picture ages out, the map empties — and the dot sat there GREEN while
+  ;; everything stopped moving. Reachable is not hearing.
+  (testing "a feeder claiming :ok while its messages have stopped reads :silent"
     (rf-test/run-test-sync
-      (rf/dispatch [:test/set-stats #:stats{:max-range-km 256 :message-rate 382}])
+      (rf/dispatch [:test/set-connection :live])
+      (rf/dispatch [:test/set-feeder :ok])              ; the poll still succeeds
+      (rf/dispatch [:test/set-silent-frames stream/silent-after-frames])
       (render-header!)
-      (let [header-el (.getByRole rtl/screen "banner")]
-        (is (some? (.querySelector header-el "[data-testid='stats-max-range']"))
-            "max range reads from inside the header")
-        (is (some? (.querySelector header-el "[data-testid='stats-message-rate']"))
-            "and so does the message rate")
-        (is (some? (.getByText rtl/screen "256 km")) "the range, with its unit")
-        (is (some? (.getByText rtl/screen "382/s")) "the rate, with its unit")))))
+      (is (= :silent @(rf/subscribe [:feeder/health]))
+          "the dot does not repeat the feeder's own claim")
+      (let [chip (.getByTestId rtl/screen "feeder-indicator")]
+        (is (= "silent" (.getAttribute chip "data-state")))
+        (let [label (.getByText rtl/screen "No messages")]
+          (is (some? label) "and it says so in words")
+          (is (not (.contains (.-classList label) "adsb-vh"))
+              "IN PLAIN SIGHT — colour alone may say fine, never not-fine")))))
+
+  (testing "below the threshold it stays :ok — the light must not blink. The
+            server rounds the rate to a whole number, so a dribbling feeder
+            samples as zero now and then, and a dot that flipped on one such
+            sample would teach the reader to ignore it"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-connection :live])
+      (rf/dispatch [:test/set-feeder :ok])
+      (rf/dispatch [:test/set-silent-frames (dec stream/silent-after-frames)])
+      (render-header!)
+      (is (= :ok @(rf/subscribe [:feeder/health]))
+          "one frame short of the threshold is not yet evidence")))
+
+  (testing "a feeder that is DOWN stays down — silence never masks a worse fact"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-connection :live])
+      (rf/dispatch [:test/set-feeder :down])
+      (rf/dispatch [:test/set-silent-frames 999])
+      (render-header!)
+      (is (= :down @(rf/subscribe [:feeder/health]))
+          "unreachable outranks unheard"))))
 
 (deftest connection-indicator-shows-each-state
   ;; The STREAM chip: :down reads "Disconnected" — it measures the

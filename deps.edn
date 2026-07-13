@@ -48,7 +48,11 @@
   ;; so this never ships in the uberjar. src/css and its two deps come along so
   ;; adsb.css-test can hold the stylesheet up to the light; like the :css alias
   ;; itself, none of it reaches the uberjar.
-  :test  {:extra-paths ["test/clj" "test/cljc" "test/cljs" "src/css"]
+  ;; test/resources is on the classpath for ONE file: logback-test.xml, which
+  ;; logback picks over resources/logback.xml and which quiets the suite's
+  ;; deliberate INFO/WARN chatter. The JSON fixtures beside it are slurped by
+  ;; relative path, not as resources, and do not need to be here.
+  :test  {:extra-paths ["test/clj" "test/cljc" "test/cljs" "src/css" "test/resources"]
           :extra-deps  {io.github.cognitect-labs/test-runner {:git/tag "v0.5.1" :git/sha "dfb30dd"}
                         babashka/fs                          {:mvn/version "0.5.22"}
                         com.lambdaisland/garden              {:mvn/version "1.9.606"}

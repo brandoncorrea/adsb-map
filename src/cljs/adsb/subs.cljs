@@ -3,6 +3,7 @@
   in adsb.stream (it owns that app-db key); this namespace holds the derived
   views the chrome reads — selection foremost."
   (:require [adsb.aircraft :as aircraft]
+            [adsb.stream :as stream]      ; the silence threshold; it owns that key
             [re-frame.core :as rf]))
 
 ;; The raw selection: the icao string the user clicked, or nil. Selection is
@@ -58,13 +59,44 @@
 ;; and the header renders nothing at all for it. Without this, every refresh
 ;; opened on a flash of "Feeder unknown": a truthful report of :reconnecting,
 ;; which was itself a lie about a failure that never happened.
+;; REACHABLE IS NOT THE SAME AS HEARING, and the difference is the whole reason
+;; anyone looks at this dot. The server sets :feeder/status :ok on a SUCCESSFUL
+;; POLL of aircraft.json (adsb.ingest.poll) — the container is up and serving.
+;; It says nothing about the radio behind it. An SDR can die, or an antenna lead
+;; can come loose, while the container stays perfectly healthy: the poll keeps
+;; succeeding, the feeder keeps reporting :ok, its message counter stops
+;; advancing, the picture ages out, the map empties — and the dot sits there
+;; green while everything stops moving.
+;;
+;; That is the exact question the dot exists to answer, and it was answering it
+;; wrong. So :silent: reachable, and hearing nothing (adsb.stream/silent-frames
+;; counts the consecutive frames of zero message rate; the threshold gives the
+;; light hysteresis so a rate that rounds to zero for one tick cannot blink it).
+;;
+;; It does NOT claim a cause. A dead SDR and a genuinely empty 3am sky look
+;; identical from here, and the honest sentence is the one they share: no
+;; messages are arriving. Naming the cause would be a guess wearing a fact's
+;; clothes.
+(rf/reg-sub
+  :feeder/silent-frames
+  (fn [db _]
+    (:feeder/silent-frames db 0)))
+
 (rf/reg-sub
   :feeder/health
   :<- [:feeder/status]
   :<- [:stream/connection]
-  (fn [[feeder-status stream-connection] _]
+  :<- [:feeder/silent-frames]
+  (fn [[feeder-status stream-connection silent-frames] _]
     (case stream-connection
-      :live       (or feeder-status :unknown)
+      :live       (cond
+                    (not= :ok feeder-status)
+                    (or feeder-status :unknown)
+
+                    (>= silent-frames stream/silent-after-frames)
+                    :silent
+
+                    :else :ok)
       :connecting nil
       :unknown)))
 

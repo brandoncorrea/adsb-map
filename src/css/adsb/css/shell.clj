@@ -2,12 +2,13 @@
   "The shell and the header — the chart's title block.
 
   The shell fills the viewport and the map is its full-bleed background. The
-  header is 36px (--header-h) of instrument, and instrument only: the feeder's
-  reach and throughput in mono, and the health signals pinned right so the map's
-  health is always in the same place. One ink rule below.
+  header is 36px (--header-h) holding a UTC clock and the health signals, pinned
+  right so the map's health is always in the same place. One ink rule below.
 
-  The title stamp is gone (adsb-sod). What is left is not a title block — it is
-  a strip of apparatus, and everything about the SKY reads from the Stack."
+  The title stamp is gone, and so are the RNG/MSG readouts (adsb-sod). What is
+  left is not a title block and barely a strip: everything about the SKY reads
+  from the Stack, and the one thing the apparatus still has to say — is it
+  hearing? — it says in a single dot."
   (:require
     [adsb.css.decl :refer [decl]]))
 
@@ -80,33 +81,7 @@
     (decl :color                "var(--faded-ink)"
           :font-size            "var(--t-1)"
           :font-variant-numeric "tabular-nums"
-          :letter-spacing       "0.02em")]
-
-   ;; The session scalars — max range, message rate. They were a bordered chip
-   ;; in the margin column, covering the map; they are vitals, so they sit with
-   ;; the vitals, and a box drawn around two numbers is a box around nothing
-   ;; (adsb-33i). The label voice is adsb.css.captions'.
-   [:.adsb-stats
-    (decl :display     "flex"
-          :align-items "baseline"
-          :gap         "var(--s4)"
-          :font-size   "var(--t-1)")]
-
-   [:.adsb-stats-row
-    (decl :display     "flex"
-          :align-items "baseline"
-          :gap         "var(--s2)")]
-
-   ;; the VOICE is adsb.css.captions'; the colour travelled up with the rules.
-   ;; It is an <abbr>, so the browser's dotted underline has to go — the long
-   ;; form lives in the title, and a chart's marginalia are not hyperlinks.
-   [:.adsb-stats-label
-    (decl :color           "var(--faded-ink)"
-          :text-decoration "none"
-          :cursor          "help")]
-
-   [:.adsb-stats-value
-    (decl :font-variant-numeric "tabular-nums")]])
+          :letter-spacing       "0.02em")]])
 
 (def health
   "Health chips — stream and feeder, drawn as stamped chart notes: squared,
@@ -181,6 +156,13 @@
           :height "9px")]
 
    [:.adsb-feeder-starting
+    (decl :color        "var(--warn)"
+          :border-color "var(--warn)")]
+
+   ;; SILENT — reachable, and hearing nothing. Amber, and it PRINTS ITS WORDS
+   ;; (`No messages`): this is the state the green dot used to lie about, and a
+   ;; lie corrected into a colour nobody can name would not be much of a fix.
+   [:.adsb-feeder-silent
     (decl :color        "var(--warn)"
           :border-color "var(--warn)")]
 

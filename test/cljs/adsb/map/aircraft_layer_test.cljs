@@ -14,13 +14,13 @@
     [adsb.map.style :as style]
     [adsb.map.view :as view]
     [adsb.stream]
+    [adsb.test-dom :as test-dom]
     [adsb.views :as views]
     [adsb.wire :as wire]
     [cljs.test :refer-macros [deftest is testing]]
     [day8.re-frame.test :as rf-test]
     [re-frame.core :as rf]
-    [reagent.core :as r]
-    [reagent.dom :as rdom]))
+    [reagent.core :as r]))
 
 ;; ---------------------------------------------------------------------
 ;; Server impersonation: one SSE frame's data string, exactly as the
@@ -453,11 +453,9 @@
                     view/map-container (fn [!c]
                                          (swap! !renders inc)
                                          (real-container !c))]
-        (rdom/render [views/app-root] node)
-        (r/flush)
-        (fire-load! fake)
-
-        (let [renders-at-mount @!renders
+        (let [root (test-dom/mount! [views/app-root] node)
+              _ (fire-load! fake) ;; the map exists only once the shell has mounted
+              renders-at-mount @!renders
               pushes-at-load (count (aircraft-set-data fake))]
           (is (= 1 @!mounts) "one map, created once")
           (is (= 1 renders-at-mount) "the map component rendered once, at mount")
@@ -479,7 +477,7 @@
             (is (= 1 @!mounts) "and nothing remounted"))
 
           (testing "unmount detaches the layer: updates stop"
-            (rdom/unmount-component-at-node node)
+            (test-dom/unmount! root)
             (rf/dispatch [:stream/received (frame [fixtures/squawking-7700])])
             (r/flush)
             (is (= (+ pushes-at-load n) (count (aircraft-set-data fake)))
@@ -727,26 +725,25 @@
                         view/map-container (fn [!c]
                                              (swap! !renders inc)
                                              (real-container !c))]
-            (rdom/render [views/app-root] node)
-            (r/flush)
-            (fire-load! fake)
-            (with-redefs [layer/now-ms (constantly 0)]
-              (rf/dispatch
-                [:stream/received
-                 (frame [(assoc fixtures/ups-2717 :aircraft/seen-at-ms 0)])])
-              (r/flush))
-            (let [renders @!renders
-                  pushes  (count (aircraft-set-data fake))]
-              (dotimes [i n]
-                ;; 100 ms apart — every frame clears the push throttle.
-                (with-redefs [layer/now-ms (constantly (* (inc i) 100))]
-                  (@!frame 0)))
-              (testing "N projection frames: N setData calls, ZERO
-                        additional Reagent work"
-                (is (= (+ pushes n) (count (aircraft-set-data fake)))
-                    "every projection frame reached the GPU path")
-                (is (= renders @!renders)
-                    "the render count never moved — projection bypasses
-                    React")))
-            (rdom/unmount-component-at-node node))
+            (let [root (test-dom/mount! [views/app-root] node)]
+              (fire-load! fake)
+              (with-redefs [layer/now-ms (constantly 0)]
+                (rf/dispatch
+                  [:stream/received
+                   (frame [(assoc fixtures/ups-2717 :aircraft/seen-at-ms 0)])])
+                (r/flush))
+              (let [renders @!renders
+                    pushes  (count (aircraft-set-data fake))]
+                (dotimes [i n]
+                  ;; 100 ms apart — every frame clears the push throttle.
+                  (with-redefs [layer/now-ms (constantly (* (inc i) 100))]
+                    (@!frame 0)))
+                (testing "N projection frames: N setData calls, ZERO
+                          additional Reagent work"
+                  (is (= (+ pushes n) (count (aircraft-set-data fake)))
+                      "every projection frame reached the GPU path")
+                  (is (= renders @!renders)
+                      "the render count never moved — projection bypasses
+                      React")))
+              (test-dom/unmount! root)))
           (.remove node))))))

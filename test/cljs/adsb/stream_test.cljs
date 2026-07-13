@@ -168,6 +168,31 @@
           (is (= :reconnecting @(rf/subscribe [:stream/connection]))
               "attempts reset on recovery"))))))
 
+(deftest silence-is-counted-in-frames-not-clocked
+  (testing "a positive rate is life: the count resets"
+    (is (= 0 (stream/silent-frames 9 148)))
+    (is (= 0 (stream/silent-frames 0 1))))
+
+  (testing "a rate of ZERO is a fact, and it accumulates — this is the evidence
+            that the radio has gone deaf behind a container that still answers
+            its poll"
+    (is (= 1 (stream/silent-frames nil 0)) "the first silent frame")
+    (is (= 1 (stream/silent-frames 0 0)))
+    (is (= 10 (stream/silent-frames 9 0)) "and it keeps climbing"))
+
+  (testing "a rate of NIL is not a fact — the feeder reports no counter, or this
+            is the first sample and there is nothing to difference. An unknown is
+            never evidence of silence: absent is not zero, the rule the whole
+            domain keeps"
+    (is (= 0 (stream/silent-frames 9 nil))
+        "an unknown rate must never accuse a working antenna"))
+
+  (testing "the threshold is small, because the fact is urgent — but it exists,
+            because the light must not blink"
+    (is (pos? stream/silent-after-frames))
+    (is (<= stream/silent-after-frames 30)
+        "a dead SDR must not take half a minute to admit it")))
+
 (deftest backoff-grows
   (testing "each consecutive CLOSED error schedules a longer reconnect"
     (rf-test/run-test-sync

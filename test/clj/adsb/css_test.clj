@@ -48,12 +48,28 @@
   ;; at EQUAL specificity — it applies only because it comes later. Reorder
   ;; adsb.css.app and the smallest labels silently stop printing in Grotesk.
   (testing "the caption rule is emitted after every block whose labels it claims"
-    (let [caption (str/index-of @css ".adsb-count-unit, .adsb-stats-label")]
-      (is (some? caption) "the grouped caption rule is in the stylesheet")
-      (doseq [claimed [".adsb-stats-label" ".adsb-fact-label"
-                       ".adsb-mayday-label" ".adsb-stack-shelf-label"]]
-        (is (< (str/index-of @css (str claimed " {")) caption)
-            (str claimed " must be styled before the caption rule overrides it"))))))
+    ;; The anchor is the claimed list itself, joined — not a hand-copied prefix
+    ;; of it. Two selectors have now left this group (the corner legend's
+    ;; .adsb-count-unit, then the header stats' .adsb-stats-label), and each
+    ;; time a hand-copied anchor went stale it took the whole deftest down with
+    ;; a nil. Both the anchor and the per-selector lookups are checked for
+    ;; presence before they are compared, so a changed claim reports itself as
+    ;; ONE named missing selector instead of a pile of NullPointerExceptions.
+    (let [claimed [".adsb-fact-label" ".adsb-mayday-label"
+                   ".adsb-stack-shelf-label"]
+          caption (str/index-of @css (str (str/join ", " claimed) " {"))]
+      (is (some? caption)
+          "the grouped caption rule is in the stylesheet, claiming exactly these
+           selectors — if this is nil, adsb.css.captions no longer names the
+           list above and the list is what must be updated")
+      (when caption
+        (doseq [sel claimed]
+          (let [own-block (str/index-of @css (str sel " {"))]
+            (is (some? own-block)
+                (str sel " has a block of its own for the caption rule to override"))
+            (when own-block
+              (is (< own-block caption)
+                  (str sel " must be styled before the caption rule overrides it")))))))))
 
 (deftest the-night-edition-only-repoints-the-day
   ;; The two editions are one mechanism (adsb-dgb.7). A variable that exists
