@@ -4,7 +4,13 @@
   turns over (~1 Hz) and when the stream's health flips, not per aircraft, so
   a small component tree is exactly right.
 
-  Two vital signs live here:
+  THE HEADER REPORTS EXCEPTIONS, NOT CONFIRMATIONS (adsb-33i). It used to
+  spend its width telling you that nothing was wrong — a chip reading \"Live\"
+  beside a chip reading \"Feeder OK\", every second of every healthy session.
+  Silence means healthy now, and the width that bought goes to the vitals that
+  actually carry information.
+
+  The vital signs:
 
     * COUNTS — how many aircraft are in the current sky, and how many of
       those the feeder has actually positioned. Position-less targets are a
@@ -12,28 +18,37 @@
       total but not the positioned tally, so the gap between the two numbers
       is the honest \"heard but not on the map\" figure.
 
-    * CONNECTION — TWO semantically distinct chips, because two different
+    * SESSION SCALARS — max observed range and message rate (adsb.ui.stats).
+      They were marginalia in a bordered chip over the map; they are vitals,
+      and they belong with the other vitals.
+
+    * CONNECTION — TWO semantically distinct signals, because two different
       things can go wrong and the user must be able to tell them apart:
 
         - STREAM health (:stream/connection — :live / :reconnecting / :down)
           is the browser-to-server SSE link. Its :down means DISCONNECTED:
-          we stopped receiving frames.
+          we stopped receiving frames. It renders NOTHING while live — an
+          empty space where the chip would be is the report that the link is
+          fine. A frozen map still cannot read as a quiet one: a frozen map
+          is not a silent header, it is a Disconnected chip.
 
         - FEEDER health (the derived :feeder/health — :ok / :starting /
           :down / :unknown) is the antenna behind the server. A live stream
           over a DEAD feeder looks perfectly healthy — the map just quietly
-          ages out — so this chip exists to expose exactly that. When the
-          stream is not live the feeder is UNKNOWABLE, and this chip shows a
-          neutral :unknown rather than a stale claim (the derivation lives in
-          adsb.subs).
+          ages out — so this exists to expose exactly that. When the stream
+          is not live the feeder is UNKNOWABLE, and it shows a neutral
+          :unknown rather than a stale claim (the derivation is in adsb.subs).
 
-      Each chip carries a DISTINCT visual per state AND a text label: colour
-      alone is not accessible, and a frozen map must not read as a quiet one.
-
-  Styling is a NEUTRAL PLACEHOLDER (class-name hooks only); the visual pass is
-  bead adsb-dgb.5."
+  COLOUR ALONE MAY SAY \"FINE\". IT MAY NEVER SAY \"BROKEN\". The feeder at
+  :ok is a bare coloured dot, its label kept in the accessibility tree and
+  taken out of the visual one. Every other feeder state — starting, down,
+  unknown — keeps its words, because a colour-blind reader must never be the
+  only one who cannot see that the antenna is dead. That is the whole of the
+  old 'colour alone is not accessible' rule that was load-bearing: it bites on
+  problems, not on the benign state."
   (:require
     [adsb.aircraft :as aircraft]
+    [adsb.ui.stats :as stats]
     [re-frame.core :as rf]))
 
 ;; The stream's three honest states -> the human label the STREAM chip shows.
@@ -94,46 +109,64 @@
 
 (defn- connection-indicator
   "The SSE STREAM health chip: the browser-to-server link, driven by
-  :stream/connection. Distinct class per state for the visual channel, a text
-  label for the accessible one, `role=status` so assistive tech announces a
-  change. `data-state` is the class-free hook the tests pin. Semantically
-  distinct from the feeder chip beside it: this measures whether the browser
-  is receiving frames at all, not whether the antenna is hearing aircraft."
+  :stream/connection. NOTHING while :live — a healthy link is not news, and
+  the chip that used to say so was the header's largest tenant. The two states
+  that ARE news keep everything they had: a distinct class for the visual
+  channel, a text label for the accessible one, `role=status` so assistive
+  tech announces the change, and the `data-state` hook the tests pin.
+
+  Semantically distinct from the feeder dot beside it: this measures whether
+  the browser is receiving frames at all, not whether the antenna is hearing
+  aircraft."
   [status]
   (let [status (or status :reconnecting)]
-    [:span.adsb-conn
-     {:class       (str "adsb-conn-" (name status))
-      :role        "status"
-      :data-testid "connection-indicator"
-      :data-state  (name status)}
-     [:span.adsb-conn-dot {:aria-hidden true}]
-     [:span.adsb-conn-label (get connection-labels status (name status))]]))
+    (when-not (= :live status)
+      [:span.adsb-conn
+       {:class       (str "adsb-conn-" (name status))
+        :role        "status"
+        :data-testid "connection-indicator"
+        :data-state  (name status)}
+       [:span.adsb-conn-dot {:aria-hidden true}]
+       [:span.adsb-conn-label (get connection-labels status (name status))]])))
 
 (defn- feeder-indicator
-  "The FEEDER health chip: the antenna behind the server, driven by the
-  derived :feeder/health sub (adsb.subs). Same accessible construction as the
-  stream chip — distinct class per state, a text label, `role=status`, a
-  `data-state` hook. Kept visually and semantically separate: a live stream
-  over a dead feeder is the exact situation this chip exposes. When the stream
-  is not live the feeder is unknowable and this shows a neutral :unknown,
-  never a stale claim (the derivation is in adsb.subs)."
+  "The FEEDER health signal: the antenna behind the server, driven by the
+  derived :feeder/health sub (adsb.subs). Kept visually and semantically
+  separate from the stream chip — a live stream over a dead feeder is the
+  exact situation this exposes.
+
+  At :ok it is a bare coloured dot. The label is not deleted, it is moved out
+  of the visual channel and left in the accessible one (`adsb-vh`), so a
+  screen reader still hears 'Feeder OK' and the eye gets a green dot. Every
+  other state — starting, down, unknown — prints its words: colour alone may
+  say fine, and may never say broken.
+
+  When the stream is not live the feeder is unknowable and this shows a
+  neutral :unknown, never a stale claim (the derivation is in adsb.subs)."
   [status]
-  (let [status (or status :unknown)]
+  (let [status (or status :unknown)
+        ok?    (= :ok status)]
     [:span.adsb-feeder
      {:class       (str "adsb-feeder-" (name status))
       :role        "status"
       :data-testid "feeder-indicator"
       :data-state  (name status)}
      [:span.adsb-feeder-dot {:aria-hidden true}]
-     [:span.adsb-feeder-label (get feeder-labels status (name status))]]))
+     [:span.adsb-feeder-label
+      {:class (when ok? "adsb-vh")}
+      (get feeder-labels status (name status))]]))
 
 ;; ---------------------------------------------------------------------
 
 (defn header
-  "The app bar: title, live counts, a UTC clock, and the two health chips —
-  stream and feeder. A form-2 component — subscribe once, deref per render —
-  so it re-renders when the picture turns over or either health signal flips,
-  and never more often than that."
+  "The app bar: title, live counts, the session scalars, a UTC clock, and the
+  health signals — stream and feeder. A form-2 component — subscribe once,
+  deref per render — so it re-renders when the picture turns over or either
+  health signal flips, and never more often than that.
+
+  The stats readout owns its own subscription (adsb.ui.stats), so it is placed
+  here, not passed: the header hands its children derefed values, but that one
+  is a component in its own right and was one before it moved up here."
   []
   (let [picture    (rf/subscribe [:aircraft/picture])
         connection (rf/subscribe [:stream/connection])
@@ -143,6 +176,7 @@
       [:header.adsb-header
        [:span.adsb-title "adsb"]
        [counts @picture]
+       [stats/stats-readout]
        [utc-clock @now-ms]
        [connection-indicator @connection]
        [feeder-indicator @feeder]])))

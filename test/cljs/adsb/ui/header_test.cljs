@@ -31,6 +31,8 @@
   (fn [db [_ status]] (assoc db :stream/connection status)))
 (rf/reg-event-db :test/set-feeder
   (fn [db [_ status]] (assoc db :feeder/status status)))
+(rf/reg-event-db :test/set-stats
+  (fn [db [_ stats]] (assoc db :stats/session stats)))
 
 ;; A positioned aircraft and a never-positioned one: the total counts both,
 ;; the positioned tally only the first.
@@ -83,11 +85,26 @@
           (.catch (fn [e] (is false (str "counts never updated: " e))))
           (.finally done)))))
 
+(deftest the-session-scalars-read-from-the-header
+  (testing "max range and message rate are vitals, and they now sit with the
+            other vitals rather than in a bordered chip over the map
+            (adsb-33i). The readout is adsb.ui.stats' own component, subs and
+            absent-is-a-dash rule intact — only its address changed"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-stats #:stats{:max-range-km 256 :message-rate 382}])
+      (render-header!)
+      (let [header-el (.getByRole rtl/screen "banner")]
+        (is (some? (.querySelector header-el "[data-testid='stats-max-range']"))
+            "max range reads from inside the header")
+        (is (some? (.querySelector header-el "[data-testid='stats-message-rate']"))
+            "and so does the message rate")
+        (is (some? (.getByText rtl/screen "256 km")) "the range, with its unit")
+        (is (some? (.getByText rtl/screen "382/s")) "the rate, with its unit")))))
+
 (deftest connection-indicator-shows-each-state
   ;; The STREAM chip: :down reads "Disconnected" — it measures the
   ;; browser-to-server stream, not the feeder (which owns "Feeder down").
-  (doseq [[state label] [[:live "Live"]
-                         [:reconnecting "Reconnecting"]
+  (doseq [[state label] [[:reconnecting "Reconnecting"]
                          [:down "Disconnected"]]]
     (testing (str "the stream chip honestly reflects " state)
       (rf-test/run-test-sync
@@ -98,6 +115,20 @@
               "a distinct state hook the visual pass can style")
           (is (some? (.getByText rtl/screen label))
               "and a text label — never colour alone"))))))
+
+(deftest a-live-stream-says-nothing-at-all
+  (testing "the header reports EXCEPTIONS, not confirmations (adsb-33i): a
+            healthy link is not news, and the chip that used to announce it
+            every second of every session is simply absent. The states that
+            ARE news keep their chip — asserted just above — so a frozen map
+            still cannot read as a quiet one"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-connection :live])
+      (render-header!)
+      (is (nil? (.queryByTestId rtl/screen "connection-indicator"))
+          "nothing to report, so nothing is reported")
+      (is (nil? (.queryByText rtl/screen "Live"))
+          "and the word is gone with it"))))
 
 (deftest feeder-indicator-shows-each-state
   ;; The FEEDER chip, distinct from the stream chip: while the stream is live
@@ -115,6 +146,34 @@
               "a distinct state hook, separate from the stream chip")
           (is (some? (.getByText rtl/screen label))
               "and a text label — never colour alone"))))))
+
+(deftest colour-alone-may-say-fine-and-may-never-say-broken
+  ;; The compaction that is allowed, and the line it must not cross (adsb-33i).
+  (testing "a healthy feeder is a bare dot — its label leaves the VISUAL
+            channel and stays in the ACCESSIBLE one, so the eye gets a green
+            dot and a screen reader still hears the words"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-connection :live])
+      (rf/dispatch [:test/set-feeder :ok])
+      (render-header!)
+      (let [label (.getByText rtl/screen "Feeder OK")]
+        (is (some? label)
+            "the words are still in the document, not deleted from it")
+        (is (.contains (.-classList label) "adsb-vh")
+            "and hidden from sight only"))))
+
+  (testing "every state that is a PROBLEM keeps its words in plain sight — a
+            colour-blind reader must never be the only one who cannot see
+            that the antenna is dead"
+    (doseq [[status label] [[:starting "Feeder starting"]
+                            [:down "Feeder down"]]]
+      (rf-test/run-test-sync
+        (rf/dispatch [:test/set-connection :live])
+        (rf/dispatch [:test/set-feeder status])
+        (render-header!)
+        (let [el (.getByText rtl/screen label)]
+          (is (not (.contains (.-classList el) "adsb-vh"))
+              (str (name status) " says so in words, not in colour alone")))))))
 
 (deftest feeder-indicator-is-unknown-when-stream-not-live
   ;; The unknowable rule: a feeder claim only means something while the stream

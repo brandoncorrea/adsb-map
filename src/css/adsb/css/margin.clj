@@ -1,8 +1,10 @@
 (ns adsb.css.margin
-  "The margin column — legend and stats, chart-key marginalia.
+  "The margin column — the map key, and nothing else now.
 
-  Tucked bottom-left, out of the header's way: the session stats chip over
-  the map key, both on paper veils."
+  Tucked bottom-left, out of the header's way, on a paper veil. The session
+  stats used to sit here in a bordered chip above it; they were vitals wearing
+  marginalia's clothes, and they have gone up to the header where the counts
+  already live (adsb-33i — their rules moved with them, to adsb.css.shell)."
   (:require
     [adsb.css.decl :refer [decl]]))
 
@@ -64,30 +66,5 @@
    [:.adsb-legend-label
     (decl :white-space "nowrap")]])
 
-(def stats
-  "The session stats readout — two scalars on a small paper chip."
-  [[:.adsb-stats
-    (decl :display       "flex"
-          :gap           "var(--s4)"
-          :padding       "var(--s1) var(--s3)"
-          :background    "var(--paper-veil)"
-          :color         "var(--ink)"
-          :border        "1px solid var(--rule)"
-          :border-radius "2px"
-          :font-size     "var(--t-1)"
-          :box-sizing    "border-box")]
-
-   [:.adsb-stats-row
-    (decl :display     "flex"
-          :align-items "baseline"
-          :gap         "var(--s2)")]
-
-   ;; voice: adsb.css.captions
-   [:.adsb-stats-label
-    (decl :color "var(--faded-ink)")]
-
-   [:.adsb-stats-value
-    (decl :font-variant-numeric "tabular-nums")]])
-
 (def styles
-  [column legend stats])
+  [column legend])
