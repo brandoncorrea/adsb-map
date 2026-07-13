@@ -7,14 +7,13 @@
   beads adsb-dgb.11 / adsb-fon. The picks were made and applied, and the
   Overseer cleared it out; resurrect it from git history if a future
   re-skin wants the mechanism back.)"
-  (:require
-    [adsb.events]
-    [adsb.stream :as stream]
-    [adsb.subs]
-    [adsb.ui.aircraft-panel :as aircraft-panel]
-    [adsb.views :as views]
-    [re-frame.core :as rf]
-    [reagent.dom.client :as rdom]))
+  (:require [adsb.events]
+            [adsb.stream :as stream]
+            [adsb.subs]
+            [adsb.ui.aircraft-panel :as aircraft-panel]
+            [adsb.views :as views]
+            [re-frame.core :as rf]
+            [reagent.dom.client :as rdom]))
 
 (defonce ^:private root
   ;; A single React 18 root, created once and reused across hot reloads so
@@ -25,8 +24,7 @@
   "Render the app shell into #app. Idempotent under hot reload."
   []
   (when-let [el (.getElementById js/document "app")]
-    (when (nil? @root)
-      (reset! root (rdom/create-root el)))
+    (swap! root (fn [root] (or root (rdom/create-root el))))
     (rdom/render @root [views/app-root])))
 
 (defn init!

@@ -25,19 +25,22 @@
     * CONNECTION — TWO semantically distinct signals, because two different
       things can go wrong and the user must be able to tell them apart:
 
-        - STREAM health (:stream/connection — :live / :reconnecting / :down)
-          is the browser-to-server SSE link. Its :down means DISCONNECTED:
-          we stopped receiving frames. It renders NOTHING while live — an
-          empty space where the chip would be is the report that the link is
-          fine. A frozen map still cannot read as a quiet one: a frozen map
-          is not a silent header, it is a Disconnected chip.
+        - STREAM health (:stream/connection — :connecting / :live /
+          :reconnecting / :down) is the browser-to-server SSE link. Its :down
+          means DISCONNECTED: we stopped receiving frames. It renders NOTHING
+          while :live, and nothing while :connecting either — a boot is not a
+          failure, and an app must not open by announcing one. A frozen map
+          still cannot read as a quiet one: a frozen map is not a silent
+          header, it is a Disconnected chip.
 
         - FEEDER health (the derived :feeder/health — :ok / :starting /
-          :down / :unknown) is the antenna behind the server. A live stream
-          over a DEAD feeder looks perfectly healthy — the map just quietly
-          ages out — so this exists to expose exactly that. When the stream
-          is not live the feeder is UNKNOWABLE, and it shows a neutral
-          :unknown rather than a stale claim (the derivation is in adsb.subs).
+          :down / :unknown, or NIL) is the antenna behind the server. A live
+          stream over a DEAD feeder looks perfectly healthy — the map just
+          quietly ages out — so this exists to expose exactly that. When the
+          stream has dropped, the feeder is UNKNOWABLE and it shows a neutral
+          :unknown rather than a stale claim. While the stream is still
+          :connecting it is nil — unasked, not unknowable — and renders
+          nothing (the derivation is in adsb.subs).
 
   COLOUR ALONE MAY SAY \"FINE\". IT MAY NEVER SAY \"BROKEN\". The feeder at
   :ok is a bare coloured dot, its label kept in the accessibility tree and
@@ -51,13 +54,19 @@
     [adsb.ui.stats :as stats]
     [re-frame.core :as rf]))
 
-;; The stream's three honest states -> the human label the STREAM chip shows.
+;; The stream's honest states -> the human label the STREAM chip shows.
 ;; :down reads \"Disconnected\": this chip measures the browser-to-server
 ;; stream, not the feeder — the feeder chip below owns \"Feeder down\".
 (def ^:const connection-labels
   {:live         "Live"
    :reconnecting "Reconnecting"
    :down         "Disconnected"})
+
+;; The stream states the header says NOTHING about, because neither is news:
+;; :live (all is well) and :connecting (we have just started, and nothing has
+;; gone wrong). Every state outside this set is an exception and speaks.
+(def ^:const quiet-states
+  #{:live :connecting})
 
 ;; The feeder's states -> the human label the FEEDER chip shows. :unknown is
 ;; the neutral state shown whenever the stream is not live and the feeder's
@@ -119,8 +128,8 @@
   the browser is receiving frames at all, not whether the antenna is hearing
   aircraft."
   [status]
-  (let [status (or status :reconnecting)]
-    (when-not (= :live status)
+  (let [status (or status :connecting)]
+    (when-not (contains? quiet-states status)
       [:span.adsb-conn
        {:class       (str "adsb-conn-" (name status))
         :role        "status"
@@ -144,17 +153,17 @@
   When the stream is not live the feeder is unknowable and this shows a
   neutral :unknown, never a stale claim (the derivation is in adsb.subs)."
   [status]
-  (let [status (or status :unknown)
-        ok?    (= :ok status)]
-    [:span.adsb-feeder
-     {:class       (str "adsb-feeder-" (name status))
-      :role        "status"
-      :data-testid "feeder-indicator"
-      :data-state  (name status)}
-     [:span.adsb-feeder-dot {:aria-hidden true}]
-     [:span.adsb-feeder-label
-      {:class (when ok? "adsb-vh")}
-      (get feeder-labels status (name status))]]))
+  (when status                     ; nil while the stream is still :connecting
+    (let [ok? (= :ok status)]
+      [:span.adsb-feeder
+       {:class       (str "adsb-feeder-" (name status))
+        :role        "status"
+        :data-testid "feeder-indicator"
+        :data-state  (name status)}
+       [:span.adsb-feeder-dot {:aria-hidden true}]
+       [:span.adsb-feeder-label
+        {:class (when ok? "adsb-vh")}
+        (get feeder-labels status (name status))]])))
 
 ;; ---------------------------------------------------------------------
 

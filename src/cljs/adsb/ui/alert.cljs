@@ -112,6 +112,9 @@
            ;; (the strip's form), hidden from assistive tech, which gets
            ;; each row's full aria-label sentence instead.
            [:span.adsb-alert-stamp {:aria-hidden true} "NOTAM"]
-           (into [:div.adsb-alert-rows]
-                 (for [a alerts]
-                   ^{:key (:aircraft/icao a)} [alert-item a]))])))))
+           [:div.adsb-alert-rows
+            ;; TODO: for-all
+            (doall
+              (for [a alerts]
+                ^{:key (:aircraft/icao a)}
+                [alert-item a]))]])))))

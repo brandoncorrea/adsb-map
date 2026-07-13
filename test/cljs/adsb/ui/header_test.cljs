@@ -11,6 +11,7 @@
     [adsb.events]
     [adsb.fixtures :as fixtures]
     [adsb.stream]                                 ; registers :aircraft/picture + :stream/connection
+    [adsb.stream.source :as source]               ; the connect! seam, stubbed at boot
     [adsb.subs]
     [adsb.ui.header :as header]
     [cljs.test :refer-macros [deftest testing is use-fixtures async]]
@@ -115,6 +116,30 @@
               "a distinct state hook the visual pass can style")
           (is (some? (.getByText rtl/screen label))
               "and a text label — never colour alone"))))))
+
+(deftest a-refresh-does-not-open-on-a-failure-it-has-not-had
+  (testing "the boot state is :connecting — never connected, nothing failed —
+            and neither signal says a word (adsb-33i). The app used to seed
+            :reconnecting at start, claiming a recovery from a failure that
+            never happened, and :feeder/health faithfully turned that lie into
+            a flash of 'Feeder unknown' on every single refresh"
+    (rf-test/run-test-sync
+      ;; :stream/start's own effect opens a real EventSource; this test is
+      ;; about the state it SEEDS, not the socket it opens (the same seam
+      ;; adsb.stream-test drives the state machine through).
+      (with-redefs [source/connect! (fn [_url _cbs] nil)]
+        (rf/dispatch [:stream/start]))
+      (render-header!)
+      (is (= :connecting @(rf/subscribe [:stream/connection]))
+          "boot is connecting, not reconnecting")
+      (is (nil? @(rf/subscribe [:feeder/health]))
+          "and the feeder is unasked, not unknowable")
+      (is (nil? (.queryByTestId rtl/screen "connection-indicator"))
+          "so the stream says nothing")
+      (is (nil? (.queryByTestId rtl/screen "feeder-indicator"))
+          "and the feeder says nothing")
+      (is (nil? (.queryByText rtl/screen "Feeder unknown"))
+          "no flash of a stale claim across the refresh"))))
 
 (deftest a-live-stream-says-nothing-at-all
   (testing "the header reports EXCEPTIONS, not confirmations (adsb-33i): a

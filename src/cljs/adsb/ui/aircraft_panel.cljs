@@ -18,11 +18,10 @@
   Styling is a NEUTRAL PLACEHOLDER: class names are the re-skin hooks and the
   visual pass is bead adsb-dgb.5. This namespace commits to structure, not a
   look."
-  (:require
-    [adsb.aircraft :as aircraft]
-    [adsb.enrich :as enrich]
-    [adsb.ui.alert :as alert]
-    [re-frame.core :as rf]))
+  (:require [adsb.aircraft :as aircraft]
+            [adsb.enrich :as enrich]
+            [adsb.ui.alert :as alert]
+            [re-frame.core :as rf]))
 
 ;; The em-dash stands in for every fact the sky never reported.
 (def ^:const em-dash "—")
@@ -58,10 +57,9 @@
   sky reported one, nil (→ dash) when it never did. A missing altitude is
   never coerced to 0."
   [{:aircraft/keys [on-ground? altitude-ft]}]
-  (cond
-    on-ground?         "ground"
-    (some? altitude-ft) altitude-ft
-    :else              nil))
+  (if on-ground?
+    "ground"
+    altitude-ft))
 
 (defn- seen-age-s
   "Whole seconds since the aircraft was last heard, from its durable

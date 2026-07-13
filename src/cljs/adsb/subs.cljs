@@ -2,9 +2,8 @@
   "re-frame subscriptions for the app chrome. The aircraft PICTURE sub lives
   in adsb.stream (it owns that app-db key); this namespace holds the derived
   views the chrome reads — selection foremost."
-  (:require
-    [adsb.aircraft :as aircraft]
-    [re-frame.core :as rf]))
+  (:require [adsb.aircraft :as aircraft]
+            [re-frame.core :as rf]))
 
 ;; The raw selection: the icao string the user clicked, or nil. Selection is
 ;; stored as an IDENTITY (an icao), never a snapshot object, which is exactly
@@ -49,16 +48,24 @@
 ;; stream to the server is LIVE. The moment the stream is not live we stop
 ;; receiving fresh feeder status at all, so the last claim is going stale by
 ;; the second; asserting a stale :ok over a dead stream is exactly the lie
-;; this feature exists to prevent. So when the stream is not :live the feeder
-;; is UNKNOWABLE and we derive :unknown — a neutral state the chip shows in
-;; place of a stale claim. nil (no frame yet, even while live) is :unknown too.
+;; this feature exists to prevent. So when the stream has DROPPED the feeder is
+;; UNKNOWABLE and we derive :unknown — a neutral state the chip shows in place
+;; of a stale claim. nil (no frame yet, even while live) is :unknown too.
+;;
+;; UNKNOWABLE AND NOT-YET-ASKED ARE DIFFERENT (adsb-33i). While the stream is
+;; still :connecting — booting, never connected, nothing failed — the feeder is
+;; not unknowable, it is simply unasked, and that is not news. We derive NIL,
+;; and the header renders nothing at all for it. Without this, every refresh
+;; opened on a flash of "Feeder unknown": a truthful report of :reconnecting,
+;; which was itself a lie about a failure that never happened.
 (rf/reg-sub
   :feeder/health
   :<- [:feeder/status]
   :<- [:stream/connection]
   (fn [[feeder-status stream-connection] _]
-    (if (= :live stream-connection)
-      (or feeder-status :unknown)
+    (case stream-connection
+      :live       (or feeder-status :unknown)
+      :connecting nil
       :unknown)))
 
 ;; Every aircraft in the current picture squawking a distress code, ordered

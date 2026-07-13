@@ -13,10 +13,13 @@
                          straight into a MapLibre GeoJSON source; it never
                          mounts a component per aircraft.
 
-    :stream/connection   :live | :reconnecting | :down — the honest health
-                         of the stream, surfaced by the :stream/connection
-                         subscription for the header's status indicator
-                         (adsb-dgb.3).
+    :stream/connection   :connecting | :live | :reconnecting | :down — the
+                         honest health of the stream, surfaced by the
+                         :stream/connection subscription for the header's
+                         status indicator (adsb-dgb.3). :connecting is the
+                         boot state: never connected, nothing failed. It is
+                         NOT :reconnecting, which claims a failure that has
+                         not happened.
 
     :stats/session       the session stats decoded from the envelope's
                          `stats` map (adsb.wire) — the scalar max range and
@@ -50,10 +53,10 @@
   the connection keyword. Time (the backoff timer) enters through the
   `schedule-reconnect!`/`clear-timer!` fns, which tests redef so the state
   machine can be driven synchronously."
-  (:require
-    [adsb.stream.source :as source]
-    [adsb.wire :as wire]
-    [re-frame.core :as rf]))
+  (:require [adsb.stream.source :as source]
+            [adsb.wire :as wire]
+            [clojure.math :as math]
+            [re-frame.core :as rf]))
 
 (def ^:const stream-url
   "The SSE endpoint (adsb-kbm.2): snapshot-then-updates at ~1 Hz."
@@ -74,7 +77,7 @@
   doubling from `base-backoff-ms` and capped at `max-backoff-ms`."
   [attempts]
   (min max-backoff-ms
-       (* base-backoff-ms (.pow js/Math 2 (dec attempts)))))
+       (* base-backoff-ms (math/pow 2.0 (dec attempts)))))
 
 (defn- status-for-attempts
   "Connection status while retrying: honest about a stream that has failed
@@ -145,15 +148,22 @@
 ;; Events
 
 ;; Boot the stream: seed the picture and connection keys, then connect.
+;;
+;; :connecting, NOT :reconnecting. At boot nothing has connected, so there is
+;; nothing to RE-connect to, and the app must not open by announcing a failure
+;; it has not had. This state is the honest one for the window between `start`
+;; and the first `opened`, and it is the reason the header is quiet across a
+;; refresh instead of flashing "Feeder unknown" — which is what :reconnecting
+;; made the derived :feeder/health say, faithfully, about a lie (adsb-33i).
 (rf/reg-event-fx
   :stream/start
   (fn [{:keys [db]} _]
-    {:db (assoc db
-                :aircraft/picture {}
-                :stats/session {}
-                :feeder/status nil
-                :stream/attempts 0
-                :stream/connection :reconnecting)
+    {:db              (assoc db
+                        :aircraft/picture {}
+                        :stats/session {}
+                        :feeder/status nil
+                        :stream/attempts 0
+                        :stream/connection :connecting)
      :stream/connect! nil}))
 
 ;; A (re)connect succeeded: we are live, the failure count resets, and any
@@ -161,7 +171,7 @@
 (rf/reg-event-fx
   :stream/opened
   (fn [{:keys [db]} _]
-    {:db (assoc db :stream/connection :live :stream/attempts 0)
+    {:db                  (assoc db :stream/connection :live :stream/attempts 0)
      :stream/clear-timer! nil}))
 
 ;; A full-picture frame arrived: wholesale-replace the picture and the
@@ -171,10 +181,10 @@
   (fn [db [_ data]]
     (let [{:keys [picture stats feeder]} (data->frame data)]
       (assoc db
-             :aircraft/picture picture
-             :stats/session stats
-             :feeder/status (:feeder/status feeder)
-             :stream/connection :live))))
+        :aircraft/picture picture
+        :stats/session stats
+        :feeder/status (:feeder/status feeder)
+        :stream/connection :live))))
 
 ;; An EventSource error. If the browser is still CONNECTING it owns the
 ;; retry — we just reflect :reconnecting. If it is CLOSED the source is dead:
@@ -185,9 +195,9 @@
   (fn [{:keys [db]} [_ ready-state]]
     (if (= ready-state :closed)
       (let [attempts (inc (:stream/attempts db 0))]
-        {:db (assoc db
-                    :stream/attempts attempts
-                    :stream/connection (status-for-attempts attempts))
+        {:db                         (assoc db
+                                       :stream/attempts attempts
+                                       :stream/connection (status-for-attempts attempts))
          :stream/schedule-reconnect! (backoff-ms attempts)})
       {:db (assoc db :stream/connection :reconnecting)})))
 
@@ -206,11 +216,12 @@
   (fn [db _]
     (get db :aircraft/picture {})))
 
-;; Stream health: :live | :reconnecting | :down.
+;; Stream health: :connecting | :live | :reconnecting | :down. The default is
+;; :connecting — the state of an app that has not connected AND has not failed.
 (rf/reg-sub
   :stream/connection
   (fn [db _]
-    (get db :stream/connection :reconnecting)))
+    (get db :stream/connection :connecting)))
 
 ;; The feeder's health as the server last reported it: :ok | :down |
 ;; :starting, or nil before the first frame / when the server named no

@@ -40,9 +40,8 @@
   side effect is a bug. Fetching is driven by `:enrich/ensure`, which the
   detail panel dispatches for the selected aircraft. Everything else reads
   only what is already cached, so a busy sky costs no network."
-  (:require
-    [clojure.string :as str]
-    [re-frame.core :as rf]))
+  (:require [clojure.string :as str]
+            [re-frame.core :as rf]))
 
 ;; ---------------------------------------------------------------------
 ;; Shard addressing. Shards are named by the first three hex characters of
@@ -70,10 +69,21 @@
 ;; Record accessors. A record is the raw string-keyed map from the shard; the
 ;; UI asks for facts by name and never reaches for a raw key.
 
-(defn type-code   "ICAO type designator, e.g. \"B738\"."      [record] (get record "t"))
-(defn type-desc   "Long type name, e.g. \"Boeing 737-800\"."  [record] (get record "d"))
-(defn registration "Tail number, e.g. \"N12345\"."           [record] (get record "r"))
-(defn operator    "Owner / operator name."                    [record] (get record "o"))
+(defn type-code
+  "ICAO type designator, e.g. \"B738\"."
+  [record] (get record "t"))
+
+(defn type-desc
+  "Long type name, e.g. \"Boeing 737-800\"."
+  [record] (get record "d"))
+
+(defn registration
+  "Tail number, e.g. \"N12345\"."
+  [record] (get record "r"))
+
+(defn operator
+  "Owner / operator name."
+  [record] (get record "o"))
 
 (defn record-for
   "Pure lookup: the enrichment record for `icao` given the `shards` cache, or
@@ -91,17 +101,18 @@
 ;; promise resolving to the parsed shard (a clj map) or rejecting on a
 ;; non-2xx / network error. Tests redef this so no real fetch is made.
 
+(defn- resp->json [prefix resp]
+  (if (.-ok resp)
+    (.json resp)
+    (.reject js/Promise (js/Error. (str "shard " prefix ": HTTP " (.-status resp))))))
+
 (defn get-shard!
   "Fetch and parse the shard JSON for `prefix`. A promise of the parsed map,
   or a rejected promise on any HTTP or network failure."
   [prefix]
   (-> (js/fetch (str db-base-path "/" prefix ".json"))
-      (.then (fn [resp]
-               (if (.-ok resp)
-                 (.json resp)
-                 (js/Promise.reject
-                   (js/Error. (str "shard " prefix ": HTTP " (.-status resp)))))))
-      (.then (fn [json] (js->clj json)))))
+      (.then (partial resp->json prefix))
+      (.then js->clj)))
 
 ;; Log the first enrichment failure and then fall silent — a missing database
 ;; is an ordinary, expected state, not an error worth one line per shard.
@@ -115,6 +126,16 @@
            reason "). Airframe details will be absent; the map is unaffected. "
            "Run `bb db:fetch` to populate resources/public/db/."))))
 
+(defn- on-shard-fetched [prefix parsed]
+  (if (map? parsed)
+    (rf/dispatch [:enrich/shard-loaded prefix parsed])
+    (do (log-failure-once! prefix "malformed shard")
+        (rf/dispatch [:enrich/shard-failed prefix]))))
+
+(defn- on-shard-error [prefix err]
+  (log-failure-once! prefix (.-message err))
+  (rf/dispatch [:enrich/shard-failed prefix]))
+
 (defn fetch-shard!
   "Fetch a shard and land the result in app-db: the parsed map on success, or
   :absent on any failure — HTTP, network, or a payload that is not a JSON
@@ -122,14 +143,8 @@
   throws."
   [prefix]
   (-> (get-shard! prefix)
-      (.then (fn [parsed]
-               (if (map? parsed)
-                 (rf/dispatch [:enrich/shard-loaded prefix parsed])
-                 (do (log-failure-once! prefix "malformed shard")
-                     (rf/dispatch [:enrich/shard-failed prefix])))))
-      (.catch (fn [err]
-                (log-failure-once! prefix (.-message err))
-                (rf/dispatch [:enrich/shard-failed prefix])))))
+      (.then (partial on-shard-fetched prefix))
+      (.catch (partial on-shard-error prefix))))
 
 (rf/reg-fx :enrich/fetch! fetch-shard!)
 
