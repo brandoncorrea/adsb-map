@@ -599,10 +599,29 @@
        :open?         (and open? (pos? unplotted))}]]))
 
 (def ^:private drawer-titles
-  {:ground  "On the ground"
-   :unknown "No altitude reported"
+  "The drawer wears the CAPTION'S OWN LABEL, not a sentence about it. You tapped
+  `NO ALT`; the thing that opened is `NO ALT`. A prose title is a second name for
+  a thing that already had one, and it made the panel wide enough to hold the
+  sentence rather than the aircraft.
+
+  `NO POS` is the one that is not simply copied. The chip counts what IS plotted
+  and the drawer holds what is NOT, so echoing `PLOTTED` would name the panel
+  after the aircraft it does not contain. And these aircraft have a name already,
+  in the tongue the rest of the row speaks: they have no POSITION, exactly as its
+  neighbour has no ALTITUDE. GND · NO ALT · EMG · NO POS."
+  {:ground    "GND"
+   :unknown   "NO ALT"
+   :emergency "EMG"
+   :traffic   "NO POS"})
+
+(def ^:private drawer-descriptions
+  "The long form, for the accessibility tree only — the same trade the feeder's
+  green dot makes. The eye gets the label it tapped; a screen reader gets the
+  sentence."
+  {:ground    "On the ground"
+   :unknown   "No altitude reported"
    :emergency "Squawking distress"
-   :traffic "Heard, not on the map"})
+   :traffic   "Heard, but never located — no position"})
 
 (defn- on-drawer-key!
   "Escape closes the drawer. It is an overlay over the chart, and an overlay you
@@ -641,10 +660,12 @@
           {:data-testid "drawer"
            :data-band   (name band)
            :role        "group"
-           :aria-label  title}
+           :aria-label  (get drawer-descriptions band title)}
           [:div.adsb-stack-drawer-head
+           ;; The label, and the way out. No count: the caption you tapped to get
+           ;; here is still on screen, still carrying it. Saying it twice would
+           ;; only make the drawer wider than the aircraft in it.
            [:span.adsb-stack-drawer-title title]
-           [:span.adsb-stack-drawer-count (count aircraft)]
            [:button.adsb-stack-drawer-close
             {:type        "button"
              :data-testid "drawer-close"

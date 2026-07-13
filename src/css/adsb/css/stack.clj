@@ -306,18 +306,36 @@
   with the dot rules in `shelves` above (both 0,2,0). They win on SOURCE ORDER
   alone, so this block must stay after that one."
   [[:.adsb-stack-drawer
+    ;; IT IS A DRAWER, NOT A PANEL. Three things follow from that, and all three
+    ;; were wrong when it was first built:
+    ;;
+    ;;   * IT BUTTS INTO THE CORNER. No margin, no rounded corners, no border on
+    ;;     the two edges that are off-screen anyway. A gutter between a drawer
+    ;;     and the corner it slides out of is a strip of map you cannot see and
+    ;;     cannot use.
+    ;;   * IT IS THE SIZE OF WHAT IS IN IT. `max-content` on both axes: as wide
+    ;;     as the longest callsign, as tall as its rows — and a ceiling on each,
+    ;;     so a busy band scrolls instead of eating the chart. It held six
+    ;;     callsigns in a 260x752 slab before, which is a panel wearing a
+    ;;     drawer's name.
+    ;;   * A QUARTER OF THE SCREEN IS THE MOST IT MAY EVER TAKE. The map is the
+    ;;     product (§10); this is a footnote to it.
     (decl :position       "fixed"
-          :top            "var(--s3)"
-          :left           "var(--s3)"
-          :bottom         "calc(var(--stack-w) + var(--s3) + env(safe-area-inset-bottom, 0px))"
+          :top            0
+          :left           0
           :z-index        4
           :display        "flex"
           :flex-direction "column"
-          :width          "260px"
-          :max-width      "calc(100vw - 2 * var(--s3))"
+          :width          "max-content"
+          ;; A quarter of the screen is the CEILING, not the size. The floor is
+          ;; the head's own width, so a narrow phone can never squeeze the label
+          ;; onto two lines — which is what a bare 25vw did, and what made the
+          ;; drawer look broken rather than small.
+          :max-width      "max(25vw, 120px)"
+          :max-height     "calc(100vh - var(--stack-w) - env(safe-area-inset-bottom, 0px))"
           :background     "var(--paper-chrome)"
-          :border         "1px solid var(--rule-strong)"
-          :border-radius  "2px"
+          :border-right   "1px solid var(--rule-strong)"
+          :border-bottom  "1px solid var(--rule-strong)"
           :box-shadow     "2px 2px 0 var(--rule-faint)"
           :color          "var(--ink)"
           :box-sizing     "border-box")]
@@ -328,24 +346,20 @@
           :gap           "var(--s2)"
           :flex          "none"
           :padding       "var(--s2) var(--s3)"
+          :white-space   "nowrap"      ; the label sets the width; it never wraps
           :border-bottom "1px solid var(--rule)")]
 
    ;; voice: adsb.css.captions
    [:.adsb-stack-drawer-title
     (decl :color "var(--faded-ink)")]
 
-   [:.adsb-stack-drawer-count
-    (decl :margin-left          "auto"
-          :font-variant-numeric "tabular-nums"
-          :font-size            "var(--t-1)")]
-
    [:.adsb-stack-drawer-close
-    (decl :display     "flex"
+    (decl :margin-left "auto"        ; the label leads; the way out sits at the end
+          :display     "flex"
           :align-items "center"
           :justify-content "center"
           :width       "24px"
           :height      "24px"
-          :margin      "0 calc(-1 * var(--s2)) 0 var(--s2)"
           :padding     0
           :background  "none"
           :border      "none"
@@ -410,11 +424,12 @@
 
    ;; In the drawer the name IS the row, not a tooltip pinned above a dot.
    [".adsb-stack-drawer .adsb-stack-tick-label"
-    (decl :position   "static"
-          :transform  "none"
-          :padding    0
-          :background "none"
-          :border     "none")]
+    (decl :position    "static"
+          :transform   "none"
+          :padding     0
+          :background  "none"
+          :border      "none"
+          :white-space "nowrap")]
 
    [".adsb-stack-drawer .adsb-stack-tick:hover"
     (decl :background "var(--paper-veil)")]])
