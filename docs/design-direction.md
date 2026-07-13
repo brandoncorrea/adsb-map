@@ -56,8 +56,8 @@ glows like filament against the night paper at regional-zoom road density;
 the alpha the day edition always used quiets the network to embers). Every
 other night value stood as designed. Where the palette lives in code:
 aircraft inks in `adsb.map.style/palettes`, basemap inks in
-`adsb.map.basemap/editions`, chrome inks in `app.css` custom properties —
-one table, three media, change them together.
+`adsb.map.basemap/editions`, chrome inks in `adsb.css.tokens` custom
+properties — one table, three media, change them together.
 
 | Role | Day edition | Night edition |
 |---|---|---|
@@ -84,8 +84,8 @@ section's own rule: day faded ink deepened `#8B8471` → `#6E6A58` — the §5
 mono captions print at 10.5px and the old ink sat at 3.4:1 against the
 chrome paper; the new one reads 5.0:1 and keeps the dusty-khaki
 relationship. Applied across all three media. (The chip greens/ambers in
-app.css — `--ok`/`--warn`, not table rows — were contrast-tuned the same
-day.)*
+`adsb.css.tokens` — `--ok`/`--warn`, not table rows — were contrast-tuned
+the same day.)*
 
 **Aircraft altitude ramp** — *continuous* (Q6a), interpolated through
 chart-native inks, warm (low) → cool (high):
@@ -216,7 +216,7 @@ losing to its most radical rival:
   all.
 
 **Mechanism:** the winner ships exactly as previewed — the mix's CSS
-custom-property set promoted into `app.css` `:root` in both editions,
+custom-property set promoted into `adsb.css.tokens` `:root` in both editions,
 `font-src 'self'` added to the CSP (`adsb-kh4.7`), applied across the
 chrome in the visual pass (`adsb-dgb.5`). The `#/preview` fitting room
 (bead `adsb-dgb.11`) served every pick above and was then cleared out
@@ -349,7 +349,7 @@ In order, because risk fronts the queue:
    the instinct channel is perspective size (§8, shadow rejected); the Stack
    (§9) is built and load-bearing.
 8. ~~File the typography bake-off bead~~ **Done — picked and shipped**:
-   the §5 mix is live in `app.css`; the `#/preview` fitting room was
+   the §5 mix is live in `adsb.css.tokens`; the `#/preview` fitting room was
    cleared out after the picks (in git history if ever needed again).
 
 **Nothing in this section is outstanding.** The direction as written is the

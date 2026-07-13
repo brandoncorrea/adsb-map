@@ -63,13 +63,20 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 `bb` is the command surface. Prefer it over raw `clojure`/`shadow-cljs` invocations.
 
 ```bash
-bb dev          # backend + shadow-cljs watch
+bb dev          # backend + shadow-cljs watch + Garden watch
+bb css          # compile the stylesheet (src/css -> resources/public/app.css)
 bb test         # everything — clj, cljc, cljs. What CI runs.
 bb test:clj     # JVM only. Fast. Run this most.
 bb test:cljs    # browser suite, real headless Chromium via Playwright
 bb lint         # clj-kondo — treat its warnings as failures
 bb build        # production artifacts
 ```
+
+**`resources/public/app.css` is BUILD OUTPUT — do not edit it.** It is generated
+from Garden namespaces under `src/css/` and gitignored, exactly as
+`resources/public/js` is generated from `src/cljs/`. Start at `adsb.css.app`,
+which is the cascade. Declarations go through `adsb.css.decl/decl`, never a map
+literal — read that namespace's docstring before you doubt it.
 
 CLJS tests run in a **real browser**, not jsdom — jsdom has no layout engine and no
 WebGL, so MapLibre cannot initialize and `getBoundingClientRect` returns zeros. Do
@@ -116,6 +123,7 @@ ultrafeeder  ──poll aircraft.json──►  backend (JVM)  ──SSE──�
 src/clj/adsb/     backend — ingest/, stream/ (SSE), http/ (reitit)
 src/cljc/adsb/    shared domain — pure. aircraft, schema (Malli), geo.
 src/cljs/adsb/    frontend — Reagent + re-frame chrome, MapLibre map
+src/css/adsb/     the stylesheet — Garden. Compiles to resources/public/app.css.
 ```
 
 Stack: deps.edn + babashka + shadow-cljs · Ring/reitit + http-kit · Malli ·
