@@ -130,6 +130,76 @@
 ;; ---------------------------------------------------------------------
 ;; The window — zoom, as arithmetic.
 
+(deftest the-window-is-read-from-the-scroller
+  ;; THE SCROLL POSITION IS THE TRUTH now. The window is a snapshot of what the
+  ;; viewport is showing, and two things render from it — the overflow counts and
+  ;; the graduation step — so it may never lie about what the reader can see.
+  (testing "an unscrolled ruler at zoom 1 is the whole sky"
+    (is (= stack/full-window
+           (stack/scroll->window {:scroll 0 :viewport 372 :track 372 :horizontal? true}))))
+
+  (testing "scrolled halfway into a 4x track, the viewport shows the third quarter"
+    (let [w (stack/scroll->window {:scroll 744 :viewport 372 :track 1488 :horizontal? true})]
+      (is (= 22500 (:min-ft w)) "half of the sky is behind us")
+      (is (= 33750 (:max-ft w)) "and a quarter of it is in view")))
+
+  (testing "THE VERTICAL RULER IS INVERTED, and getting this backwards would put
+            the overflow counts on the wrong ends — the one thing they exist to
+            get right. Altitude climbs UPWARD; scrollTop counts DOWNWARD from the
+            track's head, so scrollTop 0 is the CEILING"
+    (let [w (stack/scroll->window {:scroll 0 :viewport 200 :track 800 :horizontal? false})]
+      (is (= stack/ceiling-ft (:max-ft w)) "unscrolled, you are looking at the ceiling")
+      (is (= 33750 (:min-ft w)) "and down as far as the viewport reaches")))
+
+  (testing "a ruler with no track has no window — an unstyled Stack (the browser
+            suite renders without the stylesheet) must not invent one"
+    (is (= stack/full-window
+           (stack/scroll->window {:scroll 0 :viewport 0 :track 0 :horizontal? true})))))
+
+(deftest zooming-keeps-the-sky-under-the-fingers
+  (testing "the track grows about the point being pinched, and the scroll is
+            corrected so the sky there does not move — the whole feel of a
+            timeline zoom is that the thing you are pointing at stays put"
+    ;; viewport 400, track 400 (zoom 1), finger at the middle (offset 200).
+    ;; Double the zoom: the track becomes 800, and the sky at the finger — which
+    ;; was halfway along the track — must still sit under offset 200.
+    (let [scroll' (stack/zoom-scroll {:scroll 0 :viewport 400 :track 400} 800 200)]
+      (is (= 200 scroll') "scrolled by exactly the amount that holds it")
+      (is (= 0.5 (/ (+ scroll' 200) 800)) "still halfway along the track")))
+
+  (testing "and it never asks the browser for sky that is not there"
+    (is (= 0 (stack/zoom-scroll {:scroll 0 :viewport 400 :track 800} 400 0))
+        "zooming back out to a track the size of the viewport scrolls to the head")
+    (is (>= (stack/zoom-scroll {:scroll 700 :viewport 400 :track 800} 800 399) 0)
+        "and never past it")))
+
+(deftest the-zoom-has-a-floor-and-a-ceiling
+  (testing "1 is the whole sky, and there is nothing wider"
+    (is (= 1 (stack/clamp-zoom 0.5)))
+    (is (= 1 (stack/clamp-zoom 1))))
+  (testing "and it may not close past 500ft of sky across the whole viewport, far
+            past the point where two aircraft could still share a pixel"
+    (is (= stack/max-zoom (stack/clamp-zoom 1e6)))
+    (is (<= (/ stack/ceiling-ft stack/max-zoom) 500))))
+
+(deftest a-pointer-is-placed-on-the-whole-sky-not-the-window
+  (testing "the scrub thinks in FULL-SCALE space, because the track does: a tick
+            is at its altitude whether the reader has scrolled it into view or
+            not, and track-pct folds the scroll offset in"
+    (let [m {:scroll 0 :viewport 372 :track 372 :horizontal? true}]
+      (is (= 0 (stack/track-pct m 0)))
+      (is (= 50 (stack/track-pct m 186)))
+      (is (= 100 (stack/track-pct m 372))))
+
+    (testing "scrolled into a 4x track, the same finger lands somewhere else
+              entirely — which is the whole job of this function"
+      (let [m {:scroll 744 :viewport 372 :track 1488 :horizontal? true}]
+        (is (= 50 (stack/track-pct m 0)) "the left edge is now mid-sky")
+        (is (= 75 (stack/track-pct m 372)) "and the right edge three-quarters up")))
+
+    (testing "and it says nothing at all about a ruler with no track"
+      (is (nil? (stack/track-pct {:scroll 0 :viewport 0 :track 0 :horizontal? true} 10))))))
+
 (deftest the-window-places-feet-on-the-range-it-frames
   (testing "at full range the window IS the altitude axis"
     (is (= 0 (stack/window-pct stack/full-window 0)))
@@ -159,55 +229,22 @@
       (is (not (stack/in-window? w 32001)))
       (is (not (stack/in-window? w nil)) "and absent is not an altitude"))))
 
-(deftest zooming-holds-the-point-under-the-fingers-still
-  (testing "the sky spreads AROUND the point you are pinching — the thing you are
-            pointing at does not move, which is the whole feel of a timeline zoom"
-    (let [w    {:min-ft 0 :max-ft 40000}
-          ;; pinch about FL200, which sits at 50% of this window
-          w'   (stack/zoom-window w 50 0.5)]
-      (is (= 20000 (+ (:min-ft w') (/ (- (:max-ft w') (:min-ft w')) 2)))
-          "FL200 is still the middle of the window")
-      (is (= 20000 (- (:max-ft w') (:min-ft w'))) "and the span halved")))
-
-  (testing "pinching about the top holds the TOP still"
-    (let [w'  (stack/zoom-window {:min-ft 0 :max-ft 40000} 100 0.5)]
-      (is (= 40000 (:max-ft w')) "the ceiling under the fingers stayed put")
-      (is (= 20000 (:min-ft w'))))))
-
-(deftest the-window-can-never-frame-sky-that-does-not-exist
-  (testing "it never runs past the surface or the ceiling — a window beyond
-            either end would print scale that is not there"
-    (let [w (stack/zoom-window {:min-ft 0 :max-ft 10000} 0 0.5)]
-      (is (= 0 (:min-ft w)) "held at the surface, not dragged below it"))
-    (let [w (stack/zoom-window {:min-ft 40000 :max-ft stack/ceiling-ft} 100 0.5)]
-      (is (= stack/ceiling-ft (:max-ft w)) "and never above the ceiling"))
-    (let [w (stack/pan-window {:min-ft 0 :max-ft 10000} -999)]
-      (is (= 0 (:min-ft w)) "panning stops at the surface")
-      (is (= 10000 (:max-ft w)) "without resizing the window it was panning")))
-
-  (testing "it never closes tighter than min-window-ft, and never opens wider
-            than the whole sky — pinching out far enough is simply HOME"
-    (let [tight (stack/zoom-window {:min-ft 30000 :max-ft 30500} 50 0.001)]
-      (is (>= (- (:max-ft tight) (:min-ft tight)) stack/min-window-ft)))
-    (is (= stack/full-window (stack/zoom-window {:min-ft 30000 :max-ft 31000} 50 1000))
-        "pinch out past the sky and you land exactly on the whole sky — the
-         gesture's own way back to the map key")))
-
 (deftest the-graduations-follow-the-window
   (testing "a fixed SFC/FL100/…/FL400 was honest only at full range. Zoom to a
             2000ft slice and it would print one rule or none, and the reader
             would be staring at an unlabelled band of colour"
     (is (= 10000 (stack/graduation-step 45000)) "the whole sky rules by 10,000")
     (is (= 500 (stack/graduation-step 2000)) "a 2000ft slice rules by 500")
-    (is (>= (count (stack/graduations {:min-ft 30000 :max-ft 32000})) 3)
-        "every window is ruled at least three times — always readable, never a
-         wall of lines"))
+    (is (>= (count (stack/graduations 1)) 3)
+        "every zoom is ruled at least three times — always readable, never a wall
+         of lines"))
 
-  (testing "the rules are real altitudes inside the window, labelled as the
-            charts print them"
-    (let [gs (stack/graduations {:min-ft 30000 :max-ft 32000})]
-      (is (every? #(stack/in-window? {:min-ft 30000 :max-ft 32000} (first %)) gs))
-      (is (some #(= "FL310" (second %)) gs) "FL310, three digits, as charts print")))
+  (testing "zoomed in, the step tightens and the rules multiply — and they are
+            real altitudes, labelled as the charts print them"
+    (let [gs (stack/graduations 22)]                ; ~2000ft in view
+      (is (some #(= "FL310" (second %)) gs) "FL310, three digits, as charts print")
+      (is (> (count gs) (count (stack/graduations 1)))
+          "more rules, because the reader can now see between them")))
 
   (testing "the surface still reads SFC, not FL000"
     (is (= "SFC" (stack/graduation-label 0)))
@@ -237,74 +274,6 @@
         (is (= 1 (:above o)))
         (is (:above-emergency? o)
             "the ruler's ceiling admits it is hiding a distress squawk")))))
-
-(deftest a-scrub-cannot-name-what-the-ruler-is-not-showing
-  (testing "an aircraft the reader has zoomed past is not under their finger,
-            whatever its altitude. The scrub reads the window, not the sky"
-    (let [window {:min-ft 30000 :max-ft 32000}
-          low    (assoc ups :aircraft/icao "low00" :aircraft/altitude-ft 5000)
-          here   (assoc ups :aircraft/icao "here0" :aircraft/altitude-ft 31000)]
-      (is (= "here0" (:aircraft/icao (stack/nearest-tick window [low here] 50)))
-          "the one in view")
-      (is (= "here0" (:aircraft/icao (stack/nearest-tick window [low here] 0)))
-          "even at the very floor of the window, where the hidden one is nearer
-           in raw altitude — it is not on this ruler")
-      (is (nil? (stack/nearest-tick window [low] 50))
-          "and with nothing in view there is nothing to point at"))))
-
-(deftest a-swipe-carries-and-then-it-stops
-  (testing "friction is framed per MILLISECOND, not per frame: a slow frame must
-            not brake harder than a fast one, or the same swipe would travel a
-            different distance on a busy machine"
-    (let [v 0.01]
-      (is (< (stack/decay-velocity v 16) v) "one frame of friction slows it")
-      (is (< (stack/decay-velocity v 32) (stack/decay-velocity v 16))
-          "a frame that took twice as long takes twice the friction")
-      (is (js/Number.isFinite (stack/decay-velocity v 0))
-          "and a zero-length frame is not a divide by zero")))
-
-  (testing "it carries, and it stops — a scroll that ran for two seconds would
-            feel like ice"
-    (let [spent (nth (iterate #(stack/decay-velocity % 16) 0.01) 60)]
-      (is (not (stack/flinging? spent))
-            "a second of friction has spent it")))
-
-  (testing "a fling below the floor is not a fling — a pan that crawls to a halt
-            over the last pixel reads as a stutter, not as momentum"
-    (is (not (stack/flinging? 0)))
-    (is (not (stack/flinging? (/ stack/fling-floor-pct-per-ms 2))))
-    (is (stack/flinging? (* stack/fling-floor-pct-per-ms 10)))
-    (is (stack/flinging? (* -10 stack/fling-floor-pct-per-ms))
-        "and it carries in either direction — the sky scrolls both ways")))
-
-(deftest the-ruler-holds-still-while-the-reader-moves-it
-  (testing "a tick drifts because an aircraft CLIMBED — never because the scale
-            slid under it. The transition that makes a climb glide would, on a
-            zoom, ease fifty ticks across the ruler at once: a fact about the
-            SCALE animated as though it were a fact about the SKY"
-    (rf-test/run-test-sync
-      (rf/dispatch [:test/set-picture (by-icao [ups])])
-      (render-stack!)
-      (is (not @(rf/subscribe [:stack/window-moving?]))
-          "at rest the ruler drifts as it always did")
-
-      ;; act + flush: Reagent queues the re-render and RTL commits it through a
-      ;; React 18 root, so neither has run by the time the dispatch returns.
-      (rtl/act (fn [] (rf/dispatch [:stack/zoom 50 0.5]) (r/flush)))
-      (is @(rf/subscribe [:stack/window-moving?])
-          "while the window moves, it is held still")
-      (is (.contains (.-classList (.getByTestId rtl/screen "ruler"))
-                     "adsb-stack-ruler-still")
-          "and the DOM says so, which is what kills the transition")
-
-      (rf/dispatch [:stack/window-settled])
-      (is (not @(rf/subscribe [:stack/window-moving?]))
-          "the reader let go; the drift resumes")))
-
-  (testing "panning holds it still too — a drag is no more a climb than a pinch is"
-    (rf-test/run-test-sync
-      (rf/dispatch [:stack/pan 10])
-      (is @(rf/subscribe [:stack/window-moving?])))))
 
 (deftest tick-band-is-three-state
   (testing "ground, a real number, and absent are three different places"
@@ -797,8 +766,11 @@
 ;; ---------------------------------------------------------------------
 ;; The scrub (adsb-4et) — a finger, in a real browser.
 
-(defn- ruler []
-  (.querySelector js/document ".adsb-stack-ruler"))
+(defn- ruler
+  "The scroll VIEW — the element the pointer handlers live on now, and the one
+  whose scroll offset is the ruler's truth."
+  []
+  (.querySelector js/document ".adsb-stack-ruler-view"))
 
 (defn- lay-the-ruler-down!
   "Give the ruler a real recumbent rect. The browser suite renders without

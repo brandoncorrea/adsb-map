@@ -48,16 +48,56 @@
    ;; supposed to be showing it. The floor makes the scale's length a
    ;; property of the STACK, never of the shelves' population.
    ;;
-   ;; touch-action: none — the ruler is scrubbed (adsb-4et), and a drag along
-   ;; it must reach us, not become a browser pan.
+   ;; THE RULER IS A FRAME. The scrolling happens in the VIEW inside it, and the
+   ;; overflow markers hang outside that view — a child of the scroller would
+   ;; scroll away with the sky it is reporting on.
    [:.adsb-stack-ruler
     (decl :position    "relative"
           :flex        1
           :width       "22px"
           :min-height  "55%"
           :margin-left "auto"             ; labels live to its left
-          :border      "1px solid var(--rule-strong)"
-          :touch-action "none")]
+          :border      "1px solid var(--rule-strong)")]
+
+   ;; THE VIEW — a real scroll container, and that is the whole point. The browser
+   ;; owns the panning, and with it momentum on the platform's own deceleration
+   ;; curve, catch-to-stop, rubber-banding, and a pan that runs on the COMPOSITOR:
+   ;; no re-frame event per frame, no React render, no relayout of fifty ticks.
+   ;;
+   ;; touch-action gives the browser the altitude axis and keeps the cross-axis
+   ;; for us, so a drag along the ruler scrolls it (when there is anywhere to
+   ;; scroll) while a press still reaches our handlers. At zoom 1 there is no
+   ;; overflow, nothing scrolls, and the drag is free to SCRUB — the gesture split
+   ;; enforced by the scroller itself rather than by a rule we wrote.
+   [:.adsb-stack-ruler-view
+    (decl :position          "relative"
+          :width             "100%"
+          :height            "100%"
+          :overflow-x        "hidden"
+          :overflow-y        "auto"
+          :overscroll-behavior "contain"   ; the sky's ends are not the page's
+          :touch-action      "pan-y"
+          :scrollbar-width   "none")]      ; the scale IS the scrollbar
+
+   [".adsb-stack-ruler-view::-webkit-scrollbar"
+    (decl :display "none")]
+
+   ;; THE TRACK — as long as the zoom demands. Every tick sits at its TRUE
+   ;; altitude inside it and never moves; scrolling slides the viewport over them.
+   ;; That is why nothing here animates on a pan, and why the "hold the ruler
+   ;; still" flag the hand-rolled pan needed is simply gone.
+   ;; overflow: hidden, and it is load-bearing. A tick's hit-slop and the half of
+   ;; an end tick's ink hang a few pixels past the track — enough for the browser
+   ;; to call the viewport scrollable AT ZOOM 1, where nothing should scroll. Then
+   ;; a drag would pan by three pixels and pointercancel the scrub, and the gesture
+   ;; split ("at zoom 1 there is nothing to scroll, so the drag is free") would be
+   ;; quietly false. The hit-slop is no loss: a tap anywhere on the ruler already
+   ;; lands on the nearest tick.
+   [:.adsb-stack-ruler-track
+    (decl :position "relative"
+          :width    "100%"
+          :height   "calc(100% * var(--zoom, 1))"
+          :overflow "hidden")]
 
    ;; Flight-level graduations — dashed ink rules across the fill.
    [:.adsb-stack-grad
@@ -68,15 +108,61 @@
           :border-top     "1px dashed var(--rule-strong)"
           :pointer-events "none")]
 
+   ;; THE LABEL LAYER — outside the scroller, and the reason the scroller can
+   ;; exist. A scroll container clips what overflows it, and every label here
+   ;; overflows on purpose: the flight levels print beside the strip and a tick's
+   ;; name spills onto the chart. Containing them would mean a scroll container
+   ;; lying across the map, swallowing the clicks meant for the aircraft on it.
+   ;;
+   ;; So they are placed in the VIEWPORT'S space, from the window (adsb.ui.stack
+   ;; /ruler-labels), while the rules and ticks they belong to scroll inside the
+   ;; track. Both read the same scroll position from opposite sides, and land on
+   ;; the same pixels.
+   [:.adsb-stack-labels
+    (decl :position       "absolute"
+          :inset          0
+          :z-index        3
+          :overflow       "visible"
+          :pointer-events "none")]
+
    [:.adsb-stack-grad-label
     (decl :position             "absolute"
+          :bottom               "calc(var(--alt-pct, 0) * 1%)"
           :right                "calc(100% + 5px)"
-          :transform            "translateY(-50%)"
+          :transform            "translateY(50%)"
           :font-size            "var(--t-2)"
           :letter-spacing       "0.04em"
           :font-variant-numeric "tabular-nums"
           :color                "var(--faded-ink)"
-          :white-space          "nowrap")]])
+          :white-space          "nowrap")]
+
+   ;; A tick's name, on the label layer — the same ink the shelf and drawer use,
+   ;; placed by the window instead of by the track.
+   [:.adsb-stack-ruler-label
+    (decl :position      "absolute"
+          :bottom        "calc(var(--alt-pct, 0) * 1%)"
+          :right         "calc(100% + 8px)"
+          :transform     "translateY(50%)"
+          :padding       "1px var(--s2)"
+          :background    "var(--paper-chrome)"
+          :border        "1px solid var(--rule-strong)"
+          :border-radius "2px"
+          :font-family   "var(--mono)"
+          :font-size     "var(--t-1)"
+          :line-height   1.5
+          :color         "var(--ink)"
+          :white-space   "nowrap")]
+
+   [:.adsb-stack-ruler-label-selected
+    (decl :border-color "var(--magenta)"
+          :color        "var(--magenta)"
+          :font-weight  700)]
+
+   [:.adsb-stack-ruler-label-emergency
+    (decl :background   "var(--emergency)"
+          :border-color "var(--emergency)"
+          :color        "var(--on-emergency)"
+          :font-weight  700)]])
 
 (def ticks
   "A tick — one aircraft, at its true altitude. `bottom` (and `left` on phone)
@@ -118,13 +204,10 @@
     (decl :height  "5px"
           :z-index 2)]
 
-   ;; THE RULER HOLDS STILL WHILE THE READER MOVES IT. The tick transition exists
-   ;; so a climbing aircraft glides instead of jumping; a zoom or a pan changes
-   ;; every tick's percentage at once, and easing 50 of them across the ruler
-   ;; would animate a fact about the SCALE as though it were a fact about the
-   ;; SKY. Held still, and the drift resumes the moment the window settles.
-   [".adsb-stack-ruler-still .adsb-stack-tick"
-    (decl :transition "none")]
+   ;; (There is no "hold the ruler still" rule any more, and its absence is the
+   ;; point: a scroll does not move a tick INSIDE the track, so there is nothing
+   ;; to animate. The transition now fires only for the reason it was written —
+   ;; an aircraft that climbed.)
 
    ;; OVERFLOW — what the window is hiding, at the end it is hiding it beyond.
    ;; NOTHING VANISHES SILENTLY: the census counts beside the ruler count the
@@ -546,6 +629,16 @@
            :margin-left  0
            :align-self   "flex-end")]
 
+    ;; Lying down, the sky scrolls left-to-right — and the browser gets that axis.
+    [:.adsb-stack-ruler-view
+     (decl :overflow-x   "auto"
+           :overflow-y   "hidden"
+           :touch-action "pan-x")]
+
+    [:.adsb-stack-ruler-track
+     (decl :width  "calc(100% * var(--zoom, 1))"
+           :height "100%")]
+
     [:.adsb-stack-grad
      (decl :left        "calc(var(--alt-pct, 0) * 1%)"
            :right       "auto"
@@ -556,10 +649,17 @@
 
     [:.adsb-stack-grad-label
      (decl :right     "auto"
-           :left      0
+           :left      "calc(var(--alt-pct, 0) * 1%)"
            :top       "auto"
            :bottom    "calc(100% + 3px)"
            :transform "none")]
+
+    [:.adsb-stack-ruler-label
+     (decl :right     "auto"
+           :left      "calc(var(--alt-pct, 0) * 1%)"
+           :top       "auto"
+           :bottom    "calc(100% + 6px)"
+           :transform "translateX(-50%)")]
 
     [".adsb-stack-ruler .adsb-stack-tick"
      (decl :left      "calc(var(--alt-pct, 0) * 1%)"
