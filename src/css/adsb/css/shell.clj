@@ -109,9 +109,13 @@
           :align-items "baseline"
           :gap         "var(--s2)")]
 
-   ;; the VOICE is adsb.css.captions'; the colour travelled up with the rules
+   ;; the VOICE is adsb.css.captions'; the colour travelled up with the rules.
+   ;; It is an <abbr>, so the browser's dotted underline has to go — the long
+   ;; form lives in the title, and a chart's marginalia are not hyperlinks.
    [:.adsb-stats-label
-    (decl :color "var(--faded-ink)")]
+    (decl :color           "var(--faded-ink)"
+          :text-decoration "none"
+          :cursor          "help")]
 
    [:.adsb-stats-value
     (decl :font-variant-numeric "tabular-nums")]])
