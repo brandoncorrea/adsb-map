@@ -524,8 +524,15 @@
                    :interactive? false}]]))
 
 (defn- traffic-caption
-  "`AC 53/63` — how many aircraft the chart can DRAW, over how many the feeder
-  can HEAR.
+  "`PLOTTED 53/63` — how many aircraft the chart can DRAW, over how many the
+  feeder can HEAR.
+
+  The label names what the fraction MEASURES, not the noun it counts. It read
+  `AC` first, and Brandon had to ask what that meant — which is the whole verdict
+  on a caption: a label that needs explaining has failed at the one job a label
+  has, and `AC` reads as air conditioning or alternating current long before it
+  reads as aircraft. `PLOTTED` needs no gloss, and it happens to be the chart's
+  own word — §5's magenta is the plotter's pen.
 
   A metric about the SKY, so it lives with the sky's other counts rather than in
   the header, which reports on the apparatus (the feeder's range and message
@@ -552,8 +559,8 @@
        :data-positioned (str placed)}
       [:abbr.adsb-stack-shelf-label
        {:title (str placed " of " total
-                    " aircraft positioned; the rest are heard but cannot be placed")}
-       "AC"]
+                    " aircraft plotted; the rest are heard but cannot be placed")}
+       "PLOTTED"]
       [:span.adsb-stack-shelf-count (str placed "/" total)]]]))
 
 (defn stack
