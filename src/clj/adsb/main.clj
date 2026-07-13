@@ -197,6 +197,19 @@
                              :feeder-status  #(poll/status poller)
                              :stream-connect #(broadcast/connect!
                                                 broadcaster %)})]
+    (when-not (broadcast/trusts-forwarded-for? broadcaster)
+      ;; Same silent-failure family as the two warnings above. A per-IP cap
+      ;; keyed on the socket peer does not error or degrade visibly — it just
+      ;; counts the wrong address forever. This exact gap (ADSB_TRUST_FORWARDED_FOR
+      ;; unset on the deployed app) hid for days behind Cloudflare because
+      ;; nothing said so; adsb-nnk. Correct for a direct `bb dev`; behind a
+      ;; proxy it means the cap is off.
+      (log/warn (str "PER-IP SSE CAP KEYS ON THE SOCKET PEER "
+                     "(ADSB_TRUST_FORWARDED_FOR not \"true\"): behind a proxy "
+                     "the socket peer IS the proxy, so every visitor buckets "
+                     "under one address and the per-IP cap does not bind. "
+                     "Correct for a direct `bb dev`; in a deployment behind "
+                     "Cloudflare / App Platform this is the incident — set it.")))
     {:system/poller      poller
      :system/broadcaster broadcaster
      :system/server      http-server}))

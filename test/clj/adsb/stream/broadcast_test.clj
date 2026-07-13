@@ -276,6 +276,31 @@
           (doseq [^BufferedReader reader admitted] (.close reader))
           (stop-streaming-server! streaming))))))
 
+(deftest over-cap-connect-rejects-before-the-sse-upgrade
+  ;; adsb-1se: rejecting after http-kit upgrades the request to an SSE
+  ;; channel makes Cloudflare report a 504 to the client. So the common
+  ;; over-cap case must be a plain Ring response, decided synchronously —
+  ;; never an as-channel upgrade. A full server (max-clients 0) denies
+  ;; every connect, so connect! returns the response map directly.
+  (let [broadcaster (start-and-stop-broadcaster {:max-clients 0})
+        response    (broadcast/connect! broadcaster
+                                        {:headers {} :remote-addr "1.2.3.4"})]
+    (testing "connect! returns a plain 503 map, not an upgraded channel"
+      (is (map? response))
+      (is (= 503 (:status response)))
+      (is (= (str broadcast/retry-after-s) (get-in response [:headers "Retry-After"])))
+      (is (str/includes? (:body response) "server-full")))
+    (testing "and nothing was registered — a synchronous refusal claims no slot"
+      (is (zero? (broadcast/client-count broadcaster))))))
+
+(deftest trusts-forwarded-for?-reflects-the-resolved-flag
+  ;; The boot warning (adsb.main) reads this, not the environment, so it
+  ;; cannot drift from what the broadcaster actually does.
+  (is (true? (broadcast/trusts-forwarded-for?
+               (start-and-stop-broadcaster {:trust-forwarded? true}))))
+  (is (false? (broadcast/trusts-forwarded-for?
+                (start-and-stop-broadcaster {:trust-forwarded? false})))))
+
 (deftest per-ip-connection-cap
   (testing "one IP's concurrent connections are capped even when the
             server as a whole has room"

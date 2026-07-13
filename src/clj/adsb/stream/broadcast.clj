@@ -305,21 +305,29 @@
                 "(further rejections muted for"
                 (/ reject-log-interval-ms 1000) "s)"))))
 
+(defn- rejection-response
+  "The 503 an over-limit connect gets: a JSON body naming the reason and a
+  Retry-After. A plain Ring response map, so the same rejection can be
+  RETURNED before the SSE upgrade (connect!, the common case) or SENT over
+  the async channel after it (reject!, the race case)."
+  [reason]
+  {:status  503
+   :headers {"Content-Type" "application/json"
+             "Retry-After"  (str retry-after-s)}
+   :body    (json/generate-string
+              {:error  "stream at capacity"
+               :reason (name reason)})})
+
 (defn- reject!
-  "Answer an over-limit connect with an honest 503 + Retry-After and
-  close the channel. Sent through the async channel because admission
-  is decided in :on-open — the first send! of a response map writes the
-  real status line."
+  "Answer an over-limit connect that slipped past the synchronous check in
+  connect! and lost the slot in the :on-open race. Sent over the async
+  channel because the request is already upgraded by then — which is
+  exactly why Cloudflare turns this into a 504 for the client (adsb-1se),
+  and exactly why connect! rejects the COMMON case before upgrading. This
+  path is the rare tail, not the norm."
   [broadcaster channel reason ip]
   (log-rejection! broadcaster reason ip)
-  (http-kit/send! channel
-                  {:status  503
-                   :headers {"Content-Type" "application/json"
-                             "Retry-After"  (str retry-after-s)}
-                   :body    (json/generate-string
-                              {:error  "stream at capacity"
-                               :reason (name reason)})}
-                  true))
+  (http-kit/send! channel (rejection-response reason) true))
 
 ;; ---------------------------------------------------------------------
 ;; The tick and the heartbeat
@@ -398,31 +406,43 @@
   switch the request to an http-kit async channel, send the SSE headers
   and one full snapshot, and join the ticks that follow. The registry
   slot is claimed atomically on open and freed by on-close (the browser
-  went away), by a failed send (drop-and-close), or by rejection."
+  went away), by a failed send (drop-and-close), or by rejection.
+
+  Over-limit connects are rejected SYNCHRONOUSLY here, before the SSE
+  upgrade, returning a plain 503. Rejecting after as-channel — sending a
+  503 over a just-upgraded stream — is what Cloudflare reports to the
+  client as a 504 (adsb-1se). This pre-check is a fast path, not the
+  gate: try-register! in :on-open is still the authoritative atomic claim,
+  and it covers the race where the last slot is taken between this read
+  and that claim. That race still 504s, but it is a rare tail, not the
+  every-over-cap-connect norm this fixes."
   [{:stream/keys [picture last-stats feeder trust-forwarded?
-                  trusted-proxy-hops]
+                  trusted-proxy-hops clients limits]
     :as          broadcaster}
    request]
   (let [ip (client-ip trust-forwarded? trusted-proxy-hops request)]
     (diagnose-client-ip! broadcaster request ip)
-    (http-kit/as-channel
-      request
-      {:on-open  (fn [channel]
-                   (if-some [reason (try-register! broadcaster channel ip)]
-                     (reject! broadcaster channel reason ip)
-                     (let [now-ms (System/currentTimeMillis)
-                           frame  (picture-frame! broadcaster snapshot-event
-                                                  (picture now-ms) @last-stats
-                                                  (feeder) now-ms)]
-                       (if (and (http-kit/send! channel
-                                                {:status  200
-                                                 :headers sse/headers}
-                                                false)
-                                (http-kit/send! channel frame false))
-                         (mark-ready! broadcaster channel)
-                         (drop-client! broadcaster channel)))))
-       :on-close (fn [channel _status]
-                   (unregister! broadcaster channel))})))
+    (if-some [reason (deny-reason @clients ip limits)]
+      (do (log-rejection! broadcaster reason ip)
+          (rejection-response reason))
+      (http-kit/as-channel
+        request
+        {:on-open  (fn [channel]
+                     (if-some [reason (try-register! broadcaster channel ip)]
+                       (reject! broadcaster channel reason ip)
+                       (let [now-ms (System/currentTimeMillis)
+                             frame  (picture-frame! broadcaster snapshot-event
+                                                    (picture now-ms) @last-stats
+                                                    (feeder) now-ms)]
+                         (if (and (http-kit/send! channel
+                                                  {:status  200
+                                                   :headers sse/headers}
+                                                  false)
+                                  (http-kit/send! channel frame false))
+                           (mark-ready! broadcaster channel)
+                           (drop-client! broadcaster channel)))))
+         :on-close (fn [channel _status]
+                     (unregister! broadcaster channel))}))))
 
 ;; ---------------------------------------------------------------------
 ;; Lifecycle
@@ -553,6 +573,16 @@
   "How many SSE clients are connected right now."
   [{:stream/keys [clients]}]
   (count @clients))
+
+(defn trusts-forwarded-for?
+  "Whether this broadcaster believes the edge-supplied client address
+  (ADSB_TRUST_FORWARDED_FOR — CF-Connecting-IP / X-Forwarded-For). False
+  means the per-IP cap keys on the TCP peer, which behind a proxy is the
+  proxy — so the composition root warns when a boot resolves it false.
+  Reads the RESOLVED value, not the environment, so the warning cannot
+  drift from what the running broadcaster actually does."
+  [{:stream/keys [trust-forwarded?]}]
+  (boolean trust-forwarded?))
 
 (defn stop!
   "Stop the ticks and close every client. Idempotent."
