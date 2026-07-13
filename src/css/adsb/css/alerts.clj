@@ -5,8 +5,7 @@
   squawks distress. Every emergency STACKS as its own row rather than cycling
   behind a timer. Grave, drawn once: red field, plain mono language, a stamped
   NOTAM tab — and ZERO motion. Ink does not blink."
-  (:require
-    [adsb.css.decl :refer [decl]]))
+  (:require [adsb.css.decl :refer [decl]]))
 
 (def styles
   [[:.adsb-alerts
@@ -59,18 +58,18 @@
           :box-sizing    "border-box")]
 
    [:.adsb-alert:last-child
-    (decl :border-bottom "none")]
+    {:border-bottom "none"}]
 
    [:.adsb-alert:hover
-    (decl :filter "brightness(1.08)")]
+    {:filter "brightness(1.08)"}]
 
    [:.adsb-alert:focus-visible
     (decl :outline        "2px solid var(--on-emergency)"
           :outline-offset "-3px")]
 
    [:.adsb-alert-name
-    (decl :font-weight    700
-          :letter-spacing "0.02em")]
+    {:font-weight    700
+     :letter-spacing "0.02em"}]
 
    [:.adsb-alert-squawk
     (decl :font-variant-numeric "tabular-nums"

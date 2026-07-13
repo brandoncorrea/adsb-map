@@ -13,12 +13,22 @@
       better one, and it was already on the chart.
 
       What the ramp could NOT key are the states that are not altitudes, and
-      those the shelves now carry as swatches beside their counts — `● GND 3`,
-      `● NO ALT 31`, and `● EMG 1` when, and only when, an aircraft is
-      squawking. Every swatch is painted from `style/palette`, never from a CSS
-      token mirroring it: that was the deleted legend's one real virtue and it
-      is kept exactly. The staleness fade keys itself — a plane that is fading
-      is a plane going quiet, which is the only thing the fade ever meant.
+      those the shelves carry as swatches beside their counts — `● GND 3`,
+      `● NO ALT 31`, `● EMG 0`. Every swatch is painted from `style/palette`,
+      never from a CSS token mirroring it: that was the deleted legend's one
+      real virtue and it is kept exactly. The staleness fade keys itself — a
+      plane that is fading is a plane going quiet, which is the only thing the
+      fade ever meant.
+
+    * THE THREE COUNTS ARE ONE REGISTER. GND, NO ALT and EMG all answer the
+      same question — how many aircraft are in this state — so all three are
+      permanent, and a zero is a reading, not an absence. They are NOT the
+      header's stream and feeder signals, which report on the apparatus and
+      stay silent while it is healthy; these report on the SKY, and the app
+      earns no credit for a calm one. What is conditional is not the count but
+      the INK: red arrives with the aircraft that deserve it (see
+      `emergency-shelf`). A chip with no residents is also not a button — it
+      states its fact and offers no door to nowhere.
     * ALTITUDE SCALE — flight-level graduations from the surface to the
       ceiling (~FL450).
     * AIRCRAFT LIST — every positioned-or-altitude-bearing aircraft is a
@@ -406,10 +416,37 @@
   it, and the test asserts they equal it in BOTH editions."
   [color testid]
   [:span.adsb-stack-shelf-swatch
-   {:data-testid testid
-    :data-color  color
-    :style       {:background-color color}
-    :aria-hidden true}])
+   (cond-> {:data-testid testid :aria-hidden true}
+     ;; No colour given means there is no such aircraft in the sky, so there is
+     ;; no ink of that kind on the chart to key. The swatch falls back to the
+     ;; stylesheet's faded ink and the caption states its fact quietly. This is
+     ;; how EMG can be permanent WITHOUT spending red on a calm sky (§7: red is
+     ;; ink that never blinks, and it keeps that power only by being absent when
+     ;; there is nothing to be red about).
+     color (assoc :data-color color
+                  :style {:background-color color}))])
+
+(defn- census-chip
+  "One census caption: a swatch, a state, and how many aircraft are in it.
+
+  A BUTTON only when it has residents to name. A chip at zero opens a sheet of
+  nobody — a dead target, and an empty bordered box floating over the map — so
+  at zero it renders as a plain caption instead. The fact is still stated; it
+  simply is not offered as a door to nowhere."
+  [{:keys [band label color n interactive? open?]}]
+  (let [testid  (str "shelf:" (name band))
+        swatch* (str "swatch:" (name band))
+        body    [[swatch color swatch*]
+                 [:span.adsb-stack-shelf-label label]
+                 [:span.adsb-stack-shelf-count n]]]
+    (if interactive?
+      (into [:button.adsb-stack-shelf-chip
+             {:type          "button"
+              :data-shelf    (name band)
+              :data-testid   testid
+              :aria-expanded (boolean open?)}]
+            body)
+      (into [:span.adsb-stack-shelf-caption {:data-testid testid}] body))))
 
 (defn- shelf
   "A holding band at the ruler's foot — the ground cluster or the
@@ -428,16 +465,14 @@
   cannot help: on a phone, where they are hidden, and at a count of zero, where
   there are no dots to take the colour from."
   [{:keys [band class label color aircraft open? selected-icao hovered-icao]}]
-  (let [tick-opts {:selected-icao selected-icao :hovered-icao hovered-icao}]
+  (let [tick-opts {:selected-icao selected-icao :hovered-icao hovered-icao}
+        n         (count aircraft)
+        ;; A sheet of nobody is not a sheet. If the last resident lands or ages
+        ;; out while its sheet stands open, the sheet closes with them.
+        open?     (and open? (pos? n))]
     [:div.adsb-stack-shelf {:class class :role "group" :aria-label label}
-     [:button.adsb-stack-shelf-chip
-      {:type          "button"
-       :data-shelf    (name band)
-       :data-testid   (str "shelf:" (name band))
-       :aria-expanded (boolean open?)}
-      [swatch color (str "swatch:" (name band))]
-      [:span.adsb-stack-shelf-label label]
-      [:span.adsb-stack-shelf-count (count aircraft)]]
+     [census-chip {:band band :label label :color color :n n
+                   :interactive? (pos? n) :open? open?}]
      (if open?
        [:div.adsb-stack-sheet
         (for [a aircraft]
@@ -446,27 +481,47 @@
        (for [a aircraft]
          ^{:key (:aircraft/icao a)} [tick a tick-opts]))]))
 
-(defn- emergency-caption
-  "`● EMG 1` — the key for red, and the count of it.
+(defn- emergency-shelf
+  "`● EMG 0` — and `● EMG 1` when the sky is not calm.
 
-  It renders ONLY while an aircraft is squawking distress, which is the point:
-  a legend row explaining a colour that is nowhere on the chart is a row that
-  spends the reader's attention on nothing. This one cannot be stale and cannot
-  be idle — it is on screen exactly when red is on screen.
+  IT IS A CENSUS, NOT A HEALTH SIGNAL, and that is why it is permanent. The
+  header's stream and feeder signals report on the APPARATUS — on us, on the
+  plumbing that carries tracks to this screen — and a healthy machine is not
+  news, so they say nothing at all when all is well. This says how many
+  AIRCRAFT are in a state, exactly as GND and NO ALT do. It is a fact about the
+  sky, and the app gets no credit for it.
 
-  It is not a shelf and not a button. A distressed aircraft is airborne and
-  already has its tick on the ruler (red, hatched, permanently named — §7); it
-  is named again in the NOTAM ribbon, which is where you go to act on it. A
-  second list of the same aircraft would be a second answer to a question the
-  chart has already answered twice."
+  A STATED ZERO IS WORTH MORE THAN AN IMPLIED ONE. Nothing on screen could mean
+  `no emergencies` — or it could mean `the indicator is not rendering`, or `I am
+  not looking in the right place`. That is not an ambiguity to leave lying
+  around a distress readout.
+
+  RED IS NOT PERMANENT, THOUGH. §7 makes red the ink that never blinks, and it
+  keeps that power only by being ABSENT while there is nothing to be red about;
+  a red dot sitting in the corner of a calm chart is red that means nothing, and
+  it cheapens the red that means everything. So at zero the swatch and the count
+  print in faded ink and the caption merely states its fact. The moment an
+  aircraft squawks, the swatch goes red and the count goes bold, and the caption
+  becomes the key for the red that is now on the chart.
+
+  It opens nothing, and needs to open nothing: a distressed aircraft is already
+  named on its own tick (red, hatched, permanently labelled — §7) and named
+  again in the NOTAM ribbon, which is where you go to act on it. A third list
+  would be a third answer to a question the chart has answered twice."
   [aircraft color]
-  (when (seq aircraft)
+  (let [n       (count aircraft)
+        squawk? (pos? n)]
     [:div.adsb-stack-shelf.adsb-stack-emergency
-     {:role "status" :aria-label (str (count aircraft) " squawking distress")}
-     [:span.adsb-stack-shelf-caption {:data-testid "shelf:emergency"}
-      [swatch color "swatch:emergency"]
-      [:span.adsb-stack-shelf-label "EMG"]
-      [:span.adsb-stack-shelf-count (count aircraft)]]]))
+     {:class      (when squawk? "adsb-stack-emergency-active")
+      :role       "status"
+      :aria-label (if squawk?
+                    (str n " squawking distress")
+                    "No aircraft squawking distress")}
+     [census-chip {:band         :emergency
+                   :label        "EMG"
+                   :n            n
+                   :color        (when squawk? color)
+                   :interactive? false}]]))
 
 (defn stack
   "The Stack, mounted permanently on the map's edge. A form-2 component:
@@ -520,4 +575,4 @@
                  :open?         (= :unknown open-shelf)
                  :selected-icao selected-icao
                  :hovered-icao  hovered-icao}]
-         [emergency-caption @emergencies (:emergency-color palette)]]))))
+         [emergency-shelf @emergencies (:emergency-color palette)]]))))

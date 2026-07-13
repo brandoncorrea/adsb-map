@@ -6,8 +6,7 @@
   clear of the Stack — ink rule under the title, caption-voice fact labels,
   mono data, em-dashes for facts the sky never reported. It settles in (§6);
   it never crowds the plot."
-  (:require
-    [adsb.css.decl :refer [decl]]))
+  (:require [adsb.css.decl :refer [decl]]))
 
 (def card
   [[:.adsb-panel
@@ -52,7 +51,7 @@
           :cursor      "pointer")]
 
    [:.adsb-panel-close:hover
-    (decl :color "var(--ink)")]
+    {:color "var(--ink)"}]
 
    [:.adsb-panel-close:focus-visible
     (decl :outline        "2px solid var(--magenta)"
@@ -65,7 +64,7 @@
           :padding   "var(--s2) var(--s3) 0")]
 
    [:.adsb-panel-facts
-    (decl :padding "var(--s2) var(--s3) var(--s3)")]
+    {:padding "var(--s2) var(--s3) var(--s3)"}]
 
    [:.adsb-fact
     (decl :display         "flex"
@@ -76,11 +75,11 @@
           :border-bottom   "1px dotted var(--rule-faint)")]
 
    [:.adsb-fact:last-child
-    (decl :border-bottom "none")]
+    {:border-bottom "none"}]
 
    ;; voice: adsb.css.captions
    [:.adsb-fact-label
-    (decl :color "var(--faded-ink)")]
+    {:color "var(--faded-ink)"}]
 
    [:.adsb-fact-value
     (decl :text-align           "right"
@@ -117,16 +116,16 @@
   (adsb.map.selection) so it rides the chart, not the screen. It draws itself
   in once per selection and then holds still."
   [[:.adsb-selection-ring
-    (decl :width          "44px"
-          :height         "44px"
-          ;; the plane beneath stays clickable
-          :pointer-events "none")]
+    {:width          "44px"
+     :height         "44px"
+     ;; the plane beneath stays clickable
+     :pointer-events "none"}]
 
    [".adsb-selection-ring svg"
-    (decl :display  "block"
-          :width    "100%"
-          :height   "100%"
-          :overflow "visible")]
+    {:display  "block"
+     :width    "100%"
+     :height   "100%"
+     :overflow "visible"}]
 
    [".adsb-selection-ring circle"
     (decl :fill             "none"

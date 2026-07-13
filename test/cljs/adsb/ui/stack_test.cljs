@@ -352,25 +352,98 @@
               (:ground-color (style/palette :night)))))
   (theme/set-theme! :day))
 
-(deftest the-emergency-key-exists-only-while-red-does
-  (testing "a legend row explaining a colour that is nowhere on the chart
-            spends the reader's attention on nothing. EMG is on screen exactly
-            when an aircraft is squawking distress, and never otherwise"
+(deftest the-three-counts-are-one-register-and-all-are-permanent
+  (testing "GND, NO ALT and EMG all answer the same question — how many
+            aircraft are in this state — so all three are always on the chart,
+            and a zero is a READING, not an absence. They are not the header's
+            stream and feeder signals: those report on the apparatus and go
+            quiet while it is healthy; these report on the SKY, and a stated
+            zero beats an implied one on a distress readout"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups])])   ; one aircraft, cruising
+      (render-stack!)
+      (doseq [band ["ground" "unknown" "emergency"]]
+        (is (some? (.queryByTestId rtl/screen (str "shelf:" band)))
+            (str band " states its count in a calm sky")))
+      (is (some? (.getByText rtl/screen "EMG"))
+          "EMG is named in words — a reader never has to infer it from a colour"))))
+
+(deftest red-arrives-with-the-aircraft-that-deserve-it
+  (testing "§7 makes red the ink that never blinks, and it holds that power only
+            by being ABSENT from a calm chart. So EMG is permanent but its RED
+            is not: at zero the swatch carries no palette colour at all and the
+            caption is quiet"
     (rf-test/run-test-sync
       (rf/dispatch [:test/set-picture (by-icao [ups fixtures/on-the-ground])])
       (render-stack!)
-      (is (nil? (.queryByTestId rtl/screen "shelf:emergency"))
-          "a calm sky keys no red, because there is no red to key")
-      (is (some? (.queryByTestId rtl/screen "shelf:ground"))
-          "while GND is permanent — its count is a fact even at zero"))
+      (let [chip (.getByTestId rtl/screen "shelf:emergency")]
+        (is (= "0" (.-textContent (.querySelector chip ".adsb-stack-shelf-count")))
+            "the fact is stated: nobody is squawking")
+        (is (nil? (.getAttribute (.getByTestId rtl/screen "swatch:emergency")
+                                 "data-color"))
+            "and the swatch spends no red on a calm sky")
+        (is (nil? (.closest chip ".adsb-stack-emergency-active"))
+            "nothing on the Stack is dressed as an emergency"))))
 
+  (testing "the moment an aircraft squawks, the caption takes the red — and
+            becomes the key for the red that is now on the chart"
     (rf-test/run-test-sync
       (rf/dispatch [:test/set-picture (by-icao [ups fixtures/squawking-7700])])
       (render-stack!)
-      (is (some? (.queryByTestId rtl/screen "shelf:emergency"))
-          "a distress squawk brings the key with it")
-      (is (some? (.getByText rtl/screen "EMG"))
-          "named in words, not colour alone"))))
+      (let [chip (.getByTestId rtl/screen "shelf:emergency")]
+        (is (= "1" (.-textContent (.querySelector chip ".adsb-stack-shelf-count"))))
+        (is (= (:emergency-color (style/palette @theme/!theme))
+               (.getAttribute (.getByTestId rtl/screen "swatch:emergency")
+                              "data-color"))
+            "the swatch is the map's own emergency ink, not a token guessing at it")
+        (is (some? (.closest chip ".adsb-stack-emergency-active"))
+            "and the caption is dressed for it")))))
+
+(deftest a-count-of-zero-is-not-a-button
+  (testing "a chip at zero has no residents to name, so it opens a sheet of
+            nobody — a dead target, and an empty bordered box floating over the
+            map. It states its fact as a plain caption instead, and offers no
+            door to nowhere"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups])])   ; nothing on the ground
+      (render-stack!)
+      (let [gnd (.getByTestId rtl/screen "shelf:ground")]
+        (is (= "SPAN" (.-tagName gnd)) "not a button")
+        (is (nil? (.getAttribute gnd "data-shelf"))
+            "and it carries no shelf hook, so a click on it dispatches nothing")
+        (click-and-commit! gnd)
+        (is (nil? @(rf/subscribe [:stack/open-shelf])) "so nothing opens")
+        (is (nil? (.querySelector js/document ".adsb-stack-sheet"))
+            "and no empty sheet is ever drawn"))))
+
+  (testing "give it a resident and it becomes a door again"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/on-the-ground])])
+      (render-stack!)
+      (let [gnd (.getByTestId rtl/screen "shelf:ground")]
+        (is (= "BUTTON" (.-tagName gnd)) "a button, because now it has names to give")
+        (click-and-commit! gnd)
+        (is (= :ground @(rf/subscribe [:stack/open-shelf])))
+        (is (some? (.querySelector js/document ".adsb-stack-sheet")))))))
+
+(deftest a-sheet-of-nobody-closes-itself
+  (testing "the last resident lands or ages out while its sheet stands open —
+            the sheet goes with them rather than hanging there empty"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/on-the-ground])])
+      (rf/dispatch [:stack/toggle-shelf :ground])
+      (render-stack!)
+      (is (some? (.querySelector js/document ".adsb-stack-sheet"))
+          "open, with its one resident named")
+
+      ;; Same reason click-and-commit! exists: Reagent queues the re-render and
+      ;; RTL 16 commits it through a React 18 root, so neither has run by the
+      ;; time the dispatch returns.
+      (rtl/act (fn []
+                 (rf/dispatch [:test/set-picture (by-icao [ups])])  ; the tarmac empties
+                 (r/flush)))
+      (is (nil? (.querySelector js/document ".adsb-stack-sheet"))
+          "and now there is nobody to name, so there is no sheet"))))
 
 ;; ---------------------------------------------------------------------
 ;; The scrub (adsb-4et) — a finger, in a real browser.

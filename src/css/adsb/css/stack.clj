@@ -213,18 +213,28 @@
    ;; edition's adsb.map.style palette — never a token mirroring it — which is
    ;; the guarantee the deleted corner legend existed to hold: re-skin the ramp
    ;; and the key moves with the planes, or the test fails.
+   ;;
+   ;; The faded ink here is the FALLBACK, and it is what a swatch wears when its
+   ;; state has no aircraft in it: nothing of that colour is on the chart, so
+   ;; there is nothing of that colour to key.
    [:.adsb-stack-shelf-swatch
     (decl :flex          "none"
           :width         "7px"
           :height        "7px"
           :border-radius "50%"
+          :background    "var(--faded-ink)"
           :box-shadow    "0 0 0 1px var(--paper-halo)")]
 
-   ;; EMG — on the chart exactly when red is on the chart, and never otherwise.
-   [:.adsb-stack-emergency
+   ;; EMG is PERMANENT — it is a census of the sky, like GND and NO ALT, and a
+   ;; stated zero beats an implied one on a distress readout. But the RED is
+   ;; not: §7 makes red the ink that never blinks, and it holds that power only
+   ;; by being absent from a calm chart. So the caption is quiet until an
+   ;; aircraft squawks, and only then does it take the red — at which point it
+   ;; is the key for the red now on the chart (adsb.ui.stack/emergency-shelf).
+   [:.adsb-stack-emergency-active
     (decl :border-color "var(--emergency)")]
 
-   [".adsb-stack-emergency .adsb-stack-shelf-count"
+   [".adsb-stack-emergency-active .adsb-stack-shelf-count"
     (decl :color       "var(--emergency)"
           :font-weight 700)]
 

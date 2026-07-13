@@ -8,13 +8,12 @@
   exception is §7's own commission: the red-pen ellipse (.adsb-mayday) DRAWS
   ITSELF IN once — iteration-count 1, set inline by adsb.map.emergency so the
   suite can prove it — and then holds. Ink never blinks."
-  (:require
-    [adsb.css.decl :refer [decl]]
-    [garden.stylesheet :refer [at-keyframes at-media]]))
+  (:require [adsb.css.decl :refer [decl]]
+            [garden.stylesheet :refer [at-keyframes at-media]]))
 
 (def settle
   (at-keyframes "adsb-settle"
-    ["from" (decl :opacity   0
+    ["from" (decl :opacity 0
                   :transform "translateY(-4px)")]))
 
 (def breathe
@@ -23,8 +22,8 @@
   ;; frames with the same declarations render identically — keyframes are
   ;; keyed by percentage, not by source grouping.
   (at-keyframes "adsb-breathe"
-    ["0%"   (decl :opacity 1)]
-    ["50%"  (decl :opacity 0.45)]
+    ["0%" (decl :opacity 1)]
+    ["50%" (decl :opacity 0.45)]
     ["100%" (decl :opacity 1)]))
 
 (def ring-draw
@@ -33,12 +32,12 @@
   dashes press into place) while the offset sweeps them a step around — a
   pencil dragged once along a compass. Ink stays put after."
   (at-keyframes "adsb-ring-draw"
-    ["from" (decl :stroke-dasharray  "0 7"
+    ["from" (decl :stroke-dasharray "0 7"
                   :stroke-dashoffset 10
-                  :opacity           0.2)]
-    ["to"   (decl :stroke-dasharray  "3.2 3.8"
-                  :stroke-dashoffset 0
-                  :opacity           1)]))
+                  :opacity 0.2)]
+    ["to" (decl :stroke-dasharray "3.2 3.8"
+                :stroke-dashoffset 0
+                :opacity 1)]))
 
 (def mayday-draw
   "The red pen circling an emergency (§7): the dash sweeps from the full

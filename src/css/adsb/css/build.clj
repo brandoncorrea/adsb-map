@@ -8,12 +8,10 @@
   Garden and this source path are declared in the :css alias, NOT in :paths,
   so neither reaches the production classpath: the uberjar ships the compiled
   app.css and no CSS compiler."
-  (:require
-    [adsb.css.app :as app]
-    [clojure.java.io :as io]
-    [garden.core :as garden])
-  (:import
-    (java.io File)))
+  (:require [adsb.css.app :as app]
+            [clojure.java.io :as io]
+            [garden.core :as garden])
+  (:import (java.io File)))
 
 (def ^:private out-path "resources/public/app.css")
 

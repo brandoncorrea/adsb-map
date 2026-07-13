@@ -9,8 +9,7 @@
   ORDER-CRITICAL: this rule must be emitted AFTER every namespace whose
   selectors it names (equal specificity, later wins). adsb.css.app is where
   that order is kept."
-  (:require
-    [adsb.css.decl :refer [decl]]))
+  (:require [adsb.css.decl :refer [decl]]))
 
 (def styles
   [[:.adsb-count-unit

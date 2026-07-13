@@ -29,8 +29,7 @@
   flatland.ordered satisfies both. Use `decl` for EVERY rule, not just the
   long ones: there is no cliff to remember, and adding a ninth declaration to
   a rule can never silently reorder the eight above it."
-  (:require
-    [flatland.ordered.map :refer [ordered-map]]))
+  (:require [flatland.ordered.map :refer [ordered-map]]))
 
 (defn decl
   "CSS declarations, in the order written."

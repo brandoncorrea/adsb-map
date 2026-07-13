@@ -1,5 +1,5 @@
 (ns adsb.css.emergency
-  "The §7 map annotations (adsb.map.emergency).
+        "The §7 map annotations (adsb.map.emergency).
 
   The chart's own emergency marks, beside the NOTAM strip's chrome: the
   red-pen double ellipse + MAYDAY stamp on a squawking aircraft in view, the
@@ -73,7 +73,7 @@
 
    ;; voice: adsb.css.captions
    [:.adsb-mayday-label
-    (decl :opacity 0.75)]
+    {:opacity 0.75}]
 
    [:.adsb-mayday-value
     (decl :font-variant-numeric "tabular-nums"
@@ -101,7 +101,7 @@
           :cursor        "pointer")]
 
    [:.adsb-edge-arrow:hover
-    (decl :filter "brightness(1.08)")]
+    {:filter "brightness(1.08)"}]
 
    [:.adsb-edge-arrow:focus-visible
     (decl :outline        "2px solid var(--emergency)"
@@ -114,8 +114,8 @@
           :fill    "var(--emergency)")]
 
    [:.adsb-edge-arrow-callsign
-    (decl :letter-spacing "0.02em"
-          :overflow-wrap  "anywhere")]
+    {:letter-spacing "0.02em"
+     :overflow-wrap  "anywhere"}]
 
    [:.adsb-edge-arrow-distance
     (decl :font-weight          400
