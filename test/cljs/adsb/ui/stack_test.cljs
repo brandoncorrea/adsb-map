@@ -399,6 +399,35 @@
         (is (some? (.closest chip ".adsb-stack-emergency-active"))
             "and the caption is dressed for it")))))
 
+(deftest the-traffic-fraction-counts-what-is-drawn-over-what-is-heard
+  (testing "AC 1/2 — a metric about the SKY, so it reads from the Stack and not
+            the header, which reports on the apparatus. It is a FRACTION
+            because the relationship is the fact: `2 · 1` states two numbers and
+            leaves the reader to subtract, and never says which is the subset of
+            which. The gap is the whole point — those aircraft are real, heard
+            on the radio, and NOT ON THE MAP"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/never-positioned])])
+      (render-stack!)
+      (let [el (.getByTestId rtl/screen "traffic")]
+        (is (= "2" (.getAttribute el "data-total"))
+            "both aircraft are heard")
+        (is (= "1" (.getAttribute el "data-positioned"))
+            "but only one of them can be placed")
+        (is (some? (.getByText rtl/screen "1/2"))
+            "and the fraction says so without asking anyone to subtract"))))
+
+  (testing "the census counts the WHOLE picture, not the ruler's roster — an
+            aircraft the Stack cannot place is exactly the one the fraction
+            exists to count"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/on-the-ground])])
+      (render-stack!)
+      (let [el (.getByTestId rtl/screen "traffic")]
+        (is (= "2" (.getAttribute el "data-total")))
+        (is (= "2" (.getAttribute el "data-positioned"))
+            "a grounded aircraft is still an aircraft on the chart")))))
+
 (deftest a-count-of-zero-is-not-a-button
   (testing "a chip at zero has no residents to name, so it opens a sheet of
             nobody — a dead target, and an empty bordered box floating over the

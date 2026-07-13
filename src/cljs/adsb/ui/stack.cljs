@@ -523,6 +523,39 @@
                    :color        (when squawk? color)
                    :interactive? false}]]))
 
+(defn- traffic-caption
+  "`AC 53/63` — how many aircraft the chart can DRAW, over how many the feeder
+  can HEAR.
+
+  A metric about the SKY, so it lives with the sky's other counts rather than in
+  the header, which reports on the apparatus (the feeder's range and message
+  rate, the stream and feeder health). That is the line: the header is the
+  instrument panel; this row is the census.
+
+  It is a FRACTION because the relationship is the fact. `63 · 53` states two
+  numbers and leaves the reader to subtract, and gives no hint which is the
+  subset of which — the gap is the whole point, since those ten aircraft are
+  real, heard on the radio, and NOT ON THE MAP (a Mode S target with no
+  position: heard, never located). `53/63` says `fifty-three of sixty-three` in
+  the notation itself, and it is shorter than the two numbers it replaces.
+
+  It opens nothing and keys nothing — it is not a colour, so it takes no
+  swatch."
+  [picture]
+  (let [total  (count picture)
+        placed (count (filter aircraft/positioned? (vals picture)))]
+    [:div.adsb-stack-shelf.adsb-stack-traffic
+     {:role "group" :aria-label "Traffic"}
+     [:span.adsb-stack-shelf-caption
+      {:data-testid     "traffic"
+       :data-total      (str total)
+       :data-positioned (str placed)}
+      [:abbr.adsb-stack-shelf-label
+       {:title (str placed " of " total
+                    " aircraft positioned; the rest are heard but cannot be placed")}
+       "AC"]
+      [:span.adsb-stack-shelf-count (str placed "/" total)]]]))
+
 (defn stack
   "The Stack, mounted permanently on the map's edge. A form-2 component:
   subscribe once, deref per render. The whole surface is one listbox —
@@ -534,7 +567,11 @@
         selected    (rf/subscribe [:aircraft/selected-icao])
         hovered     (rf/subscribe [:aircraft/hovered-icao])
         open        (rf/subscribe [:stack/open-shelf])
-        emergencies (rf/subscribe [:aircraft/emergencies])]
+        emergencies (rf/subscribe [:aircraft/emergencies])
+        ;; The census counts the WHOLE picture, not the roster: the roster is
+        ;; already filtered to what the ruler can place, and an aircraft the
+        ;; Stack cannot place is exactly the one this fraction exists to count.
+        picture     (rf/subscribe [:aircraft/picture])]
     (fn []
       (let [theme         @theme/!theme
             palette       (style/palette theme)
@@ -575,4 +612,5 @@
                  :open?         (= :unknown open-shelf)
                  :selected-icao selected-icao
                  :hovered-icao  hovered-icao}]
-         [emergency-shelf @emergencies (:emergency-color palette)]]))))
+         [emergency-shelf @emergencies (:emergency-color palette)]
+         [traffic-caption @picture]]))))

@@ -12,8 +12,7 @@
   (:require [adsb.css.decl :refer [decl]]))
 
 (def styles
-  [[:.adsb-count-unit
-    :.adsb-stats-label
+  [[:.adsb-stats-label
     :.adsb-fact-label
     :.adsb-mayday-label
     :.adsb-stack-shelf-label

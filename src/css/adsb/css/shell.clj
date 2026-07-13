@@ -72,22 +72,9 @@
           :border-bottom  "2px solid var(--magenta)"  ; the plotter's pen (§5)
           :padding-bottom "1px")]
 
-   ;; Live vital signs. The counts sit next to the title; the two health
-   ;; chips are pushed to the far right.
-   [:.adsb-counts
-    (decl :color     "var(--faded-ink)"
-          :font-size "var(--t-1)")]
-
-   [:.adsb-count-total :.adsb-count-positioned
-    (decl :font-weight 700
-          :color       "var(--ink)")]
-
-   ;; .adsb-count-unit takes the printed caption voice — adsb.css.captions
-   ;; owns it.
-
-   [:.adsb-count-sep
-    (decl :opacity 0.6)]
-
+   ;; Live vital signs. The counts left for the Stack (adsb-sod): they are a
+   ;; census of the SKY, and this bar reports on the apparatus. What is left
+   ;; here is the feeder's own reach and throughput, and its health.
    [:.adsb-clock
     (decl :color                "var(--faded-ink)"
           :font-size            "var(--t-1)"

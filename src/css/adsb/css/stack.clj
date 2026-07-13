@@ -469,11 +469,19 @@
            :border-radius 0
            :align-items   "center")]
 
-    ;; The pair sits at the far end of its line, where the ruler's ceiling is —
-    ;; the counts read as the bar's right-hand marginalia, not as two more
-    ;; things queued up in front of the scale.
-    [:.adsb-stack-ground
+    ;; THE CENSUS SITS LEFT; THE SKY'S TALLY SITS RIGHT. Two reasons, and the
+    ;; second is the load-bearing one:
+    ;;
+    ;;   * the three counts read left-to-right with the ruler beneath them,
+    ;;     starting where the ruler starts;
+    ;;   * their SHEETS open upward, and the map attribution's (i) button is
+    ;;     pinned to the bottom-right corner directly above this bar. A sheet
+    ;;     opening from the right end opened straight underneath it. Nothing
+    ;;     that opens may live in that corner — so what lives there is the one
+    ;;     caption that opens nothing.
+    [:.adsb-stack-traffic
      (decl :margin-left "auto")]
+
 
     ;; The dots stand down. Their aircraft are not gone — they are in the
     ;; caption's count, and they are named in its sheet.
@@ -493,8 +501,12 @@
            :position "absolute"
            :inset    "-14px -6px")]
 
+    ;; The sheets grow RIGHTWARD now, away from the (i) in the far corner, from
+    ;; chips that sit at the left.
     [:.adsb-stack-sheet
-     (decl :max-width "calc(100vw - 2 * var(--s3))")]
+     (decl :left      0
+           :right     "auto"
+           :max-width "calc(100vw - 2 * var(--s3))")]
 
     [".adsb-stack-sheet .adsb-stack-tick"
      (decl :min-height "44px")]

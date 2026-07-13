@@ -23,7 +23,7 @@
      (decl :gap     "var(--s3)"
            :padding "0 var(--s3)")]
 
-    [:.adsb-clock :.adsb-count-unit
+    [:.adsb-clock
      (decl :display "none")]
 
     [:.adsb-alerts

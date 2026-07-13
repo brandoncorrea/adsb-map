@@ -10,17 +10,19 @@
   Silence means healthy now, and the width that bought goes to the vitals that
   actually carry information.
 
+  THE HEADER IS THE APPARATUS; THE STACK IS THE SKY. That is the line, and it
+  is worth stating because everything here obeys it. This bar reports on the
+  MACHINE — how far the antenna is hearing, how fast frames are arriving,
+  whether the stream and the feeder are well. It does NOT report on the
+  aircraft: the counts of them (`AC 53/63`, `GND`, `NO ALT`, `EMG`) are a
+  census of the sky, and they live on the Stack with the rest of the sky.
+
   The vital signs:
 
-    * COUNTS — how many aircraft are in the current sky, and how many of
-      those the feeder has actually positioned. Position-less targets are a
-      lawful state (heard on the radio, never located); they count toward the
-      total but not the positioned tally, so the gap between the two numbers
-      is the honest \"heard but not on the map\" figure.
-
-    * SESSION SCALARS — max observed range and message rate (adsb.ui.stats).
-      They were marginalia in a bordered chip over the map; they are vitals,
-      and they belong with the other vitals.
+    * SESSION SCALARS — max observed range and message rate (adsb.ui.stats),
+      printed as `RNG` and `MSG` in the chart's own terse hand. Both are facts
+      about the FEEDER's reach and throughput, which is why they are the two
+      numbers that stayed.
 
     * CONNECTION — TWO semantically distinct signals, because two different
       things can go wrong and the user must be able to tell them apart:
@@ -50,7 +52,6 @@
   old 'colour alone is not accessible' rule that was load-bearing: it bites on
   problems, not on the benign state."
   (:require
-    [adsb.aircraft :as aircraft]
     [adsb.ui.stats :as stats]
     [re-frame.core :as rf]))
 
@@ -98,23 +99,6 @@
        (str (pad2 (.getUTCHours d)) ":"
             (pad2 (.getUTCMinutes d)) ":"
             (pad2 (.getUTCSeconds d)) " UTC")])))
-
-(defn- counts
-  "Live aircraft tally: total in the sky, and how many are positioned
-  (adsb.aircraft/positioned?). The two numbers side by side make the
-  heard-but-unplaced gap visible instead of hiding it."
-  [picture]
-  (let [total      (count picture)
-        positioned (count (filter aircraft/positioned? (vals picture)))]
-    ;; :title carries the units when the phone stylesheet hides the unit
-    ;; words to keep the 36px title block from overflowing (app.css).
-    [:span.adsb-counts {:data-testid "aircraft-counts"
-                        :title       "aircraft · positioned"}
-     [:span.adsb-count-total {:data-testid "count-total"} total]
-     [:span.adsb-count-unit " aircraft"]
-     [:span.adsb-count-sep " · "]
-     [:span.adsb-count-positioned {:data-testid "count-positioned"} positioned]
-     [:span.adsb-count-unit " positioned"]]))
 
 (defn- connection-indicator
   "The SSE STREAM health chip: the browser-to-server link, driven by
@@ -168,23 +152,21 @@
 ;; ---------------------------------------------------------------------
 
 (defn header
-  "The app bar: title, live counts, the session scalars, a UTC clock, and the
-  health signals — stream and feeder. A form-2 component — subscribe once,
-  deref per render — so it re-renders when the picture turns over or either
-  health signal flips, and never more often than that.
+  "The app bar: title, the session scalars, a UTC clock, and the health signals
+  — stream and feeder. A form-2 component — subscribe once, deref per render —
+  so it re-renders when the scalars turn over or either health signal flips, and
+  never more often than that.
 
   The stats readout owns its own subscription (adsb.ui.stats), so it is placed
   here, not passed: the header hands its children derefed values, but that one
   is a component in its own right and was one before it moved up here."
   []
-  (let [picture    (rf/subscribe [:aircraft/picture])
-        connection (rf/subscribe [:stream/connection])
+  (let [connection (rf/subscribe [:stream/connection])
         feeder     (rf/subscribe [:feeder/health])
         now-ms     (rf/subscribe [:ui/now-ms])]
     (fn []
       [:header.adsb-header
        [:span.adsb-title "adsb"]
-       [counts @picture]
        [stats/stats-readout]
        [utc-clock @now-ms]
        [connection-indicator @connection]
