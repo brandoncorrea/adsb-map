@@ -191,7 +191,8 @@
    ;; its sheet of names. A button, because it is one: it is the only thing
    ;; on the phone's Stack that a finger is asked to press deliberately.
    [:.adsb-stack-shelf-chip
-    (decl :display     "flex"
+    (decl :position    "relative"        ; the phone stance hangs hit-slop on it
+          :display     "flex"
           :align-items "center"
           :gap         "var(--s1)"
           :margin      0
@@ -331,9 +332,20 @@
   rotated geometry. --stack-axis flips the gradient; --alt-pct maps to `left`
   instead of `bottom`. Neither stage degrades (Q9c).
 
-  THE SHELVES ARE CHIPS HERE (adsb-hsk). The dots go; the count stays. On the
-  long axis a cluster of thirty dots is a picture of a crowd; on the short one
-  it was a wall that pushed the ruler out of the room."
+  THE SHELVES ARE CAPTIONS HERE (adsb-hsk), not shelves at all. The dots go —
+  a cluster of thirty identical dots is a picture of a crowd on the long axis
+  and a wall on the short one — and once the dots are gone the box has nothing
+  left to hold but a word. So the box goes too, and what remains is what the
+  shelf always meant: GND 3, NO ALT 31, printed in the caption voice.
+
+  With them out of the ruler's row, they cannot compete with it for width at
+  all: they take a line of their own above it, and the ruler takes the whole
+  bar. The row-gap is the flight levels' room — the graduations hang upward
+  off the ruler's top edge into it (bottom: 100% + 3px), so the gap must clear
+  a caption's height or the FLs will print through the counts.
+
+  The bar does not grow to pay for this: a caption line, the graduations' gap,
+  and the ruler come to ~51px inside the 63px the Stack already had."
   (at-media {:max-width "640px"}
     [:.adsb-stack
      (decl :top            "auto"
@@ -343,20 +355,25 @@
            :width          "auto"
            :height         "var(--stack-w)"
            :flex-direction "row"
-           :align-items    "stretch"
-           :padding        "22px 10px var(--s3)"
+           :flex-wrap      "wrap"          ; the captions' line, then the ruler's
+           :align-items    "center"
+           :align-content  "flex-end"      ; both lines settle onto the bottom edge
+           :row-gap        "16px"          ; the graduations live in here
+           :padding        "var(--s2) 10px var(--s3)"
            :border-left    "none"
            :border-top     "1px solid var(--rule)")]
 
-    ;; The floor rotates with the ruler: it is the LENGTH of the scale that
-    ;; must not depend on how many aircraft are sitting on the ground, and
-    ;; length is width here. min-height goes back to 0 — the recumbent
+    ;; The whole bar, on its own line: `flex-basis: 100%` is what makes the
+    ;; ruler's length unstarvable, and it is a stronger guarantee than any
+    ;; floor — there is nothing left in the row to lose the width TO. (The
+    ;; desktop's min-height still earns its keep: there, the shelves and the
+    ;; ruler do share a column.) min-height goes back to 0: the recumbent
     ;; ruler's height is its thickness, and 55% of the bar would swell it.
     [:.adsb-stack-ruler
      (decl :--stack-axis "to right"
-           :flex         1
+           :order        2
+           :flex         "1 0 100%"
            :width        "auto"
-           :min-width    "55%"
            :height       "22px"
            :min-height   0
            :margin-left  0
@@ -405,28 +422,42 @@
            :bottom    "calc(100% + 6px)"
            :transform "translateX(-50%)")]
 
-    ;; A chip, not a cluster. `flex: none` and a content-sized chip mean the
-    ;; shelves have a CEILING now, and the ruler keeps the rest of the bar
-    ;; whatever the sky does.
+    ;; A caption, not a shelf: no border, no padding, no box. It holds a word
+    ;; and a number, and a word and a number do not need a container.
     [:.adsb-stack-shelf
-     (decl :flex          "none"
-           :margin-top    0
-           :margin-left   "var(--s3)"
-           :align-content "center"
+     (decl :order         1
+           :flex          "none"
+           :margin        0
+           :margin-left   "var(--s4)"
+           :padding       0
+           :min-height    0
+           :border        "none"
+           :border-radius 0
            :align-items   "center")]
 
+    ;; The pair sits at the far end of its line, where the ruler's ceiling is —
+    ;; the counts read as the bar's right-hand marginalia, not as two more
+    ;; things queued up in front of the scale.
+    [:.adsb-stack-ground
+     (decl :margin-left "auto")]
+
     ;; The dots stand down. Their aircraft are not gone — they are in the
-    ;; chip's count, and they are named in its sheet.
+    ;; caption's count, and they are named in its sheet.
     [".adsb-stack-shelf > .adsb-stack-tick"
      (decl :display "none")]
 
     [:.adsb-stack-shelf-count
      (decl :display "block")]
 
-    ;; A finger's target, not a mouse's: the chip fills the shelf's height.
-    [:.adsb-stack-shelf-chip
-     (decl :min-height "44px"
-           :height     "100%")]
+    ;; HIT-SLOP, the ticks' trick again (adsb-4et): the caption prints at
+    ;; --t-2, which is nowhere near a finger's 44px, and it now has no box to
+    ;; fatten. So the target grows and the ink does not. The horizontal reach
+    ;; is held under the captions' --s4 gap, so the two never overlap and each
+    ;; count opens its own sheet.
+    [".adsb-stack-shelf-chip::before"
+     (decl :content  "\"\""
+           :position "absolute"
+           :inset    "-14px -6px")]
 
     [:.adsb-stack-sheet
      (decl :max-width "calc(100vw - 2 * var(--s3))")]
