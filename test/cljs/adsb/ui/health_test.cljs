@@ -1,18 +1,23 @@
-(ns adsb.ui.header-test
-  "The app bar, rendered in a real browser under React Testing Library. Proves
-  the vital signs are honest: the live counts read the picture and update when
-  it turns over; the STREAM chip shows each of the stream's three states; the
-  FEEDER chip shows the server's reported feeder health while the stream is
-  live and a neutral unknown when it is not (the unknowable rule). Each chip
-  carries a distinct data-state AND a text label (colour alone is not
-  accessible)."
+(ns adsb.ui.health-test
+  "The health signals, rendered in a real browser under React Testing Library.
+  There is no header any more — these ride the Stack's caption row — but what
+  they must prove is unchanged, and one thing is new:
+
+    * the STREAM chip shows each state that IS news, and nothing at all while
+      live or connecting (silence means healthy; a boot is not a failure);
+    * the FEEDER signal shows the server's claim while the stream is live, a
+      neutral unknown when it is not (the unknowable rule), and :SILENT when the
+      feeder is reachable but its radio has gone deaf — the case where the
+      server's own :ok is true and useless;
+    * every state that is a problem carries a distinct data-state AND its words
+      in plain sight. Colour alone may say fine; it may never say not-fine."
   (:require
     ["@testing-library/react" :as rtl]
     [adsb.events]
     [adsb.stream :as stream]                      ; registers :aircraft/picture + :stream/connection; owns the silence threshold
     [adsb.stream.source :as source]               ; the connect! seam, stubbed at boot
     [adsb.subs]
-    [adsb.ui.header :as header]
+    [adsb.ui.health :as health]
     [cljs.test :refer-macros [deftest testing is use-fixtures]]
     [day8.re-frame.test :as rf-test]
     [re-frame.core :as rf]
@@ -34,7 +39,7 @@
 
 (defn- render-header! []
   (rtl/cleanup)
-  (rtl/render (r/as-element [header/header])))
+  (rtl/render (r/as-element [health/health])))
 
 ;; ---------------------------------------------------------------------
 

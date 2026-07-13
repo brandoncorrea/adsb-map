@@ -22,7 +22,7 @@
 (def column
   [[:.adsb-stack
     (decl :position       "absolute"
-          :top            "var(--header-h)"
+          :top            0
           :right          0
           :bottom         0
           :z-index        1
@@ -387,13 +387,22 @@
            :right          0
            :bottom         0
            :width          "auto"
-           :height         "var(--stack-w)"
+           ;; The bar keeps its --stack-w of CONTENT and grows by whatever the
+           ;; phone reserves at its bottom edge (see the padding below).
+           :height         "calc(var(--stack-w) + env(safe-area-inset-bottom, 0px))"
            :flex-direction "row"
            :flex-wrap      "wrap"          ; the captions' line, then the ruler's
            :align-items    "center"
            :align-content  "flex-end"      ; both lines settle onto the bottom edge
            :row-gap        "16px"          ; the graduations live in here
-           :padding        "var(--s2) 10px var(--s3)"
+           ;; THE RULER MUST CLEAR THE HOME INDICATOR. The Stack is pinned to
+           ;; the bottom edge, and the bottom edge of a modern phone belongs to
+           ;; the operating system: a swipe up from it goes home. The ruler is
+           ;; SCRUBBED — a press and a drag along it — and a scrub that starts
+           ;; inside that zone is a scrub the OS may take for itself. The
+           ;; safe-area inset lifts it clear on the phones that have one, and is
+           ;; zero on the phones that do not.
+           :padding        "var(--s2) 10px calc(var(--s3) + env(safe-area-inset-bottom, 0px))"
            :border-left    "none"
            :border-top     "1px solid var(--rule)")]
 
@@ -482,6 +491,14 @@
     [:.adsb-stack-traffic
      (decl :margin-left "auto")]
 
+    ;; The health dot rides the caption line, at its far end, after the traffic
+    ;; fraction. `order` and not DOM order: the ruler takes order 2 to claim a
+    ;; line of its own, so anything without an explicit order sorts BEFORE the
+    ;; captions and lands at the head of the row — which is exactly where the dot
+    ;; first appeared.
+    [:.adsb-health
+     (decl :order 1)]
+
 
     ;; The dots stand down. Their aircraft are not gone — they are in the
     ;; caption's count, and they are named in its sheet.
@@ -515,7 +532,7 @@
     ;; column both step up out of its lane.
     [:.maplibregl-ctrl-bottom-right
      (decl :right  0
-           :bottom "var(--stack-w)")]))
+           :bottom "calc(var(--stack-w) + env(safe-area-inset-bottom, 0px))")]))
 
 (def styles
   ;; `sheet` after `shelves`, and `phone` last: both win their ties on source

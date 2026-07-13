@@ -84,14 +84,15 @@
   160)
 
 ;; The edge arrow must clear not just the frame but the CHROME parked on
-;; it: the header and the NOTAM strip along the top (the strip is up by
+;; it: the NOTAM strip along the top (the strip is up by
 ;; definition — an emergency is active), the Stack on the right edge
 ;; (desktop) or the bottom (phone — the same 640px line app.css draws),
 ;; and the arrow's own extent. All px, converted to viewport fractions
 ;; at sync time.
 
-(def ^:const header-px 36)         ; --header-h
-(def ^:const notam-strip-px 36)    ; one NOTAM row under the header
+;; There is no header any more (adsb-sod); the NOTAM strip sits on the top
+;; edge itself, and it is the only chrome the arrow must clear up there.
+(def ^:const notam-strip-px 36)    ; one NOTAM row, on the top edge
 (def ^:const stack-px 76)          ; --stack-w
 (def ^:const arrow-half-width-px 80)
 (def ^:const arrow-half-height-px 18)
@@ -312,7 +313,7 @@
   — the one pixel fact this namespace allows itself to read."
   []
   (let [phone? (<= (.-innerWidth js/window) phone-max-width-px)]
-    {:top    (+ header-px notam-strip-px arrow-half-height-px edge-air-px)
+    {:top    (+ notam-strip-px arrow-half-height-px edge-air-px)
      :right  (+ (if phone? 0 stack-px) arrow-half-width-px edge-air-px)
      :bottom (+ (if phone? stack-px 0) arrow-half-height-px edge-air-px)
      :left   (+ arrow-half-width-px edge-air-px)}))

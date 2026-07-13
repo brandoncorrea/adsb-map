@@ -1,21 +1,26 @@
-(ns adsb.ui.header
-  "The top bar over the map — the app's identity and its live vital signs.
-  Reagent chrome, and genuinely React territory: it changes when the picture
-  turns over (~1 Hz) and when the stream's health flips, not per aircraft, so
-  a small component tree is exactly right.
+(ns adsb.ui.health
+  "Is the instrument working? — the two health signals, and nothing else.
 
-  THE HEADER REPORTS EXCEPTIONS, NOT CONFIRMATIONS (adsb-33i). It used to
-  spend its width telling you that nothing was wrong — a chip reading \"Live\"
-  beside a chip reading \"Feeder OK\", every second of every healthy session.
-  Silence means healthy now, and the width that bought goes to the vitals that
-  actually carry information.
+  THERE IS NO HEADER ANY MORE (adsb-sod). It began as a chart title block, and
+  one by one everything in it either moved to where it belonged or turned out
+  not to be needed: the title (a chart with no filing cabinet needs no title
+  block), the counts (a census of the sky — they went to the Stack), RNG and MSG
+  (a brag stat, and a rate that should have been a state), the clock. What was
+  left was a 36px band holding two glyphs, and a band that holds two glyphs is
+  not a band. These signals now ride the Stack's caption row, which is where the
+  reader already looks to ask the chart a question.
 
-  THE HEADER IS THE APPARATUS; THE STACK IS THE SKY. That is the line, and it
-  is worth stating because everything here obeys it. This bar reports on the
-  MACHINE — whether the stream is up, and whether the antenna behind it is
-  hearing. It does NOT report on the aircraft: the counts of them
-  (`PLOTTED 72/78`, `GND`, `NO ALT`, `EMG`) are a census of the sky, and they
-  live on the Stack with the rest of the sky.
+  Reagent chrome, and genuinely React territory: it changes when a health signal
+  flips, not per aircraft, so a small component tree is exactly right.
+
+  THE CHROME REPORTS EXCEPTIONS, NOT CONFIRMATIONS (adsb-33i). These signals
+  used to spend real estate telling you that nothing was wrong — a chip reading
+  \"Live\" beside a chip reading \"Feeder OK\", every second of every healthy
+  session. Silence means healthy now.
+
+  THE APPARATUS IS ONE DOT NOW. It sits at the end of the Stack's caption row,
+  beside the sky's own counts but not among them: `PLOTTED 72/78` says what is
+  out there, and this says whether we can still hear it.
 
   THE READOUTS ARE GONE, AND THE DOT ABSORBED THE ONE THAT MATTERED. `RNG` was
   the session's max range: a brag stat, and one that stops meaning anything the
@@ -88,27 +93,10 @@
    :down     "Feeder down"
    :unknown  "Feeder unknown"})
 
-(defn- pad2
-  "Two-digit, zero-padded — for a stable, non-jumping wall clock."
-  [n]
-  (.padStart (str n) 2 "0"))
-
 ;; ---------------------------------------------------------------------
 ;; Presentation — pure functions of plain data. The parent derefs the
 ;; subscriptions and hands these the derefed values, so they carry no
 ;; re-frame knowledge and a test can render them against a literal.
-
-(defn- utc-clock
-  "The wall clock in UTC — the one honest timezone for a feed of aircraft
-  crossing many. Reads the coarse UI clock (:ui/now-ms); renders nothing
-  until the first tick, so it never invents a time it has not been given."
-  [now-ms]
-  (when now-ms
-    (let [d (js/Date. now-ms)]
-      [:time.adsb-clock {:data-testid "utc-clock"}
-       (str (pad2 (.getUTCHours d)) ":"
-            (pad2 (.getUTCMinutes d)) ":"
-            (pad2 (.getUTCSeconds d)) " UTC")])))
 
 (defn- connection-indicator
   "The SSE STREAM health chip: the browser-to-server link, driven by
@@ -163,16 +151,17 @@
 
 ;; ---------------------------------------------------------------------
 
-(defn header
-  "The app bar: a UTC clock and the health signals — stream and feeder. A form-2
-  component — subscribe once, deref per render — so it re-renders when a health
-  signal flips, and never more often than that."
+(defn health
+  "The two health signals, as a group — mounted in the Stack's caption row
+  (adsb.ui.stack). A form-2 component: subscribe once, deref per render, so it
+  re-renders when a signal flips and never more often.
+
+  Renders an EMPTY group when all is well and the stream is quiet, which is the
+  common case and the intended one: silence means healthy."
   []
   (let [connection (rf/subscribe [:stream/connection])
-        feeder     (rf/subscribe [:feeder/health])
-        now-ms     (rf/subscribe [:ui/now-ms])]
+        feeder     (rf/subscribe [:feeder/health])]
     (fn []
-      [:header.adsb-header
-       [utc-clock @now-ms]
+      [:div.adsb-health
        [connection-indicator @connection]
        [feeder-indicator @feeder]])))

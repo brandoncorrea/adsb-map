@@ -19,13 +19,6 @@
 
 (def styles
   (at-media {:max-width "640px"}
-    [:.adsb-header
-     (decl :gap     "var(--s3)"
-           :padding "0 var(--s3)")]
-
-    [:.adsb-clock
-     (decl :display "none")]
-
     [:.adsb-alerts
      (decl :right 0)]
 

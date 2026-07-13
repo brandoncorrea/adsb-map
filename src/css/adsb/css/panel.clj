@@ -11,7 +11,7 @@
 (def card
   [[:.adsb-panel
     (decl :position      "absolute"
-          :top           "calc(var(--header-h) + var(--s3))"
+          :top           "var(--s3)"        ; no header to clear
           :right         "calc(var(--stack-w) + var(--s3))"
           :z-index       2
           :width         "288px"

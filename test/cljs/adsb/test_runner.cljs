@@ -8,9 +8,8 @@
   always sees the current set of tests."
   {:dev/always true}
   (:require
+    [adsb.test-console :as test-console]
     [cljs.test :as t]
-    [clojure.string :as str]
-    [re-frame.core :as rf]
     [shadow.test :as st]
     [shadow.test.env :as env]))
 

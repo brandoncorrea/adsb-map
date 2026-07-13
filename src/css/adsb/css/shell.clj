@@ -1,14 +1,14 @@
 (ns adsb.css.shell
-  "The shell and the header — the chart's title block.
+  "The shell, and the health signals that outlived the header.
 
-  The shell fills the viewport and the map is its full-bleed background. The
-  header is 36px (--header-h) holding a UTC clock and the health signals, pinned
-  right so the map's health is always in the same place. One ink rule below.
+  The shell fills the viewport and the map is its full-bleed background. THERE
+  IS NO HEADER (adsb-sod): the title, the counts, the scalars and the clock each
+  left for somewhere they belonged or for nowhere at all, and a 36px band
+  holding two glyphs is not a band. The chart runs edge to edge.
 
-  The title stamp is gone, and so are the RNG/MSG readouts (adsb-sod). What is
-  left is not a title block and barely a strip: everything about the SKY reads
-  from the Stack, and the one thing the apparatus still has to say — is it
-  hearing? — it says in a single dot."
+  What is left of the apparatus is one dot, and it rides the Stack's caption row
+  (adsb.ui.health). Its rules stay here — they are chrome, not the Stack's own
+  bounded section, and the Stack merely gives them a seat."
   (:require
     [adsb.css.decl :refer [decl]]))
 
@@ -50,39 +50,6 @@
           :white-space "nowrap"
           :border      0)]])
 
-(def header
-  [[:.adsb-header
-    (decl :position      "absolute"
-          :top           0
-          :left          0
-          :right         0
-          :z-index       1
-          :display       "flex"
-          :align-items   "center"
-          :gap           "var(--s4)"
-          :height        "var(--header-h)"
-          :padding       "0 var(--s4)"
-          :background    "var(--paper-chrome)"
-          :border-bottom "1px solid var(--ink)"
-          :color         "var(--ink)"
-          :font-size     "var(--t0)"
-          :box-sizing    "border-box")]
-
-   ;; No title stamp. The word `adsb` sat here under a magenta pen rule, and it
-   ;; told a reader of this app precisely nothing they did not already know —
-   ;; there is one page, and its name is in the browser tab. A chart's title
-   ;; block earns its ink on a chart that will be filed among other charts;
-   ;; this one is on screen because you opened it.
-   ;;
-   ;; Live vital signs. The counts left for the Stack (adsb-sod): they are a
-   ;; census of the SKY, and this bar reports on the apparatus. What is left
-   ;; here is the feeder's own reach and throughput, and its health.
-   [:.adsb-clock
-    (decl :color                "var(--faded-ink)"
-          :font-size            "var(--t-1)"
-          :font-variant-numeric "tabular-nums"
-          :letter-spacing       "0.02em")]])
-
 (def health
   "Health chips — stream and feeder, drawn as stamped chart notes: squared,
   hairline-ruled, mono. :down is a filled red alarm so a frozen map cannot
@@ -107,15 +74,13 @@
           :font-size      "var(--t-1)"
           :letter-spacing "0.04em")]
 
-   ;; Whichever health signal comes FIRST takes the free space and pins the
-   ;; pair to the right edge — the stream chip when it is present, and the
-   ;; feeder when it is not, which is most of the time. Health is always in the
-   ;; same corner, whether or not the stream has anything to say.
-   [:.adsb-conn :.adsb-feeder
-    (decl :margin-left "auto")]
-
-   [".adsb-conn + .adsb-feeder"
-    (decl :margin-left "var(--s3)")]
+   ;; The group, at the end of the Stack's caption row. It collapses to nothing
+   ;; when every signal is quiet — which is the common case, and the point.
+   [:.adsb-health
+    (decl :display     "flex"
+          :align-items "center"
+          :gap         "var(--s3)"
+          :margin-left "var(--s3)")]
 
    [:.adsb-conn-dot :.adsb-feeder-dot
     (decl :width         "7px"
@@ -176,4 +141,4 @@
           :border-color "var(--emergency)")]])
 
 (def styles
-  [base header health])
+  [base health])

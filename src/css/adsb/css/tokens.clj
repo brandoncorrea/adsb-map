@@ -76,7 +76,6 @@
     :--s3       "8px"
     :--s4       "12px"
     :--s5       "16px"
-    :--header-h "36px"
 
     ;; The Stack's footprint on the map edge (right on desktop, bottom on
     ;; phone) — the header, ribbon, and attribution all clear it by this.

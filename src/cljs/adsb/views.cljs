@@ -6,18 +6,19 @@
   (:require [adsb.map.view :as map-view]
             [adsb.ui.aircraft-panel :as aircraft-panel]
             [adsb.ui.alert :as alert]
-            [adsb.ui.header :as header]
             [adsb.ui.stack :as stack]))
 
 (defn app-root
-  "The shell: a full-viewport map with the chrome floating over it — a thin
-  header bar (title, live counts, session scalars, connection health) up top
-  and the altitude legend tucked in a corner. Every one is a SIBLING of the
-  map, never a child: the chrome is Reagent's and the map owns no React
-  inside it."
+  "The shell: a full-viewport map, and the chrome floating over it. There is no
+  header and no margin column any more (adsb-sod) — the chart runs edge to edge,
+  and every surface left over it earns its place: the Stack on one edge (the
+  ruler, the census, and the health dot), the NOTAM ribbon when an aircraft is
+  squawking, the index card when one is selected.
+
+  Every one is a SIBLING of the map, never a child: the chrome is Reagent's and
+  the map owns no React inside it."
   []
   [:div.adsb-shell
-   [header/header]
    ;; The emergency banner sits directly under the header — top of the shell,
    ;; impossible to miss while any aircraft is squawking distress. Renders
    ;; nothing when the sky is calm (adsb.ui.alert).

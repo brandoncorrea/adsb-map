@@ -92,6 +92,7 @@
     [adsb.aircraft :as aircraft]
     [adsb.map.style :as style]
     [adsb.map.theme :as theme]
+    [adsb.ui.health :as health]
     [clojure.string :as str]
     [re-frame.core :as rf]))
 
@@ -620,4 +621,8 @@
                  :selected-icao selected-icao
                  :hovered-icao  hovered-icao}]
          [emergency-shelf @emergencies (:emergency-color palette)]
-         [traffic-caption @picture]]))))
+         [traffic-caption @picture]
+         ;; Is the instrument working? The one apparatus fact left in the app,
+         ;; at the end of the row the reader already scans. Silent while all is
+         ;; well (adsb.ui.health).
+         [health/health]]))))
