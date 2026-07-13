@@ -74,6 +74,50 @@
     (is (= 100 (stack/altitude-pct 60000)) "above the ceiling pins to the top")
     (is (= 0 (stack/altitude-pct -500)) "below the surface pins to the foot")))
 
+(deftest the-axis-comes-from-the-ruler's-own-geometry
+  (testing "a recumbent ruler (wider than tall) reads left-to-right — the
+            phone stance, derived from the rect, not from a second copy of
+            the media query"
+    (let [lying-down {:left 0 :top 0 :width 200 :height 20}]
+      (is (= 0 (stack/axis-pct lying-down 0 10)) "the left end is the surface")
+      (is (= 50 (stack/axis-pct lying-down 100 10)) "the middle is mid-scale")
+      (is (= 100 (stack/axis-pct lying-down 200 10)) "the right end is the ceiling")))
+  (testing "a standing ruler reads bottom-to-top — the desktop stance"
+    (let [standing {:left 0 :top 100 :width 20 :height 200}]
+      (is (= 0 (stack/axis-pct standing 10 300)) "the foot is the surface")
+      (is (= 50 (stack/axis-pct standing 10 200)) "the middle is mid-scale")
+      (is (= 100 (stack/axis-pct standing 10 100)) "the top is the ceiling")))
+  (testing "a finger that slides off the end of the ruler stays on the scale"
+    (let [lying-down {:left 0 :top 0 :width 200 :height 20}]
+      (is (= 0 (stack/axis-pct lying-down -40 10)) "past the surface clamps")
+      (is (= 100 (stack/axis-pct lying-down 260 10)) "past the ceiling clamps")))
+  (testing "a ruler with no area has no axis — an unstyled Stack must not
+            scrub, and must not divide by zero doing it"
+    (is (nil? (stack/axis-pct {:left 0 :top 0 :width 0 :height 0} 50 50)))))
+
+(deftest the-scrub-lands-on-the-nearest-tick
+  (let [ups-pct (stack/altitude-pct 34775)
+        dal-pct (stack/altitude-pct 10025)
+        roster  [ups fixtures/squawking-7700]]
+    (testing "the finger names whichever aircraft it is closest to on the axis"
+      (is (= ups-icao (:aircraft/icao (stack/nearest-tick roster ups-pct)))
+          "dead on the cruising 747")
+      (is (= "a35a92" (:aircraft/icao (stack/nearest-tick roster dal-pct)))
+          "dead on the descending emergency")
+      (is (= ups-icao (:aircraft/icao (stack/nearest-tick roster 100)))
+          "at the ceiling, the highest aircraft is the nearest one")
+      (is (= "a35a92" (:aircraft/icao (stack/nearest-tick roster 0)))
+          "at the surface, the lowest is"))
+    (testing "an empty sky has nothing to point at"
+      (is (nil? (stack/nearest-tick [] 50))))))
+
+(deftest the-scrub-can-only-land-on-the-ruler
+  (testing "the shelves are not on the altitude axis, so a scrub cannot
+            reach them — absent is not zero, and a finger cannot make it so"
+    (let [picture (by-icao [ups fixtures/on-the-ground no-altitude])]
+      (is (= [ups-icao] (map :aircraft/icao (stack/airborne picture)))
+          "only the aircraft with a real altitude is scrubbable"))))
+
 (deftest tick-band-is-three-state
   (testing "ground, a real number, and absent are three different places"
     (is (= :ground (stack/tick-band fixtures/on-the-ground))
@@ -202,6 +246,147 @@
             "and no other tick is")
         (is (some? (.getByText rtl/screen "UPS2717"))
             "the selection is named")))))
+
+;; ---------------------------------------------------------------------
+;; The shelves as chips, and the sheet that names their residents (adsb-hsk).
+
+(defn- chip [band]
+  (.getByTestId rtl/screen (str "shelf:" band)))
+
+(defn- click-and-commit!
+  "Click, and let the view catch up before we look at it.
+
+  Every other DOM assertion in this file renders AFTER the state it checks,
+  so it never had to. These do: the sheet opens BECAUSE of the click. Reagent
+  queues its re-render on an animation frame and RTL 16 commits through a
+  React 18 root, so neither has run by the time fireEvent returns —
+  `reagent/flush` inside `act` runs both, synchronously, which is what keeps
+  these assertions inside run-test-sync with the rest of the file."
+  [element]
+  (rtl/act (fn [] (.click rtl/fireEvent element) (r/flush))))
+
+(deftest a-shelf-chip-counts-its-residents
+  (testing "the chip carries the one fact a dot cluster could tell you — how
+            many — so the phone can drop the dots and keep the fact"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture
+                    (by-icao [ups fixtures/on-the-ground no-altitude])])
+      (render-stack!)
+      (is (= "GND1" (.-textContent (chip "ground")))
+          "one aircraft on the tarmac...")
+      (is (some? (.closest (tick-el "a1d645") ".adsb-stack-ground"))
+          "...which is indeed the ground shelf's resident")
+      (is (= "NO ALT1" (.-textContent (chip "unknown")))
+          "and one holding apart, its altitude never reported"))))
+
+(deftest a-shelf-chip-opens-a-sheet-that-names-its-residents
+  (testing "tapping a chip answers the question the dots never could: WHO.
+            The dots and the sheet are never both present — two nodes for one
+            aircraft would be two answers to the same question"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups no-altitude])])
+      (render-stack!)
+      (is (nil? (.queryByText rtl/screen "NOALT"))
+          "closed, the holding shelf's resident is an anonymous dot")
+      (is (= "false" (.getAttribute (chip "unknown") "aria-expanded"))
+          "and the chip says so")
+
+      (click-and-commit! (chip "unknown"))
+      (is (= :unknown @(rf/subscribe [:stack/open-shelf])) "the shelf opens")
+      (is (some? (.getByText rtl/screen "NOALT"))
+          "and its resident is named at last")
+      (is (some? (.closest (tick-el "aaaaaa") ".adsb-stack-sheet"))
+          "as a row in the sheet, not a dot in a cluster")
+      (is (= "true" (.getAttribute (chip "unknown") "aria-expanded")))
+
+      (click-and-commit! (chip "unknown"))
+      (is (nil? @(rf/subscribe [:stack/open-shelf])) "and tapping again closes it")
+      (is (nil? (.queryByText rtl/screen "NOALT"))
+          "the sheet is gone, and its residents are dots again"))))
+
+(deftest a-named-resident-is-still-selectable
+  (testing "a sheet row fires the same [:aircraft/select icao] contract a
+            tick does — the sheet names them, it does not sideline them"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [no-altitude])])
+      (rf/dispatch [:stack/toggle-shelf :unknown])
+      (render-stack!)
+      (.click rtl/fireEvent (tick-el "aaaaaa"))
+      (is (= "aaaaaa" @(rf/subscribe [:aircraft/selected-icao]))
+          "the altitude-less aircraft selects like any other"))))
+
+;; ---------------------------------------------------------------------
+;; The scrub (adsb-4et) — a finger, in a real browser.
+
+(defn- ruler []
+  (.querySelector js/document ".adsb-stack-ruler"))
+
+(defn- lay-the-ruler-down!
+  "Give the ruler a real recumbent rect. The browser suite renders without
+  the stylesheet (adsb-giu), so an unstyled ruler measures 0x0 — and a ruler
+  with no area has no axis. Inline geometry, then, and a REAL layout engine
+  to measure it: 200px wide, 20px tall, pinned at the viewport origin, so a
+  clientX of 160 is unambiguously 80% of the way to the ceiling."
+  []
+  (let [style (.-style (ruler))]
+    (set! (.-position style) "fixed")
+    (set! (.-left style) "0px")
+    (set! (.-top style) "0px")
+    (set! (.-width style) "200px")
+    (set! (.-height style) "20px")))
+
+(deftest scrubbing-the-ruler-names-the-nearest-aircraft
+  (testing "drag along the ruler and each tick is named as the finger passes
+            it — the identity channel a phone can actually reach, since a
+            phone cannot hover and a 3px tick cannot be poked"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/squawking-7700])])
+      (render-stack!)
+      (lay-the-ruler-down!)
+      (is (nil? @(rf/subscribe [:aircraft/hovered-icao])) "nothing named yet")
+
+      (.pointerDown rtl/fireEvent (ruler) #js {:clientX 160 :clientY 10})
+      (is (= ups-icao @(rf/subscribe [:aircraft/hovered-icao]))
+          "a press at 80% of the axis names the 747 cruising at FL347")
+
+      (.pointerMove rtl/fireEvent (ruler) #js {:clientX 40 :clientY 10})
+      (is (= "a35a92" @(rf/subscribe [:aircraft/hovered-icao]))
+          "and sliding down to 20% names the emergency descending through FL100"))))
+
+(deftest letting-go-of-a-scrub-selects-what-it-named
+  (testing "release fires the map's [:aircraft/select icao] contract"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/squawking-7700])])
+      (render-stack!)
+      (lay-the-ruler-down!)
+      (.pointerDown rtl/fireEvent (ruler) #js {:clientX 160 :clientY 10})
+      (.pointerUp rtl/fireEvent (ruler) #js {:clientX 160 :clientY 10})
+      (is (= ups-icao @(rf/subscribe [:aircraft/selected-icao]))
+          "the aircraft the finger left named is the one selected"))))
+
+(deftest an-idle-pointer-over-the-ruler-does-not-scrub
+  (testing "the scrub is a PRESS. An unpressed mouse crossing the desktop
+            ruler must not hijack the hover — that is what the ticks' own
+            hover is for"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/squawking-7700])])
+      (render-stack!)
+      (lay-the-ruler-down!)
+      (.pointerMove rtl/fireEvent (ruler) #js {:clientX 160 :clientY 10})
+      (is (nil? @(rf/subscribe [:aircraft/hovered-icao]))
+          "moving without pressing names nothing"))))
+
+(deftest a-cancelled-scrub-chooses-nothing
+  (testing "the gesture taken away (a system swipe, a call) selects nobody"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups])])
+      (render-stack!)
+      (lay-the-ruler-down!)
+      (.pointerDown rtl/fireEvent (ruler) #js {:clientX 160 :clientY 10})
+      (.pointerCancel rtl/fireEvent (ruler) #js {:clientX 160 :clientY 10})
+      (.pointerUp rtl/fireEvent (ruler) #js {:clientX 160 :clientY 10})
+      (is (nil? @(rf/subscribe [:aircraft/selected-icao]))
+          "an interrupted scrub is not a choice"))))
 
 (deftest the-emergency-tick-screams-in-ink
   (testing "a distress squawk's tick is marked and permanently named —

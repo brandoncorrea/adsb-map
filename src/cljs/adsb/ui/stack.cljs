@@ -47,7 +47,25 @@
   along the bottom edge with identical semantics (§9 / Q9c). One DOM
   serves both — each tick carries its place on the ALTITUDE AXIS as the
   unitless --alt-pct custom property, and the stylesheet maps that axis
-  to `bottom` (vertical) or `left` (horizontal)."
+  to `bottom` (vertical) or `left` (horizontal).
+
+  THE SHELVES ARE COUNTED, NOT DRAWN, WHEN THE AXIS IS SCARCE (adsb-hsk).
+  A field of identical dots communicates exactly one fact — HOW MANY — and
+  on a phone it charged 200px for it, starving the recumbent ruler to two
+  pixels. So each shelf carries a chip: its label and its count. The phone
+  hides the dots and keeps the chip; the desktop, which has the room, keeps
+  both. Tapping a chip opens a sheet that NAMES its residents — the one
+  thing a dot cluster could never do. None of this moves them onto the
+  scale: absent is still not zero.
+
+  TOUCH (adsb-4et). Naming a tick was a HOVER, and phones do not hover; a
+  3px tick is also far under the 44px touch target. Press the ruler and
+  drag: `axis-pct` reads the pointer's place on the altitude axis, and the
+  nearest tick is named and lit as your finger passes it — a crosshair you
+  read THROUGH, not a target you aim AT. Release selects it. This invents
+  no new state: the scrub borrows the hover and select channels that were
+  already here. The stance comes from the ruler's own geometry — a rect
+  wider than it is tall is lying down — so one gesture serves both."
   (:require
     [adsb.aircraft :as aircraft]
     [adsb.map.style :as style]
@@ -92,6 +110,45 @@
   (or (aircraft/positioned? aircraft*)
       (some? (:aircraft/altitude-ft aircraft*))
       (boolean (:aircraft/on-ground? aircraft*))))
+
+;; ---------------------------------------------------------------------
+;; The scrub — pure. Where a finger is on the altitude axis, and which
+;; aircraft is nearest it. The handlers below are a thin shell over these
+;; two functions; everything that can be reasoned about lives here.
+
+(defn axis-pct
+  "Where a pointer at (`x`, `y`) falls on the ruler's ALTITUDE axis: 0 at
+  the surface, 100 at the ceiling, clamped. `rect` is the ruler's bounding
+  box, and it is also what tells us the stance — a ruler wider than it is
+  tall is lying down, and its axis runs left-to-right; a standing ruler's
+  axis runs bottom-to-top. Geometry, not a second copy of the media query.
+
+  A rect with no area has no axis, and yields nil rather than dividing by
+  zero: an unstyled Stack (the browser suite renders without the
+  stylesheet — adsb-giu) must not scrub."
+  [{:keys [left top width height]} x y]
+  (when (and (pos? width) (pos? height))
+    (-> (if (> width height)
+          (* 100 (/ (- x left) width))
+          (* 100 (/ (- (+ top height) y) height)))
+        (max 0)
+        (min 100))))
+
+(defn nearest-tick
+  "The aircraft in `airborne` whose tick sits closest to `pct` on the
+  altitude axis — what the finger is pointing at. Nil when nothing is up
+  there to point at."
+  [airborne pct]
+  (when (seq airborne)
+    (apply min-key
+           #(abs (- (altitude-pct (:aircraft/altitude-ft %)) pct))
+           airborne)))
+
+(defn airborne
+  "The ruler's residents — the aircraft in `picture` that the scrub can
+  land on. The shelves are not on the axis, so they cannot be scrubbed to."
+  [picture]
+  (filter #(= :airborne (tick-band %)) (vals picture)))
 
 ;; ---------------------------------------------------------------------
 ;; The fill — the ruler IS the legend. Built from adsb.map.style's
@@ -148,9 +205,44 @@
          (sort-by :aircraft/icao))))
 
 ;; ---------------------------------------------------------------------
-;; Interaction — three delegated handlers on the whole Stack, so N ticks
-;; cost three handlers, not 3N closures rebuilt every second. Each walks
-;; up from the event target to the nearest tick's data-icao.
+;; The Stack's own view state: which shelf, if any, is standing open and
+;; naming its residents. It is a property of the VIEW, not of the sky, so
+;; it lives here beside the surface that owns it — the aircraft events
+;; (adsb.events) stay the app's, and the scrub borrows them rather than
+;; writing selection or hover behind their backs.
+
+(rf/reg-event-db
+  :stack/toggle-shelf
+  (fn [db [_ band]]
+    (if (= band (:stack/open-shelf db))
+      (dissoc db :stack/open-shelf)
+      (assoc db :stack/open-shelf band))))
+
+(rf/reg-sub
+  :stack/open-shelf
+  (fn [db _]
+    (:stack/open-shelf db)))
+
+;; The scrub, in terms of the channels that already exist: passing a tick
+;; hovers it (which is what names it, and what the map will light), and
+;; letting go selects whatever the finger left named.
+
+(rf/reg-event-fx
+  :stack/scrub
+  (fn [{:keys [db]} [_ pct]]
+    (when-let [target (nearest-tick (airborne (:aircraft/picture db)) pct)]
+      {:fx [[:dispatch [:aircraft/hover (:aircraft/icao target)]]]})))
+
+(rf/reg-event-fx
+  :stack/scrub-end
+  (fn [{:keys [db]} _]
+    (when-let [icao (:aircraft/hovered-icao db)]
+      {:fx [[:dispatch [:aircraft/select icao]]]})))
+
+;; ---------------------------------------------------------------------
+;; Interaction — delegated handlers on the whole Stack, so N ticks cost a
+;; handful of handlers, not 3N closures rebuilt every second. Each walks up
+;; from the event target to the nearest tick's data-icao or shelf chip.
 
 (defn- event-icao
   "The icao of the tick an event landed on, or nil off-tick."
@@ -159,12 +251,28 @@
           (.closest "[data-icao]")
           (.getAttribute "data-icao")))
 
-(defn- on-stack-click!
-  "Click a tick -> the map's existing [:aircraft/select icao] contract,
-  the same event a plane click fires."
+(defn- event-shelf
+  "The band of the shelf chip an event landed on, or nil off-chip."
   [event]
-  (when-let [icao (event-icao event)]
-    (rf/dispatch [:aircraft/select icao])))
+  (some-> (.-target event)
+          (.closest "[data-shelf]")
+          (.getAttribute "data-shelf")
+          keyword))
+
+(defn- on-stack-click!
+  "Click a tick -> the map's existing [:aircraft/select icao] contract, the
+  same event a plane click fires. Click a shelf chip -> open or close that
+  shelf's sheet of names."
+  [event]
+  (if-let [icao (event-icao event)]
+    (rf/dispatch [:aircraft/select icao])
+    (when-let [band (event-shelf event)]
+      (rf/dispatch [:stack/toggle-shelf band]))))
+
+;; A scrub in progress. Transient pointer state, not app state: nothing
+;; outside this gesture can see it, and app-db is not where a half-finished
+;; finger-drag belongs.
+(defonce ^:private !scrubbing? (atom false))
 
 (defn- on-stack-over!
   "Pointer onto a tick -> publish the hover identity app-wide."
@@ -173,11 +281,62 @@
     (rf/dispatch [:aircraft/hover icao])))
 
 (defn- on-stack-out!
-  "Pointer off a tick -> clear the hover. Guarded so leaving non-tick
-  parts of the Stack dispatches nothing."
+  "Pointer off a tick -> clear the hover. Guarded so leaving non-tick parts
+  of the Stack dispatches nothing — and silent mid-scrub, where crossing the
+  gap between two ticks would otherwise clear the very hover the scrub is
+  painting, one flicker per tick passed."
   [event]
-  (when (event-icao event)
+  (when (and (not @!scrubbing?) (event-icao event))
     (rf/dispatch [:aircraft/clear-hover])))
+
+(defn- ruler-rect
+  "The ruler's bounding box as plain numbers — the shape `axis-pct` reads."
+  [element]
+  (let [rect (.getBoundingClientRect element)]
+    {:left   (.-left rect)
+     :top    (.-top rect)
+     :width  (.-width rect)
+     :height (.-height rect)}))
+
+(defn- scrub!
+  "Name and light whichever tick the pointer is nearest. The ruler is the
+  handler's currentTarget, so a scrub that begins on a tick and one that
+  begins on bare gradient are the same gesture."
+  [event]
+  (when-let [pct (axis-pct (ruler-rect (.-currentTarget event))
+                           (.-clientX event)
+                           (.-clientY event))]
+    (rf/dispatch [:stack/scrub pct])))
+
+(defn- on-ruler-down!
+  "Finger (or mouse button) down on the ruler — the scrub begins, and lands
+  on a tick immediately: a tap IS a one-frame scrub, which is what gives a
+  3px tick a forgiving target without fattening the ink."
+  [event]
+  (reset! !scrubbing? true)
+  (scrub! event))
+
+(defn- on-ruler-move!
+  "Dragging along the ruler names each tick as the pointer passes it. Only
+  while pressed — an idle mouse over the desktop ruler must not hijack the
+  hover it already has."
+  [event]
+  (when @!scrubbing?
+    (scrub! event)))
+
+(defn- on-ruler-up!
+  "Letting go selects whatever the scrub left named — the same
+  [:aircraft/select icao] contract a click fires."
+  [_event]
+  (when @!scrubbing?
+    (reset! !scrubbing? false)
+    (rf/dispatch [:stack/scrub-end])))
+
+(defn- on-ruler-cancel!
+  "The gesture was taken away from us (a system swipe, a call). Nothing was
+  chosen — end the scrub without selecting."
+  [_event]
+  (reset! !scrubbing? false))
 
 ;; ---------------------------------------------------------------------
 ;; Components — kebab-case functions returning hiccup.
@@ -200,14 +359,15 @@
   axis as --alt-pct (the stylesheet turns that into `bottom` or `left`
   and TRANSITIONS it, so a climbing aircraft's tick drifts rather than
   jumps); shelf ticks cluster, unplaced. The tick is named — a small
-  label beside it — while hovered, while selected, and always while the
-  aircraft is squawking distress."
-  [aircraft* selected-icao hovered-icao]
+  label beside it — while hovered, while selected, always while the
+  aircraft is squawking distress, and always inside an open sheet, which
+  exists precisely to name its residents (`always-named?`)."
+  [aircraft* {:keys [selected-icao hovered-icao always-named?]}]
   (let [{:aircraft/keys [icao altitude-ft]} aircraft*
         band       (tick-band aircraft*)
         emergency? (aircraft/emergency? aircraft*)
         selected?  (= icao selected-icao)
-        named?     (or emergency? selected? (= icao hovered-icao))]
+        named?     (or always-named? emergency? selected? (= icao hovered-icao))]
     [:div.adsb-stack-tick
      (cond-> {:role          "option"
               :data-icao     icao
@@ -224,12 +384,32 @@
 
 (defn- shelf
   "A holding band at the ruler's foot — the ground cluster or the
-  altitude-unknown area — with its resident ticks clustered inside."
-  [{:keys [class label aircraft selected-icao hovered-icao]}]
-  [:div.adsb-stack-shelf {:class class :role "group" :aria-label label}
-   [:span.adsb-stack-shelf-label {:aria-hidden true} label]
-   (for [a aircraft]
-     ^{:key (:aircraft/icao a)} [tick a selected-icao hovered-icao])])
+  altitude-unknown area. Its residents are shown one of two ways, and never
+  both at once (two DOM nodes for one aircraft would be two answers to
+  `who is this?`):
+
+    * CLOSED — the dot cluster. Grouped, never ranked. The phone hides the
+      dots and keeps only the chip, which is the whole point: the cluster's
+      one fact is its count, and on the short axis the count is cheaper.
+    * OPEN — the sheet, where every resident is NAMED and selectable. What
+      a chip's number cannot tell you, and neither could the dots."
+  [{:keys [band class label aircraft open? selected-icao hovered-icao]}]
+  (let [tick-opts {:selected-icao selected-icao :hovered-icao hovered-icao}]
+    [:div.adsb-stack-shelf {:class class :role "group" :aria-label label}
+     [:button.adsb-stack-shelf-chip
+      {:type          "button"
+       :data-shelf    (name band)
+       :data-testid   (str "shelf:" (name band))
+       :aria-expanded (boolean open?)}
+      [:span.adsb-stack-shelf-label label]
+      [:span.adsb-stack-shelf-count (count aircraft)]]
+     (if open?
+       [:div.adsb-stack-sheet
+        (for [a aircraft]
+          ^{:key (:aircraft/icao a)}
+          [tick a (assoc tick-opts :always-named? true)])]
+       (for [a aircraft]
+         ^{:key (:aircraft/icao a)} [tick a tick-opts]))]))
 
 (defn stack
   "The Stack, mounted permanently on the map's edge. A form-2 component:
@@ -240,29 +420,41 @@
   []
   (let [roster   (rf/subscribe [:aircraft/stack])
         selected (rf/subscribe [:aircraft/selected-icao])
-        hovered  (rf/subscribe [:aircraft/hovered-icao])]
+        hovered  (rf/subscribe [:aircraft/hovered-icao])
+        open     (rf/subscribe [:stack/open-shelf])]
     (fn []
-      (let [{:keys [airborne ground unknown]} (group-by tick-band @roster)
+      (let [bands         (group-by tick-band @roster)
             selected-icao @selected
-            hovered-icao  @hovered]
+            hovered-icao  @hovered
+            open-shelf    @open
+            tick-opts     {:selected-icao selected-icao :hovered-icao hovered-icao}]
         [:aside.adsb-stack
          {:role          "listbox"
           :aria-label    "Aircraft by altitude"
           :on-click      on-stack-click!
           :on-mouse-over on-stack-over!
           :on-mouse-out  on-stack-out!}
-         [:div.adsb-stack-ruler {:style {:background (ruler-background @theme/!theme)}}
+         [:div.adsb-stack-ruler
+          {:style             {:background (ruler-background @theme/!theme)}
+           :on-pointer-down   on-ruler-down!
+           :on-pointer-move   on-ruler-move!
+           :on-pointer-up     on-ruler-up!
+           :on-pointer-cancel on-ruler-cancel!}
           (for [g graduations]
             ^{:key (first g)} [graduation g])
-          (for [a airborne]
-            ^{:key (:aircraft/icao a)} [tick a selected-icao hovered-icao])]
-         [shelf {:class         "adsb-stack-ground"
+          (for [a (:airborne bands)]
+            ^{:key (:aircraft/icao a)} [tick a tick-opts])]
+         [shelf {:band          :ground
+                 :class         "adsb-stack-ground"
                  :label         "GND"
-                 :aircraft      ground
+                 :aircraft      (:ground bands)
+                 :open?         (= :ground open-shelf)
                  :selected-icao selected-icao
                  :hovered-icao  hovered-icao}]
-         [shelf {:class         "adsb-stack-unknown"
+         [shelf {:band          :unknown
+                 :class         "adsb-stack-unknown"
                  :label         "NO ALT"
-                 :aircraft      unknown
+                 :aircraft      (:unknown bands)
+                 :open?         (= :unknown open-shelf)
                  :selected-icao selected-icao
                  :hovered-icao  hovered-icao}]]))))
