@@ -32,15 +32,21 @@
            :right "var(--s3)"
            :width "auto")]
 
+    ;; The margin column clears the Stack — and, for the first five seconds, the
+    ;; attribution banner too, which wraps to two lines across this whole edge.
+    ;; The banner is not ours to hide on sight (adsb.map.view/attribution-fold-ms
+    ;; is a licence term): it shows, it is read, and then it folds to its (i) in
+    ;; the far corner. When it does, the column comes back down beside it and
+    ;; takes that 56px of map back — permanently, for the rest of the session.
     [:.adsb-margin
-     (decl :left      "var(--s3)"
-           ;; Above the recumbent Stack, and that is all it must clear now. The
-           ;; attribution used to be a banner of running text wrapping to two
-           ;; lines across this whole edge, so the column was lifted 56px over
-           ;; it; folded to its (i) button it is 24px wide in the far corner,
-           ;; and the column simply sits beside it. That lift was 56px of map.
-           :bottom    "calc(var(--stack-w) + var(--s2))"
-           :max-width "calc(100vw - 2 * var(--s3))")]
+     (decl :left       "var(--s3)"
+           :bottom     "calc(var(--stack-w) + 56px + var(--s2))"
+           :max-width  "calc(100vw - 2 * var(--s3))"
+           :transition "bottom var(--ease-slow, 240ms) ease")]
+
+    ;; The map container wears the folded mark; the column is its sibling.
+    [".adsb-credit-folded ~ .adsb-margin"
+     (decl :bottom "calc(var(--stack-w) + var(--s2))")]
 
     [:.adsb-legend
      (decl :gap     "var(--s4)"

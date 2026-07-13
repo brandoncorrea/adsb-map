@@ -92,22 +92,33 @@
       (is (true? (:compact attribution))
           "as an (i) button rather than a banner — folded, never removed"))))
 
-(deftest the-credit-starts-folded-but-stays-reachable
-  ;; MapLibre's compact control is compact and OPEN: it sets the open-class on
-  ;; add and only collapses on the reader's first map interaction, so the credit
-  ;; greets every session as a banner across the map's bottom edge. We fold it —
-  ;; and folding is not hiding: the (i) button remains, and its own handler
-  ;; toggles the very class we drop.
+(deftest the-credit-is-shown-before-it-is-folded
+  (testing "THE FIVE SECONDS ARE THE LICENCE, not a taste. The OSMF attribution
+            guidelines allow the credit to be folded behind an (i), and name the
+            only three things that may fold it: a dismiss interaction, a map
+            interaction, or a timeout of FIVE SECONDS — each of which presumes
+            the credit was SHOWN first. A map that opens with the credit already
+            folded is on none of that list. So this constant may not go to zero,
+            and may not be shortened: it is OpenStreetMap's five seconds, not
+            ours"
+    (is (= 5000 view/attribution-fold-ms)
+        "the timeout the guidelines name, exactly")
+    (is (pos? view/attribution-fold-ms)
+        "and never zero — the credit is never folded on load")))
+
+(deftest folding-the-credit-leaves-it-one-tap-away
+  ;; Folding is not hiding: the (i) button remains, and its own handler toggles
+  ;; the very class we drop.
   (let [container (js/document.createElement "div")
         attrib    (js/document.createElement "div")]
     (set! (.-className attrib)
           "maplibregl-ctrl maplibregl-ctrl-attrib maplibregl-compact maplibregl-compact-show")
     (.appendChild container attrib)
 
-    (testing "the open-class is dropped, so the credit renders folded"
+    (testing "the open-class is dropped, so the credit folds shut"
       (view/collapse-attribution! container)
       (is (not (.contains (.-classList attrib) "maplibregl-compact-show"))
-          "it starts shut"))
+          "shut"))
 
     (testing "the (i) button survives — the credit is one tap away, not gone"
       (is (.contains (.-classList attrib) "maplibregl-compact")
@@ -115,7 +126,11 @@
            AND still declines to re-open the credit behind our back (its own
            re-open path fires only when this class is absent)")
       (is (.contains (.-classList attrib) "maplibregl-ctrl-attrib")
-          "and the control itself is still in the DOM"))))
+          "and the control itself is still in the DOM"))
+
+    (testing "the container is marked, so the chrome can reclaim the room the
+              open banner was holding"
+      (is (.contains (.-classList container) "adsb-credit-folded")))))
 
 (deftest folding-the-credit-fails-safe
   (testing "if MapLibre ever renames these classes, the fold quietly does

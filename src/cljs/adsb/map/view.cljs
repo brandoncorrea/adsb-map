@@ -88,36 +88,49 @@
 
 (def ^:private attribution-selector ".maplibregl-ctrl-attrib")
 (def ^:private attribution-open-class "maplibregl-compact-show")
+(def ^:private credit-folded-class "adsb-credit-folded")
+
+(def ^:const attribution-fold-ms
+  "Five seconds, and this number is not a taste — it is the licence.
+
+  The OSMF attribution guidelines permit the credit to be folded behind an (i)
+  button, and they name the ONLY three things that may fold it: a dismiss
+  interaction, a map interaction (pan / click / zoom), or a timeout of five
+  seconds. Every one of them presupposes the credit was SHOWN first. A map that
+  opens with the credit already folded is not on that list — the reader must be
+  given the chance to read it.
+
+  So the banner shows, and five seconds later it folds. Do not shorten this, and
+  do not fold on load: OpenFreeMap, OpenMapTiles and OpenStreetMap are being
+  credited here, and the five seconds are theirs."
+  5000)
 
 (defn collapse-attribution!
-  "Fold the compact attribution shut inside `container`.
+  "Fold the compact attribution shut inside `container`, and mark the container
+  so the chrome can reclaim the room the open banner was holding.
 
-  MapLibre's compact control is compact and OPEN: it sets both
-  `maplibregl-compact` (the (i) button exists) and `maplibregl-compact-show`
-  (…and it is expanded anyway), and only collapses on the reader's first
-  interaction with the map. So it opens every session as a banner of running
-  text across the map's bottom edge — the widest piece of chrome we have, and
-  the only one that says the same thing every time.
+  Call this on the fold TIMEOUT, never at map creation — see
+  `attribution-fold-ms`, which is a licence term wearing a number's clothes.
+  MapLibre's own logic also folds it on the reader's first pan or zoom, which is
+  the other permitted trigger; whichever comes first, the result is the same.
 
-  CALL THIS ON LOAD, NOT ON CREATE. At construction the control is still empty
-  (the credit rides the style's sources, which have not arrived), and MapLibre's
-  compact logic skips an empty control entirely. The pass that opens the credit
-  is the one that runs when the style lands.
-
-  Dropping the open-class then STICKS, and is not a race: MapLibre re-runs that
-  logic on resize and on further styledata, but it adds the open-class only when
-  `maplibregl-compact` is ABSENT — and we leave that one exactly where it is. So
-  it never re-opens itself behind us, and the (i) button still toggles it,
+  Dropping the open-class STICKS, and is not a race: MapLibre re-runs its
+  compact logic on resize and on styledata, but it adds the open-class back only
+  when `maplibregl-compact` is ABSENT — and we leave that one exactly where it
+  is. So it never re-opens itself behind us, and the (i) button still toggles it,
   because the button's own handler owns the very class we drop.
 
-  Nothing is hidden: the credit is one tap away, the control is still there,
-  and if MapLibre ever changes those class names this quietly does nothing and
-  the attribution simply stays open — which is the safe way for it to fail."
+  Nothing is hidden: the credit was read, the control is still there, the (i) is
+  one tap away. And if MapLibre ever renames those classes this quietly does
+  nothing and the attribution simply stays open — the safe way to fail."
   [container]
-  (some-> container
-          (.querySelector attribution-selector)
-          .-classList
-          (.remove attribution-open-class)))
+  (when-let [control (some-> container (.querySelector attribution-selector))]
+    (.remove (.-classList control) attribution-open-class)
+    ;; The margin column was lifted clear of the open banner; with the banner
+    ;; folded it can come back down. The class rides the map container, and the
+    ;; column is its sibling (adsb.css.phone).
+    (.add (.-classList container) credit-folded-class)
+    control))
 
 (defn map-container
   "The map's DOM anchor. Named (not an inline anonymous fn in the render
@@ -144,20 +157,24 @@
         !emergency (atom nil)
         !raw-style (atom nil)
         !unwatch   (atom nil)
+        !fold-timer (atom nil)
         !disposed  (atom false)]
     (letfn [(mount-map! [th]
               (let [style (basemap/edition-style @!raw-style th)
                     m     (maplibre/create! @!container (default-map-opts style))]
                 (reset! !map m)
-                ;; ON LOAD, not on create. At construction the control is still
-                ;; EMPTY — the style's sources, which carry the credit, have not
-                ;; arrived — and MapLibre's compact logic declines to touch an
-                ;; empty control. It runs again when the style lands, and THAT
-                ;; is the pass that opens the credit. Folding before it would be
-                ;; folding nothing, and MapLibre would open it a moment later.
-                ;; Re-run on every mount: a theme flip destroys and re-creates
-                ;; the map, and the new map arrives with a freshly opened credit.
-                (maplibre/on-load! m #(collapse-attribution! @!container))
+                ;; The credit shows, and folds five seconds later — the timeout
+                ;; the OSMF guidelines name (see attribution-fold-ms). MapLibre
+                ;; folds it on the first pan or zoom too, which is the other
+                ;; permitted trigger; whichever comes first wins, and both leave
+                ;; the (i) button reachable forever after.
+                ;;
+                ;; Armed on every mount: a theme flip destroys and re-creates the
+                ;; map, and the new map arrives with a freshly opened credit.
+                (reset! !fold-timer
+                        (js/setTimeout #(when-not @!disposed
+                                          (collapse-attribution! @!container))
+                                       attribution-fold-ms))
                 (reset! !aircraft (aircraft-layer/attach! m th))
                 ;; The selection ring rides the same lifecycle: ring and
                 ;; map are created and torn down together (adsb.map.selection).
@@ -166,6 +183,11 @@
                 ;; ellipse, MAYDAY stamp, and edge arrow (adsb.map.emergency).
                 (reset! !emergency (emergency/attach! m))))
             (unmount-map! []
+              ;; A pending fold belongs to the map being torn down; left armed,
+              ;; it would fire into the next one's DOM (or none at all).
+              (when-let [timer @!fold-timer]
+                (js/clearTimeout timer)
+                (reset! !fold-timer nil))
               (when-let [annotations @!emergency]
                 (emergency/detach! @!map annotations)
                 (reset! !emergency nil))
