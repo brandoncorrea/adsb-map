@@ -187,10 +187,12 @@
           :border        "1px solid var(--rule)"
           :border-radius "2px")]
 
-   ;; The chip — the shelf's label and its count, and the button that opens
-   ;; its sheet of names. A button, because it is one: it is the only thing
-   ;; on the phone's Stack that a finger is asked to press deliberately.
-   [:.adsb-stack-shelf-chip
+   ;; The chip — the shelf's swatch, its label and its count, and the button
+   ;; that opens its sheet of names. A button, because it is one: it is the only
+   ;; thing on the phone's Stack that a finger is asked to press deliberately.
+   ;; The caption is its non-interactive twin (the emergency count, which opens
+   ;; nothing — the NOTAM ribbon is where you go to act on a distress squawk).
+   [:.adsb-stack-shelf-chip :.adsb-stack-shelf-caption
     (decl :position    "relative"        ; the phone stance hangs hit-slop on it
           :display     "flex"
           :align-items "center"
@@ -201,8 +203,30 @@
           :border      "none"
           :font        "inherit"          ; the label's voice: adsb.css.captions
           :color       "inherit"
-          :cursor      "pointer"
           :text-align  "left")]
+
+   [:.adsb-stack-shelf-chip
+    (decl :cursor "pointer")]
+
+   ;; THE MAP KEY (adsb-sod). `● GND 3` is a legend row and a count in one
+   ;; breath. The colour is painted INLINE by adsb.ui.stack from the current
+   ;; edition's adsb.map.style palette — never a token mirroring it — which is
+   ;; the guarantee the deleted corner legend existed to hold: re-skin the ramp
+   ;; and the key moves with the planes, or the test fails.
+   [:.adsb-stack-shelf-swatch
+    (decl :flex          "none"
+          :width         "7px"
+          :height        "7px"
+          :border-radius "50%"
+          :box-shadow    "0 0 0 1px var(--paper-halo)")]
+
+   ;; EMG — on the chart exactly when red is on the chart, and never otherwise.
+   [:.adsb-stack-emergency
+    (decl :border-color "var(--emergency)")]
+
+   [".adsb-stack-emergency .adsb-stack-shelf-count"
+    (decl :color       "var(--emergency)"
+          :font-weight 700)]
 
    [:.adsb-stack-shelf-chip:focus-visible
     (decl :outline        "2px solid var(--magenta)"

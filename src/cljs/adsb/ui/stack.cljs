@@ -4,9 +4,21 @@
   rejected every sidebar as 'a table in a costume'). A profile view of the
   sky beside the plan view of it, doing three jobs at once:
 
-    * ALTITUDE LEGEND — its fill IS the altitude gradient, built from the
-      very same adsb.map.style/altitude-stops the map paints with, so the
-      ruler and the planes can never disagree about what a colour means.
+    * THE MAP KEY, ENTIRE (adsb-sod) — its fill IS the altitude gradient,
+      built from the very same adsb.map.style/altitude-stops the map paints
+      with, so the ruler and the planes can never disagree about what a colour
+      means. The corner legend that used to say this a second time, in five
+      discrete swatches, is gone: a continuous ramp with flight levels ruled
+      across it is not a worse legend than a table of five colours, it is a
+      better one, and it was already on the chart.
+
+      What the ramp could NOT key are the states that are not altitudes, and
+      those the shelves now carry as swatches beside their counts — `● GND 3`,
+      `● NO ALT 31`, and `● EMG 1` when, and only when, an aircraft is
+      squawking. Every swatch is painted from `style/palette`, never from a CSS
+      token mirroring it: that was the deleted legend's one real virtue and it
+      is kept exactly. The staleness fade keys itself — a plane that is fading
+      is a plane going quiet, which is the only thing the fade ever meant.
     * ALTITUDE SCALE — flight-level graduations from the surface to the
       ceiling (~FL450).
     * AIRCRAFT LIST — every positioned-or-altitude-bearing aircraft is a
@@ -382,6 +394,23 @@
      (when named?
        [:span.adsb-stack-tick-label (tick-name aircraft*)])]))
 
+(defn- swatch
+  "A colour chip, painted from the CURRENT EDITION'S adsb.map.style palette and
+  carrying that colour verbatim on `data-color`.
+
+  This is the map key, and it is the whole of what the corner legend used to be
+  for the off-scale states (adsb-sod). The legend's one real virtue was never
+  its box — it was that it read `style/palette` directly, so a re-skin moved the
+  key and the planes together and they could not drift apart. That virtue is
+  kept here, exactly: these swatches are the palette, not a CSS token mirroring
+  it, and the test asserts they equal it in BOTH editions."
+  [color testid]
+  [:span.adsb-stack-shelf-swatch
+   {:data-testid testid
+    :data-color  color
+    :style       {:background-color color}
+    :aria-hidden true}])
+
 (defn- shelf
   "A holding band at the ruler's foot — the ground cluster or the
   altitude-unknown area. Its residents are shown one of two ways, and never
@@ -392,8 +421,13 @@
       dots and keeps only the chip, which is the whole point: the cluster's
       one fact is its count, and on the short axis the count is cheaper.
     * OPEN — the sheet, where every resident is NAMED and selectable. What
-      a chip's number cannot tell you, and neither could the dots."
-  [{:keys [band class label aircraft open? selected-icao hovered-icao]}]
+      a chip's number cannot tell you, and neither could the dots.
+
+  The chip leads with the state's SWATCH, so `● GND 3` is a legend row and a
+  count in the same breath. The swatch matters most in the two places the dots
+  cannot help: on a phone, where they are hidden, and at a count of zero, where
+  there are no dots to take the colour from."
+  [{:keys [band class label color aircraft open? selected-icao hovered-icao]}]
   (let [tick-opts {:selected-icao selected-icao :hovered-icao hovered-icao}]
     [:div.adsb-stack-shelf {:class class :role "group" :aria-label label}
      [:button.adsb-stack-shelf-chip
@@ -401,6 +435,7 @@
        :data-shelf    (name band)
        :data-testid   (str "shelf:" (name band))
        :aria-expanded (boolean open?)}
+      [swatch color (str "swatch:" (name band))]
       [:span.adsb-stack-shelf-label label]
       [:span.adsb-stack-shelf-count (count aircraft)]]
      (if open?
@@ -411,6 +446,28 @@
        (for [a aircraft]
          ^{:key (:aircraft/icao a)} [tick a tick-opts]))]))
 
+(defn- emergency-caption
+  "`● EMG 1` — the key for red, and the count of it.
+
+  It renders ONLY while an aircraft is squawking distress, which is the point:
+  a legend row explaining a colour that is nowhere on the chart is a row that
+  spends the reader's attention on nothing. This one cannot be stale and cannot
+  be idle — it is on screen exactly when red is on screen.
+
+  It is not a shelf and not a button. A distressed aircraft is airborne and
+  already has its tick on the ruler (red, hatched, permanently named — §7); it
+  is named again in the NOTAM ribbon, which is where you go to act on it. A
+  second list of the same aircraft would be a second answer to a question the
+  chart has already answered twice."
+  [aircraft color]
+  (when (seq aircraft)
+    [:div.adsb-stack-shelf.adsb-stack-emergency
+     {:role "status" :aria-label (str (count aircraft) " squawking distress")}
+     [:span.adsb-stack-shelf-caption {:data-testid "shelf:emergency"}
+      [swatch color "swatch:emergency"]
+      [:span.adsb-stack-shelf-label "EMG"]
+      [:span.adsb-stack-shelf-count (count aircraft)]]]))
+
 (defn stack
   "The Stack, mounted permanently on the map's edge. A form-2 component:
   subscribe once, deref per render. The whole surface is one listbox —
@@ -418,12 +475,15 @@
   shelves inside it. Derefs the current edition (adsb.map.theme/!theme)
   so the fill re-prints when the system scheme flips."
   []
-  (let [roster   (rf/subscribe [:aircraft/stack])
-        selected (rf/subscribe [:aircraft/selected-icao])
-        hovered  (rf/subscribe [:aircraft/hovered-icao])
-        open     (rf/subscribe [:stack/open-shelf])]
+  (let [roster      (rf/subscribe [:aircraft/stack])
+        selected    (rf/subscribe [:aircraft/selected-icao])
+        hovered     (rf/subscribe [:aircraft/hovered-icao])
+        open        (rf/subscribe [:stack/open-shelf])
+        emergencies (rf/subscribe [:aircraft/emergencies])]
     (fn []
-      (let [bands         (group-by tick-band @roster)
+      (let [theme         @theme/!theme
+            palette       (style/palette theme)
+            bands         (group-by tick-band @roster)
             selected-icao @selected
             hovered-icao  @hovered
             open-shelf    @open
@@ -435,7 +495,7 @@
           :on-mouse-over on-stack-over!
           :on-mouse-out  on-stack-out!}
          [:div.adsb-stack-ruler
-          {:style             {:background (ruler-background @theme/!theme)}
+          {:style             {:background (ruler-background theme)}
            :on-pointer-down   on-ruler-down!
            :on-pointer-move   on-ruler-move!
            :on-pointer-up     on-ruler-up!
@@ -447,6 +507,7 @@
          [shelf {:band          :ground
                  :class         "adsb-stack-ground"
                  :label         "GND"
+                 :color         (:ground-color palette)
                  :aircraft      (:ground bands)
                  :open?         (= :ground open-shelf)
                  :selected-icao selected-icao
@@ -454,7 +515,9 @@
          [shelf {:band          :unknown
                  :class         "adsb-stack-unknown"
                  :label         "NO ALT"
+                 :color         (:unknown-color palette)
                  :aircraft      (:unknown bands)
                  :open?         (= :unknown open-shelf)
                  :selected-icao selected-icao
-                 :hovered-icao  hovered-icao}]]))))
+                 :hovered-icao  hovered-icao}]
+         [emergency-caption @emergencies (:emergency-color palette)]]))))

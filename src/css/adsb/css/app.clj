@@ -19,7 +19,6 @@
     [adsb.css.alerts :as alerts]
     [adsb.css.captions :as captions]
     [adsb.css.emergency :as emergency]
-    [adsb.css.margin :as margin]
     [adsb.css.motion :as motion]
     [adsb.css.panel :as panel]
     [adsb.css.phone :as phone]
@@ -31,7 +30,6 @@
   [tokens/styles                        ; the faces and the two editions
    motion/styles                        ; §6 — and §7's zero-motion rule
    shell/styles                         ; the shell, the map, the header
-   margin/styles                        ; the legend and stats marginalia
    alerts/styles                        ; §7 — the NOTAM strip
    panel/styles                         ; §4 — the index card and its ring
    emergency/styles                     ; §7 — the map's own annotations

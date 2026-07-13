@@ -127,10 +127,7 @@
            re-open path fires only when this class is absent)")
       (is (.contains (.-classList attrib) "maplibregl-ctrl-attrib")
           "and the control itself is still in the DOM"))
-
-    (testing "the container is marked, so the chrome can reclaim the room the
-              open banner was holding"
-      (is (.contains (.-classList container) "adsb-credit-folded")))))
+))
 
 (deftest folding-the-credit-fails-safe
   (testing "if MapLibre ever renames these classes, the fold quietly does

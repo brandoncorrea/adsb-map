@@ -331,6 +331,33 @@ In order, because risk fronts the queue:
    selection ring (a map marker that draws itself in), legend + stats as
    the margin column, the Stack re-tokened, easing per §6, and the label
    voice decided (§3).
+
+   **Amended, 2026-07-13 — THE MARGIN COLUMN IS GONE.** It was the last
+   large thing standing on the plot, and by the end it was standing there
+   for nothing:
+
+   - **The stats went up to the header** (adsb-33i). Max range and message
+     rate are vitals; they belong with the counts, not in a bordered chip
+     over the chart. The room was paid for by the header's own compaction:
+     it reports EXCEPTIONS now, not confirmations — a healthy stream says
+     nothing at all, and a healthy feeder is a bare green dot. (Colour alone
+     may say *fine*; it may never say *broken*, so every fault state still
+     prints its words.)
+   - **The legend went onto the Stack** (adsb-sod). §9 already said it: the
+     ruler's fill IS the altitude gradient, so a corner table of five
+     swatches was the same key, drawn worse, twice. The states that are NOT
+     altitudes ride their own counts as swatches — `● GND 3`, `● NO ALT 31`,
+     and `● EMG 1` on screen exactly when an aircraft is squawking and never
+     otherwise. The staleness fade keys itself.
+   - **The credit folds** to its (i) after five seconds (adsb-5c7) — the
+     timeout the OSMF attribution guidelines name. It is folded, never
+     hidden: the guidelines permit exactly three triggers and all three
+     presume the reader saw it first.
+
+   What is left over the map is a 36px title block, the Stack on one edge,
+   and the marginalia that appear only when they have something to say. **The
+   map is the product; chrome defers to it** (§10) — this is that rule,
+   collected on.
 6. ~~**Still owed: the §7 map annotations.**~~ **Done (adsb-bb1)** — the
    red-pen double ellipse, the MAYDAY stamp, and the off-screen edge arrow
    ship in `adsb.map.emergency`, filed as their own bead rather than

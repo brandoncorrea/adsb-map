@@ -12,6 +12,7 @@
     [adsb.events]
     [adsb.fixtures :as fixtures]
     [adsb.map.style :as style]
+    [adsb.map.theme :as theme]                    ; the edition the key is printed in
     [adsb.stream]                                 ; registers :aircraft/picture
     [adsb.subs]                                   ; registers selection + hover
     [adsb.ui.stack :as stack]
@@ -314,6 +315,62 @@
       (.click rtl/fireEvent (tick-el "aaaaaa"))
       (is (= "aaaaaa" @(rf/subscribe [:aircraft/selected-icao]))
           "the altitude-less aircraft selects like any other"))))
+
+;; ---------------------------------------------------------------------
+;; The Stack IS the map key now (adsb-sod) — the corner legend is deleted.
+
+(defn- swatch-color [band]
+  (.getAttribute (.getByTestId rtl/screen (str "swatch:" band)) "data-color"))
+
+(defn- assert-key-matches-palette [theme]
+  (let [{:keys [ground-color unknown-color emergency-color]} (style/palette theme)]
+    (rf-test/run-test-sync
+      (theme/set-theme! theme)
+      (rf/dispatch [:test/set-picture
+                    (by-icao [fixtures/on-the-ground no-altitude
+                              fixtures/squawking-7700])])
+      (render-stack!)
+      (testing (str theme ": every swatch is the map's own palette entry")
+        (is (= ground-color (swatch-color "ground"))
+            "GND keys the colour the map paints a grounded aircraft")
+        (is (= unknown-color (swatch-color "unknown"))
+            "NO ALT keys the colour of an aircraft with no altitude")
+        (is (= emergency-color (swatch-color "emergency"))
+            "EMG keys the colour of a distress squawk")))))
+
+(deftest the-key-cannot-drift-from-the-map-in-either-edition
+  ;; This is the deleted legend's ONE real virtue, kept whole. It read
+  ;; style/palette directly so a re-skin moved the key and the planes together;
+  ;; had the key moved onto the Stack as CSS tokens mirroring the palette, that
+  ;; guarantee would have died quietly with the box. The swatches are painted
+  ;; from the palette, and this fails the moment they are not.
+  (assert-key-matches-palette :day)
+  (assert-key-matches-palette :night)
+  (testing "and the two editions really are different inks, so this is a
+            live constraint and not a tautology"
+    (is (not= (:ground-color (style/palette :day))
+              (:ground-color (style/palette :night)))))
+  (theme/set-theme! :day))
+
+(deftest the-emergency-key-exists-only-while-red-does
+  (testing "a legend row explaining a colour that is nowhere on the chart
+            spends the reader's attention on nothing. EMG is on screen exactly
+            when an aircraft is squawking distress, and never otherwise"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/on-the-ground])])
+      (render-stack!)
+      (is (nil? (.queryByTestId rtl/screen "shelf:emergency"))
+          "a calm sky keys no red, because there is no red to key")
+      (is (some? (.queryByTestId rtl/screen "shelf:ground"))
+          "while GND is permanent — its count is a fact even at zero"))
+
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/squawking-7700])])
+      (render-stack!)
+      (is (some? (.queryByTestId rtl/screen "shelf:emergency"))
+          "a distress squawk brings the key with it")
+      (is (some? (.getByText rtl/screen "EMG"))
+          "named in words, not colour alone"))))
 
 ;; ---------------------------------------------------------------------
 ;; The scrub (adsb-4et) — a finger, in a real browser.

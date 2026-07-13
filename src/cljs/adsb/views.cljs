@@ -7,7 +7,6 @@
             [adsb.ui.aircraft-panel :as aircraft-panel]
             [adsb.ui.alert :as alert]
             [adsb.ui.header :as header]
-            [adsb.ui.legend :as legend]
             [adsb.ui.stack :as stack]))
 
 (defn app-root
@@ -24,14 +23,10 @@
    ;; nothing when the sky is calm (adsb.ui.alert).
    [alert/alert-ribbon]
    [map-view/map-view]
-   ;; The margin column, bottom-left: the map key alone now. The session stats
-   ;; moved up to the header (adsb-33i), where the other vitals live — they
-   ;; were never marginalia, and the box around them was a border drawn around
-   ;; two numbers.
-   [:div.adsb-margin
-    ;; Overlay explaining the colour ramp. Static chrome — reads the
-    ;; style constants per edition (adsb.ui.legend).
-    [legend/legend]]
+   ;; There is no margin column. The session stats went up to the header, where
+   ;; the other vitals live (adsb-33i); the map key went onto the Stack, which
+   ;; was already most of it (adsb-sod). Nothing was left in the corner but the
+   ;; box, so the corner is the map's again.
    ;; The Stack — the live altitude ruler on the map's edge, replacing the
    ;; sidebar outright (design direction §9: there is no list). Ticks at
    ;; true altitudes, hover-to-highlight, click-to-select (adsb.ui.stack).

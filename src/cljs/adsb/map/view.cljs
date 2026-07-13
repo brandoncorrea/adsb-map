@@ -79,16 +79,14 @@
    ;; OpenFreeMap / OpenMapTiles / OpenStreetMap. The style JSON's sources
    ;; carry the text; enabling the control is what makes MapLibre render it.
    ;;
-   ;; `compact` is the credit as an (i) button rather than a banner of running
-   ;; text — MapLibre's own first-class mode for exactly this, and the credit is
-   ;; one tap from open, at every width. It is not removed and it is not
-   ;; unreachable; it is folded. `collapse-attribution!` below is what makes it
-   ;; start folded, because MapLibre opens it for you.
+   ;; `compact` gives the credit an (i) button to fold INTO — MapLibre's own
+   ;; first-class mode for exactly this. It still opens as a banner and is still
+   ;; read; `attribution-fold-ms` is what folds it, five seconds later, and that
+   ;; number is a licence term. Nothing here hides it.
    :attributionControl {:compact true}})
 
 (def ^:private attribution-selector ".maplibregl-ctrl-attrib")
 (def ^:private attribution-open-class "maplibregl-compact-show")
-(def ^:private credit-folded-class "adsb-credit-folded")
 
 (def ^:const attribution-fold-ms
   "Five seconds, and this number is not a taste — it is the licence.
@@ -106,8 +104,7 @@
   5000)
 
 (defn collapse-attribution!
-  "Fold the compact attribution shut inside `container`, and mark the container
-  so the chrome can reclaim the room the open banner was holding.
+  "Fold the compact attribution shut inside `container`.
 
   Call this on the fold TIMEOUT, never at map creation — see
   `attribution-fold-ms`, which is a licence term wearing a number's clothes.
@@ -126,10 +123,6 @@
   [container]
   (when-let [control (some-> container (.querySelector attribution-selector))]
     (.remove (.-classList control) attribution-open-class)
-    ;; The margin column was lifted clear of the open banner; with the banner
-    ;; folded it can come back down. The class rides the map container, and the
-    ;; column is its sibling (adsb.css.phone).
-    (.add (.-classList container) credit-folded-class)
     control))
 
 (defn map-container
