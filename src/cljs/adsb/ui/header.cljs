@@ -166,7 +166,6 @@
         now-ms     (rf/subscribe [:ui/now-ms])]
     (fn []
       [:header.adsb-header
-       [:span.adsb-title "adsb"]
        [stats/stats-readout]
        [utc-clock @now-ms]
        [connection-indicator @connection]

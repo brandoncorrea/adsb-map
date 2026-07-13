@@ -353,6 +353,17 @@ In order, because risk fronts the queue:
      timeout the OSMF attribution guidelines name. It is folded, never
      hidden: the guidelines permit exactly three triggers and all three
      presume the reader saw it first.
+   - **The title stamp is gone, and with it the title block.** The word
+     `adsb` under its magenta pen rule told a reader nothing they did not
+     already know: there is one page, and its name is in the browser tab. A
+     chart's title block earns its ink on a chart that will be filed among
+     other charts; this one is on screen because you opened it. What is left
+     up top is not a title block but a **strip of apparatus** — the feeder's
+     reach (`RNG`), its throughput (`MSG`), the clock, and the health
+     signals. Everything about the SKY reads from the Stack: `PLOTTED 72/78`,
+     `GND`, `NO ALT`, `EMG`. **That is the line the chrome now obeys — the
+     header is the apparatus, the Stack is the sky** — and it is worth keeping:
+     it is what told us the counts were in the wrong place to begin with.
 
    What is left over the map is a 36px title block, the Stack on one edge,
    and the marginalia that appear only when they have something to say. **The

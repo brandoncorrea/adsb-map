@@ -2,9 +2,12 @@
   "The shell and the header — the chart's title block.
 
   The shell fills the viewport and the map is its full-bleed background. The
-  header is 36px (--header-h) of instrument: the title stamped in bold under
-  the magenta pen underline, mono vitals, the two health chips pinned right
-  so the map's health is always in the same place. One ink rule below."
+  header is 36px (--header-h) of instrument, and instrument only: the feeder's
+  reach and throughput in mono, and the health signals pinned right so the map's
+  health is always in the same place. One ink rule below.
+
+  The title stamp is gone (adsb-sod). What is left is not a title block — it is
+  a strip of apparatus, and everything about the SKY reads from the Stack."
   (:require
     [adsb.css.decl :refer [decl]]))
 
@@ -64,14 +67,12 @@
           :font-size     "var(--t0)"
           :box-sizing    "border-box")]
 
-   [:.adsb-title
-    (decl :font-size      "var(--t1)"
-          :font-weight    700
-          :letter-spacing "0.04em"
-          :line-height    1
-          :border-bottom  "2px solid var(--magenta)"  ; the plotter's pen (§5)
-          :padding-bottom "1px")]
-
+   ;; No title stamp. The word `adsb` sat here under a magenta pen rule, and it
+   ;; told a reader of this app precisely nothing they did not already know —
+   ;; there is one page, and its name is in the browser tab. A chart's title
+   ;; block earns its ink on a chart that will be filed among other charts;
+   ;; this one is on screen because you opened it.
+   ;;
    ;; Live vital signs. The counts left for the Stack (adsb-sod): they are a
    ;; census of the SKY, and this bar reports on the apparatus. What is left
    ;; here is the feeder's own reach and throughput, and its health.
