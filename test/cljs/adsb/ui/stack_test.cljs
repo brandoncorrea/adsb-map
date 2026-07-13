@@ -127,6 +127,160 @@
       (is (= [ups-icao] (map :aircraft/icao (stack/airborne picture)))
           "only the aircraft with a real altitude is scrubbable"))))
 
+;; ---------------------------------------------------------------------
+;; The window — zoom, as arithmetic.
+
+(deftest the-window-places-feet-on-the-range-it-frames
+  (testing "at full range the window IS the altitude axis"
+    (is (= 0 (stack/window-pct stack/full-window 0)))
+    (is (= 100 (stack/window-pct stack/full-window stack/ceiling-ft)))
+    (is (= (stack/altitude-pct 34775) (stack/window-pct stack/full-window 34775))
+        "identical to the window-free scale, which is what makes zooming OUT a
+         return rather than a different instrument"))
+
+  (testing "zoomed, feet are placed on the slice — a 2000ft window spreads two
+            aircraft 200ft apart across a fifth of the ruler, where the full
+            range would have merged them into one another"
+    (let [w {:min-ft 30000 :max-ft 32000}]
+      (is (= 0 (stack/window-pct w 30000)))
+      (is (= 50 (stack/window-pct w 31000)))
+      (is (= 100 (stack/window-pct w 32000)))
+      (is (= 10 (stack/window-pct w 30200)))
+      (is (< (- (stack/altitude-pct 30200) (stack/altitude-pct 30000)) 0.5)
+          "…which at full range was under half a percent of the ruler — half a
+           pixel, and the whole reason for the zoom")))
+
+  (testing "in-window? is what keeps a tick honest: outside the frame it is not
+            drawn at all, never clamped onto the edge claiming an altitude it
+            does not have"
+    (let [w {:min-ft 30000 :max-ft 32000}]
+      (is (stack/in-window? w 31000))
+      (is (not (stack/in-window? w 29999)))
+      (is (not (stack/in-window? w 32001)))
+      (is (not (stack/in-window? w nil)) "and absent is not an altitude"))))
+
+(deftest zooming-holds-the-point-under-the-fingers-still
+  (testing "the sky spreads AROUND the point you are pinching — the thing you are
+            pointing at does not move, which is the whole feel of a timeline zoom"
+    (let [w    {:min-ft 0 :max-ft 40000}
+          ;; pinch about FL200, which sits at 50% of this window
+          w'   (stack/zoom-window w 50 0.5)]
+      (is (= 20000 (+ (:min-ft w') (/ (- (:max-ft w') (:min-ft w')) 2)))
+          "FL200 is still the middle of the window")
+      (is (= 20000 (- (:max-ft w') (:min-ft w'))) "and the span halved")))
+
+  (testing "pinching about the top holds the TOP still"
+    (let [w'  (stack/zoom-window {:min-ft 0 :max-ft 40000} 100 0.5)]
+      (is (= 40000 (:max-ft w')) "the ceiling under the fingers stayed put")
+      (is (= 20000 (:min-ft w'))))))
+
+(deftest the-window-can-never-frame-sky-that-does-not-exist
+  (testing "it never runs past the surface or the ceiling — a window beyond
+            either end would print scale that is not there"
+    (let [w (stack/zoom-window {:min-ft 0 :max-ft 10000} 0 0.5)]
+      (is (= 0 (:min-ft w)) "held at the surface, not dragged below it"))
+    (let [w (stack/zoom-window {:min-ft 40000 :max-ft stack/ceiling-ft} 100 0.5)]
+      (is (= stack/ceiling-ft (:max-ft w)) "and never above the ceiling"))
+    (let [w (stack/pan-window {:min-ft 0 :max-ft 10000} -999)]
+      (is (= 0 (:min-ft w)) "panning stops at the surface")
+      (is (= 10000 (:max-ft w)) "without resizing the window it was panning")))
+
+  (testing "it never closes tighter than min-window-ft, and never opens wider
+            than the whole sky — pinching out far enough is simply HOME"
+    (let [tight (stack/zoom-window {:min-ft 30000 :max-ft 30500} 50 0.001)]
+      (is (>= (- (:max-ft tight) (:min-ft tight)) stack/min-window-ft)))
+    (is (= stack/full-window (stack/zoom-window {:min-ft 30000 :max-ft 31000} 50 1000))
+        "pinch out past the sky and you land exactly on the whole sky — the
+         gesture's own way back to the map key")))
+
+(deftest the-graduations-follow-the-window
+  (testing "a fixed SFC/FL100/…/FL400 was honest only at full range. Zoom to a
+            2000ft slice and it would print one rule or none, and the reader
+            would be staring at an unlabelled band of colour"
+    (is (= 10000 (stack/graduation-step 45000)) "the whole sky rules by 10,000")
+    (is (= 500 (stack/graduation-step 2000)) "a 2000ft slice rules by 500")
+    (is (>= (count (stack/graduations {:min-ft 30000 :max-ft 32000})) 3)
+        "every window is ruled at least three times — always readable, never a
+         wall of lines"))
+
+  (testing "the rules are real altitudes inside the window, labelled as the
+            charts print them"
+    (let [gs (stack/graduations {:min-ft 30000 :max-ft 32000})]
+      (is (every? #(stack/in-window? {:min-ft 30000 :max-ft 32000} (first %)) gs))
+      (is (some #(= "FL310" (second %)) gs) "FL310, three digits, as charts print")))
+
+  (testing "the surface still reads SFC, not FL000"
+    (is (= "SFC" (stack/graduation-label 0)))
+    (is (= "FL050" (stack/graduation-label 5000)))))
+
+(deftest nothing-may-vanish-silently
+  ;; The census counts sit inches from the ruler and count the WHOLE sky. A
+  ;; windowed ruler shows a slice. If aircraft simply disappeared, the two
+  ;; instruments would disagree and the ruler would be the one lying.
+  (let [low   (assoc ups :aircraft/icao "low00" :aircraft/altitude-ft 5000)
+        high  (assoc ups :aircraft/icao "high0" :aircraft/altitude-ft 40000)
+        here  (assoc ups :aircraft/icao "here0" :aircraft/altitude-ft 31000)
+        window {:min-ft 30000 :max-ft 32000}]
+
+    (testing "what the window hides, its ends report"
+      (let [o (stack/overflow window [low high here])]
+        (is (= 1 (:below o)) "one below the floor")
+        (is (= 1 (:above o)) "one above the ceiling")
+        (is (not (:below-emergency? o)))
+        (is (not (:above-emergency? o)))))
+
+    (testing "AND §7 DOES NOT BEND FOR A VIEW STATE. An emergency outside the
+              window is an emergency the reader cannot see — so the end that is
+              hiding it goes red"
+      (let [mayday (assoc fixtures/squawking-7700 :aircraft/altitude-ft 41000)
+            o      (stack/overflow window [here mayday])]
+        (is (= 1 (:above o)))
+        (is (:above-emergency? o)
+            "the ruler's ceiling admits it is hiding a distress squawk")))))
+
+(deftest a-scrub-cannot-name-what-the-ruler-is-not-showing
+  (testing "an aircraft the reader has zoomed past is not under their finger,
+            whatever its altitude. The scrub reads the window, not the sky"
+    (let [window {:min-ft 30000 :max-ft 32000}
+          low    (assoc ups :aircraft/icao "low00" :aircraft/altitude-ft 5000)
+          here   (assoc ups :aircraft/icao "here0" :aircraft/altitude-ft 31000)]
+      (is (= "here0" (:aircraft/icao (stack/nearest-tick window [low here] 50)))
+          "the one in view")
+      (is (= "here0" (:aircraft/icao (stack/nearest-tick window [low here] 0)))
+          "even at the very floor of the window, where the hidden one is nearer
+           in raw altitude — it is not on this ruler")
+      (is (nil? (stack/nearest-tick window [low] 50))
+          "and with nothing in view there is nothing to point at"))))
+
+(deftest the-ruler-holds-still-while-the-reader-moves-it
+  (testing "a tick drifts because an aircraft CLIMBED — never because the scale
+            slid under it. The transition that makes a climb glide would, on a
+            zoom, ease fifty ticks across the ruler at once: a fact about the
+            SCALE animated as though it were a fact about the SKY"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups])])
+      (render-stack!)
+      (is (not @(rf/subscribe [:stack/window-moving?]))
+          "at rest the ruler drifts as it always did")
+
+      ;; act + flush: Reagent queues the re-render and RTL commits it through a
+      ;; React 18 root, so neither has run by the time the dispatch returns.
+      (rtl/act (fn [] (rf/dispatch [:stack/zoom 50 0.5]) (r/flush)))
+      (is @(rf/subscribe [:stack/window-moving?])
+          "while the window moves, it is held still")
+      (is (.contains (.-classList (.getByTestId rtl/screen "ruler"))
+                     "adsb-stack-ruler-still")
+          "and the DOM says so, which is what kills the transition")
+
+      (rf/dispatch [:stack/window-settled])
+      (is (not @(rf/subscribe [:stack/window-moving?]))
+          "the reader let go; the drift resumes")))
+
+  (testing "panning holds it still too — a drag is no more a climb than a pinch is"
+    (rf-test/run-test-sync
+      (rf/dispatch [:stack/pan 10])
+      (is @(rf/subscribe [:stack/window-moving?])))))
+
 (deftest tick-band-is-three-state
   (testing "ground, a real number, and absent are three different places"
     (is (= :ground (stack/tick-band fixtures/on-the-ground))

@@ -136,6 +136,79 @@
       (boolean (:aircraft/on-ground? aircraft*))))
 
 ;; ---------------------------------------------------------------------
+;; THE WINDOW — the slice of the altitude axis the ruler is currently showing.
+;;
+;; A ruler that spans the whole sky puts 43 aircraft on 372px: a 6px median gap
+;; against 3px of ink, so more than half the ticks merge into their neighbours
+;; and some sit exactly on top of one another. The scale was never the problem —
+;; the RANGE was. So the range is a view now, and pinching it open spreads the
+;; ticks apart without moving a single one of them relative to the scale they are
+;; drawn against.
+;;
+;; Everything below is PURE and takes the window as an argument. The ruler has no
+;; opinion about what it is showing; it is told.
+
+(def full-window
+  "The whole sky — the range the ruler opens on, and the range a pinch-out
+  returns to. At this range the fill is the COMPLETE altitude ramp, which is what
+  makes the ruler the map's key: the reader who wants to know what a colour means
+  zooms out until the ruler is the legend again."
+  {:min-ft 0 :max-ft ceiling-ft})
+
+(def ^:const min-window-ft
+  "The tightest the window may close. 500 ft of sky across the whole ruler is
+  already an absurd magnification — far past the point where any two aircraft
+  could still be sharing a pixel."
+  500)
+
+(defn window-pct
+  "Where `feet` sits on the CURRENT window: 0 at its floor, 100 at its ceiling.
+  Unclamped on purpose — a caller needs to know that a tick has left the window,
+  not be handed a lie about it sitting on the edge (see `in-window?`)."
+  [{:keys [min-ft max-ft]} feet]
+  (* 100 (/ (- feet min-ft) (- max-ft min-ft))))
+
+(defn in-window?
+  "True when `feet` is on the ruler as it is currently framed."
+  [{:keys [min-ft max-ft]} feet]
+  (and (some? feet) (<= min-ft feet max-ft)))
+
+(defn zoom-window
+  "The window `factor` closer (or further, for factor > 1) about `focus-pct` —
+  the point under the fingers, which stays put while the sky spreads around it.
+  That is the whole feel of a timeline zoom: the thing you are pointing at does
+  not move.
+
+  Clamped three ways, and each is a lie the reader would otherwise be told:
+  never tighter than `min-window-ft`, never wider than the sky, and never
+  slipping past the surface or the ceiling — a window that ran past either end
+  would print scale that does not exist."
+  [{:keys [min-ft max-ft] :as window} focus-pct factor]
+  (let [span      (- max-ft min-ft)
+        anchor-ft (+ min-ft (* span (/ focus-pct 100)))
+        span'     (-> (* span factor)
+                      (max min-window-ft)
+                      (min (- (:max-ft full-window) (:min-ft full-window))))
+        ;; keep the anchor under the fingers: it stays at the same fraction
+        frac      (if (zero? span) 0.5 (/ (- anchor-ft min-ft) span))
+        min'      (- anchor-ft (* span' frac))
+        min'      (-> min' (max (:min-ft full-window)) (min (- (:max-ft full-window) span')))]
+    (if (>= span' (- (:max-ft full-window) (:min-ft full-window)))
+      full-window
+      (assoc window :min-ft min' :max-ft (+ min' span')))))
+
+(defn pan-window
+  "Slide the window by `delta-pct` of its own span, without resizing it. Stops at
+  the surface and the ceiling rather than inventing sky beyond them."
+  [{:keys [min-ft max-ft] :as window} delta-pct]
+  (let [span    (- max-ft min-ft)
+        delta   (* span (/ delta-pct 100))
+        min'    (-> (+ min-ft delta)
+                    (max (:min-ft full-window))
+                    (min (- (:max-ft full-window) span)))]
+    (assoc window :min-ft min' :max-ft (+ min' span))))
+
+;; ---------------------------------------------------------------------
 ;; The scrub — pure. Where a finger is on the altitude axis, and which
 ;; aircraft is nearest it. The handlers below are a thin shell over these
 ;; two functions; everything that can be reasoned about lives here.
@@ -159,14 +232,20 @@
         (min 100))))
 
 (defn nearest-tick
-  "The aircraft in `airborne` whose tick sits closest to `pct` on the
-  altitude axis — what the finger is pointing at. Nil when nothing is up
-  there to point at."
-  [airborne pct]
-  (when (seq airborne)
-    (apply min-key
-           #(abs (- (altitude-pct (:aircraft/altitude-ft %)) pct))
-           airborne)))
+  "The aircraft whose tick sits closest to `pct` on the ruler AS IT IS CURRENTLY
+  FRAMED. Only aircraft inside the window can be pointed at — one the reader has
+  zoomed past is not under their finger, whatever its altitude — so a scrub can
+  never name an aircraft the ruler is not showing. Nil when nothing is up there.
+
+  Takes the window explicitly, because a pointer's percentage means nothing
+  without the range it is a percentage OF."
+  ([airborne pct] (nearest-tick full-window airborne pct))
+  ([window airborne pct]
+   (let [in-view (filter #(in-window? window (:aircraft/altitude-ft %)) airborne)]
+     (when (seq in-view)
+       (apply min-key
+              #(abs (- (window-pct window (:aircraft/altitude-ft %)) pct))
+              in-view)))))
 
 (defn unplotted
   "The aircraft in `picture` that the feeder HEARS and the chart cannot DRAW —
@@ -189,38 +268,93 @@
 
 (defn ruler-gradient-css
   "The ruler's fill as a CSS linear-gradient: every [feet colour] stop of
-  `theme`'s adsb.map.style altitude ramp placed at its `altitude-pct`
-  position on the axis. The gradient's direction is the --stack-axis
-  custom property (default `to top`), which the phone stylesheet flips to
-  `to right` when the ruler lies down — same stops, same scale, rotated
-  geometry."
-  [theme]
-  (str "linear-gradient(var(--stack-axis, to top), "
-       (str/join ", " (for [[feet color] (:altitude-stops (style/palette theme))]
-                        (str color " " (altitude-pct feet) "%")))
-       ")"))
+  `theme`'s adsb.map.style altitude ramp placed at its position ON THE CURRENT
+  WINDOW. Zoomed in, the fill is the SLICE of the ramp the window frames — the
+  colours the ticks beside it are actually wearing — and the stops outside it
+  simply fall off the ends. Zoomed out to `full-window` it is the complete ramp
+  again, which is the ruler's other job: the map's key.
 
-(def ^:private ruler-backgrounds
-  ;; Each edition's fill, computed once — the gradient changes only when
-  ;; the edition flips, and a string rebuilt per 1 Hz render would be
-  ;; allocation for nothing.
-  (into {} (for [theme (keys style/palettes)]
-             [theme (ruler-gradient-css theme)])))
+  The gradient's direction is the --stack-axis custom property (default
+  `to top`), which the phone stylesheet flips to `to right` when the ruler lies
+  down — same stops, same scale, rotated geometry."
+  ([theme] (ruler-gradient-css theme full-window))
+  ([theme window]
+   (str "linear-gradient(var(--stack-axis, to top), "
+        (str/join ", " (for [[feet color] (:altitude-stops (style/palette theme))]
+                         (str color " " (window-pct window feet) "%")))
+        ")")))
 
-(defn- ruler-background
-  "The current edition's fill; an unrecognized theme reads the day
-  edition, mirroring style/palette."
-  [theme]
-  (get ruler-backgrounds theme (:day ruler-backgrounds)))
+(def ^:private ruler-background
+  ;; Memoized on [theme window]: the fill changes when the edition flips or the
+  ;; window moves, and NOT at feeder cadence — a string rebuilt 1 Hz would be
+  ;; allocation for nothing. A pinch does move it every frame, which is exactly
+  ;; when a cache of one is worth the least and the correctness is worth the most.
+  (memoize
+    (fn [theme window]
+      (ruler-gradient-css (if (contains? style/palettes theme) theme :day)
+                          window))))
 
-(def graduations
-  "The flight-level rules drawn on the ruler: the surface, then every
-  hundred flight levels to the ceiling."
-  [[0     "SFC"]
-   [10000 "FL100"]
-   [20000 "FL200"]
-   [30000 "FL300"]
-   [40000 "FL400"]])
+;; ---------------------------------------------------------------------
+;; The graduations — the scale's own labels, which must follow the window.
+;;
+;; A fixed SFC/FL100/…/FL400 was honest only at full range. Zoom to a 2000 ft
+;; slice and it would print one rule, or none, and the reader would be looking at
+;; an unlabelled band of colour. So the STEP is chosen for the span: the coarsest
+;; step that still rules the window several times.
+
+(def ^:private graduation-steps
+  [10000 5000 2000 1000 500 200 100])
+
+(defn graduation-step
+  "The step between rules for a window of `span-ft`: the coarsest one that still
+  draws at least three rules, so the scale is always readable and never a wall of
+  lines."
+  [span-ft]
+  (or (first (filter #(>= (/ span-ft %) 3) graduation-steps))
+      (last graduation-steps)))
+
+(defn graduation-label
+  "SFC at the surface; otherwise the flight level, three digits as the charts
+  print them — FL050, not FL50."
+  [feet]
+  (if (zero? feet)
+    "SFC"
+    (str "FL" (.padStart (str (js/Math.round (/ feet 100))) 3 "0"))))
+
+(defn graduations
+  "The rules to draw on the ruler as it is currently framed: every multiple of
+  the window's step that falls inside it, labelled."
+  ([] (graduations full-window))
+  ([{:keys [min-ft max-ft] :as window}]
+   (let [step  (graduation-step (- max-ft min-ft))
+         start (* step (js/Math.ceil (/ min-ft step)))]
+     (for [feet (range start (inc max-ft) step)
+           :when (in-window? window feet)]
+       [feet (graduation-label feet)]))))
+
+;; ---------------------------------------------------------------------
+;; What the window is hiding. NOTHING MAY VANISH SILENTLY.
+;;
+;; The census counts sit inches from the ruler and count the WHOLE sky; a windowed
+;; ruler shows a slice of it. If aircraft simply disappeared, the two instruments
+;; would disagree and the ruler would be the one lying. And §7 is absolute: an
+;; emergency may never be hidden — least of all by a view state the reader chose
+;; for an unrelated reason.
+;;
+;; So both ends of the ruler carry what is beyond them, and carry it RED when what
+;; is beyond them is squawking.
+
+(defn overflow
+  "What `airborne` aircraft lie outside `window`: how many below its floor, how
+  many above its ceiling, and whether any of them is an emergency."
+  [window airborne]
+  (let [{:keys [min-ft max-ft]} window
+        below (filter #(< (:aircraft/altitude-ft %) min-ft) airborne)
+        above (filter #(> (:aircraft/altitude-ft %) max-ft) airborne)]
+    {:below           (count below)
+     :above           (count above)
+     :below-emergency? (boolean (some aircraft/emergency? below))
+     :above-emergency? (boolean (some aircraft/emergency? above))}))
 
 ;; ---------------------------------------------------------------------
 ;; The roster the ruler draws — the same picture the map reads, filtered
@@ -260,6 +394,71 @@
   (fn [db _]
     (:stack/open-shelf db)))
 
+;; THE WINDOW is view state, and it lives beside the drawer's — both are facts
+;; about how the reader is looking at the sky, not about the sky.
+(rf/reg-sub
+  :stack/window
+  (fn [db _]
+    (:stack/window db full-window)))
+
+(rf/reg-sub
+  :stack/window-moving?
+  (fn [db _]
+    (boolean (:stack/window-moving? db))))
+
+;; A TICK DRIFTS BECAUSE AN AIRCRAFT CLIMBED. It must not drift because the
+;; READER moved the window.
+;;
+;; The tick's `left`/`bottom` transitions at just under feeder cadence, which is
+;; what makes a climbing aircraft glide up the ruler instead of jumping. But a
+;; zoom or a pan changes the WINDOW, not a single altitude: every tick's
+;; percentage changes at once, and every one of them would slide — 50 aircraft
+;; easing across the ruler while the reader is trying to work, saying nothing
+;; true about the sky. So while the window is in motion the ruler holds
+;; perfectly still, and the drift resumes when the reader lets go.
+;;
+;; The flag settles on a timer rather than on pointerup because the WHEEL has no
+;; pointerup — a zoom can end without any gesture ending.
+(defonce ^:private !settle-timer (atom nil))
+
+(rf/reg-fx
+  :stack/settle-window
+  (fn [_]
+    (some-> @!settle-timer js/clearTimeout)
+    (reset! !settle-timer
+            (js/setTimeout #(rf/dispatch [:stack/window-settled]) 140))))
+
+(rf/reg-event-db
+  :stack/window-settled
+  (fn [db _]
+    (dissoc db :stack/window-moving?)))
+
+(rf/reg-event-fx
+  :stack/zoom
+  (fn [{:keys [db]} [_ focus-pct factor]]
+    {:db (-> db
+             (assoc :stack/window
+                    (zoom-window (:stack/window db full-window) focus-pct factor))
+             (assoc :stack/window-moving? true))
+     :stack/settle-window nil}))
+
+(rf/reg-event-fx
+  :stack/pan
+  (fn [{:keys [db]} [_ delta-pct]]
+    {:db (-> db
+             (assoc :stack/window
+                    (pan-window (:stack/window db full-window) delta-pct))
+             (assoc :stack/window-moving? true))
+     :stack/settle-window nil}))
+
+(rf/reg-event-fx
+  :stack/reset-zoom
+  (fn [{:keys [db]} _]
+    {:db (-> db
+             (assoc :stack/window full-window)
+             (assoc :stack/window-moving? true))
+     :stack/settle-window nil}))
+
 ;; The scrub, in terms of the channels that already exist: passing a tick
 ;; hovers it (which is what names it, and what the map will light), and
 ;; letting go selects whatever the finger left named.
@@ -267,7 +466,9 @@
 (rf/reg-event-fx
   :stack/scrub
   (fn [{:keys [db]} [_ pct]]
-    (when-let [target (nearest-tick (airborne (:aircraft/picture db)) pct)]
+    (when-let [target (nearest-tick (:stack/window db full-window)
+                                    (airborne (:aircraft/picture db))
+                                    pct)]
       {:fx [[:dispatch [:aircraft/hover (:aircraft/icao target)]]]})))
 
 (rf/reg-event-fx
@@ -357,35 +558,182 @@
                            (.-clientY event))]
     (rf/dispatch [:stack/scrub pct])))
 
+;; ---------------------------------------------------------------------
+;; ZOOM — and the gesture map that keeps it from colliding with the scrub.
+;;
+;;   ONE finger  — the scrub. Unchanged, and it must stay unchanged: it is how a
+;;                 phone names a tick at all.
+;;   TWO fingers — the sky. Pinch to zoom about the point between them; drag both
+;;                 to pan. Two fingers never scrub, and one finger never zooms, so
+;;                 there is nothing for the two gestures to argue about.
+;;   Wheel       — zoom about the cursor (desktop). The page does not scroll, so
+;;                 the wheel over a 22px strip is free.
+;;   Double-click / double-tap — back to the whole sky.
+;;
+;; The live pointers are transient gesture state, not app state: nothing outside
+;; the gesture can see them, and a half-finished pinch does not belong in app-db.
+
+(defonce ^:private !pointers (atom {}))
+
+(defn- pointer-axis-pct
+  "Where a live pointer sits on the ruler's altitude axis."
+  [rect [_ {:keys [x y]}]]
+  (axis-pct rect x y))
+
+(defn- pinch-state
+  "The two live pointers as a span and a midpoint on the altitude axis — the two
+  numbers a pinch is made of."
+  [rect]
+  (let [pcts (keep (partial pointer-axis-pct rect) (take 2 @!pointers))]
+    (when (= 2 (count pcts))
+      {:span (js/Math.abs (- (first pcts) (second pcts)))
+       :mid  (/ (+ (first pcts) (second pcts)) 2)})))
+
+(defonce ^:private !pinch (atom nil))
+
+;; ONE FINGER, TWO JOBS — AND THE WINDOW DECIDES WHICH.
+;;
+;; A drag along the ruler could scrub (name the ticks it passes) or pan (scroll
+;; the window). Both want one finger on the same axis of the same 22px strip, so
+;; they cannot both have it. The way out is not a modifier or a mode switch, it
+;; is a fact:
+;;
+;;   AT FULL RANGE THERE IS NOWHERE TO PAN TO. The whole sky is already on the
+;;   ruler. So a drag there is free, and it scrubs — the gesture that made a 3px
+;;   tick readable on a phone, unchanged.
+;;
+;;   ZOOMED IN, THE WINDOW IS A VIEWPORT ONTO A LARGER SCALE, and dragging it is
+;;   what anyone does to a timeline. So a drag there pans.
+;;
+;; A TAP still selects in both, because a tap is not a drag: it lands on the
+;; nearest tick with all the forgiveness `nearest-tick` gives it. And on a desk,
+;; hover still names — the mouse never needed the scrub in the first place.
+(def ^:const tap-slop-px
+  "How far a finger may travel and still be a tap rather than a drag."
+  5)
+
+(defonce ^:private !gesture (atom nil))   ; {:x :y :moved? :pct}
+
+(defn- track-pointer! [event]
+  (swap! !pointers assoc (.-pointerId event)
+         {:x (.-clientX event) :y (.-clientY event)}))
+
+(defn- drop-pointer! [event]
+  (swap! !pointers dissoc (.-pointerId event)))
+
+(defn- full-range? [] (= full-window @(rf/subscribe [:stack/window])))
+
 (defn- on-ruler-down!
-  "Finger (or mouse button) down on the ruler — the scrub begins, and lands
-  on a tick immediately: a tap IS a one-frame scrub, which is what gives a
-  3px tick a forgiving target without fattening the ink."
+  "Finger (or mouse button) down on the ruler.
+
+  ONE pointer begins a gesture that is not yet a tap, a scrub, or a pan — it is
+  whichever of those the finger turns out to be doing. A SECOND pointer means the
+  reader is reaching for the SKY, not for an aircraft: whatever the first was
+  becoming is abandoned (nothing was chosen, so nothing is selected) and the
+  pinch takes over."
   [event]
-  (reset! !scrubbing? true)
-  (scrub! event))
+  (track-pointer! event)
+  (if (>= (count @!pointers) 2)
+    (do (reset! !scrubbing? false)
+        (reset! !gesture nil)
+        (reset! !pinch (pinch-state (ruler-rect (.-currentTarget event)))))
+    (let [rect (ruler-rect (.-currentTarget event))]
+      (reset! !scrubbing? true)
+      (reset! !gesture {:x      (.-clientX event)
+                        :y      (.-clientY event)
+                        :moved? false
+                        :pct    (axis-pct rect (.-clientX event) (.-clientY event))})
+      ;; At full range the press lands on a tick immediately — a tap IS a
+      ;; one-frame scrub, which is what gives a 3px tick a forgiving target
+      ;; without fattening the ink. Zoomed in it does not, because the press may
+      ;; be the beginning of a pan and naming a tick you are about to drag away
+      ;; from is noise.
+      (when (full-range?)
+        (scrub! event)))))
 
 (defn- on-ruler-move!
-  "Dragging along the ruler names each tick as the pointer passes it. Only
-  while pressed — an idle mouse over the desktop ruler must not hijack the
-  hover it already has."
+  "Two pointers: pinch and pan the window. One pressed pointer: scrub at full
+  range, pan when zoomed. An idle mouse: nothing at all — it must not hijack the
+  hover the reader already has."
   [event]
-  (when @!scrubbing?
-    (scrub! event)))
+  (track-pointer! event)
+  (let [rect (ruler-rect (.-currentTarget event))]
+    (cond
+      (>= (count @!pointers) 2)
+      (when-let [now (pinch-state rect)]
+        (when-let [before @!pinch]
+          ;; The span ratio IS the zoom factor: fingers apart -> the window
+          ;; narrows (factor < 1) -> the sky spreads. And the midpoint's own
+          ;; travel pans, so a two-finger drag slides the window without
+          ;; resizing it — one gesture, both jobs, exactly as a timeline behaves.
+          (when (pos? (:span before))
+            (let [factor (/ (:span before) (max 0.001 (:span now)))]
+              (rf/dispatch [:stack/zoom (:mid now) factor])))
+          (rf/dispatch [:stack/pan (- (:mid before) (:mid now))]))
+        (reset! !pinch now))
+
+      @!scrubbing?
+      (let [{:keys [x y moved? pct]} @!gesture
+            travel (js/Math.hypot (- (.-clientX event) x) (- (.-clientY event) y))
+            moved? (or moved? (> travel tap-slop-px))
+            now    (axis-pct rect (.-clientX event) (.-clientY event))]
+        (swap! !gesture assoc :moved? moved? :pct now)
+        (cond
+          (full-range?) (scrub! event)
+
+          ;; Zoomed: the finger drags the SCALE, so the window follows it — and
+          ;; the sky under the finger stays under the finger, which is what makes
+          ;; it feel like the ruler itself is being pushed.
+          (and moved? pct now)
+          (rf/dispatch [:stack/pan (- pct now)]))))))
 
 (defn- on-ruler-up!
-  "Letting go selects whatever the scrub left named — the same
-  [:aircraft/select icao] contract a click fires."
-  [_event]
+  "A TAP selects the nearest tick — in both states, because a tap is not a drag.
+  A SCRUB (full range) selects whatever it left named. A PAN selects nothing: the
+  reader was moving the chart, not choosing an aircraft."
+  [event]
+  (drop-pointer! event)
+  (when (< (count @!pointers) 2)
+    (reset! !pinch nil))
   (when @!scrubbing?
     (reset! !scrubbing? false)
-    (rf/dispatch [:stack/scrub-end])))
+    (let [{:keys [moved?]} @!gesture]
+      (cond
+        (not moved?) (do (scrub! event)                    ; name the nearest…
+                         (rf/dispatch [:stack/scrub-end])) ; …and take it
+        (full-range?) (rf/dispatch [:stack/scrub-end])))
+    (reset! !gesture nil)))
 
 (defn- on-ruler-cancel!
   "The gesture was taken away from us (a system swipe, a call). Nothing was
-  chosen — end the scrub without selecting."
+  chosen — end it without selecting."
+  [event]
+  (drop-pointer! event)
+  (reset! !scrubbing? false)
+  (reset! !pinch nil)
+  (reset! !gesture nil))
+
+(def ^:const wheel-zoom-step
+  "One notch of the wheel, as a ratio. Gentle: a reader spinning through the sky
+  should feel the scale open, not fall through it."
+  1.15)
+
+(defn- on-ruler-wheel!
+  "Wheel over the ruler zooms about the cursor — the desktop's pinch. The page
+  does not scroll behind it, so the strip may have the wheel outright."
+  [event]
+  (.preventDefault event)
+  (when-let [pct (axis-pct (ruler-rect (.-currentTarget event))
+                           (.-clientX event)
+                           (.-clientY event))]
+    (let [factor (if (pos? (.-deltaY event)) wheel-zoom-step (/ 1 wheel-zoom-step))]
+      (rf/dispatch [:stack/zoom pct factor]))))
+
+(defn- on-ruler-double!
+  "Back to the whole sky — and to the whole colour ramp, which is the ruler's
+  other job."
   [_event]
-  (reset! !scrubbing? false))
+  (rf/dispatch [:stack/reset-zoom]))
 
 ;; ---------------------------------------------------------------------
 ;; Components — kebab-case functions returning hiccup.
@@ -398,10 +746,32 @@
   (or callsign icao))
 
 (defn- graduation
-  "One flight-level rule across the ruler, placed on the altitude axis."
-  [[feet label]]
-  [:div.adsb-stack-grad {:style {"--alt-pct" (str (altitude-pct feet))}}
+  "One flight-level rule across the ruler, placed on the window's axis."
+  [window [feet label]]
+  [:div.adsb-stack-grad {:style {"--alt-pct" (str (window-pct window feet))}}
    [:span.adsb-stack-grad-label label]])
+
+(defn- overflow-marker
+  "What the window is hiding, at the end it is hiding it beyond: twelve aircraft
+  above the ceiling you have framed are not gone, they are just not here. RED when
+  one of them is squawking — §7 does not bend for a view state, and an emergency
+  the reader cannot see is the one thing this zoom must never cost.
+
+  THE ARROW IS THE STYLESHEET'S, not this component's. `Above` is UP on a standing
+  ruler and RIGHT on a recumbent one; the direction is a fact about the stance,
+  and the stance is CSS's business (one DOM, rotated geometry — §9/Q9c). Hiccup
+  that hard-coded ▲ would be wrong on a phone half the time."
+  [{:keys [edge n emergency?]}]
+  (when (pos? n)
+    [:div.adsb-stack-overflow
+     {:class       (str "adsb-stack-overflow-" (name edge)
+                        (when emergency? " adsb-stack-overflow-emergency"))
+      :data-testid (str "overflow:" (name edge))
+      :data-count  (str n)
+      :title       (str n " aircraft " (if (= edge :above) "above" "below")
+                        " the ruler's window"
+                        (when emergency? " — one is squawking distress"))}
+     (str n)]))
 
 (defn- tick
   "One aircraft's tick. Airborne ticks carry their place on the altitude
@@ -411,7 +781,7 @@
   label beside it — while hovered, while selected, always while the
   aircraft is squawking distress, and always inside an open sheet, which
   exists precisely to name its residents (`always-named?`)."
-  [aircraft* {:keys [selected-icao hovered-icao always-named? testid-prefix]}]
+  [aircraft* {:keys [selected-icao hovered-icao always-named? testid-prefix window]}]
   (let [{:aircraft/keys [icao altitude-ft]} aircraft*
         band       (tick-band aircraft*)
         emergency? (aircraft/emergency? aircraft*)
@@ -427,7 +797,8 @@
               :class         [(when selected? "adsb-stack-tick-selected")
                               (when emergency? "adsb-stack-tick-emergency")]}
        (= band :airborne)
-       (assoc :style {"--alt-pct" (str (altitude-pct altitude-ft))}))
+       (assoc :style {"--alt-pct" (str (window-pct (or window full-window)
+                                                   altitude-ft))}))
      (when named?
        [:span.adsb-stack-tick-label (tick-name aircraft*)])]))
 
@@ -710,6 +1081,8 @@
         selected    (rf/subscribe [:aircraft/selected-icao])
         hovered     (rf/subscribe [:aircraft/hovered-icao])
         open        (rf/subscribe [:stack/open-shelf])
+        window*     (rf/subscribe [:stack/window])
+        moving*     (rf/subscribe [:stack/window-moving?])
         emergencies (rf/subscribe [:aircraft/emergencies])
         ;; The census counts the WHOLE picture, not the roster: the roster is
         ;; already filtered to what the ruler can place, and an aircraft the
@@ -722,7 +1095,19 @@
             selected-icao @selected
             hovered-icao  @hovered
             open-shelf    @open
-            tick-opts     {:selected-icao selected-icao :hovered-icao hovered-icao}]
+            window        @window*
+            moving?       @moving*
+            airborne*     (:airborne bands)
+            ;; Only what the window frames is drawn. Nothing is clamped onto the
+            ;; ends: a tick pinned to the edge would claim an altitude it does not
+            ;; have. What is beyond the ends is COUNTED there instead.
+            visible       (filter #(in-window? window (:aircraft/altitude-ft %))
+                                  airborne*)
+            {:keys [below above below-emergency? above-emergency?]}
+            (overflow window airborne*)
+            tick-opts     {:selected-icao selected-icao
+                           :hovered-icao  hovered-icao
+                           :window        window}]
         [:aside.adsb-stack
          {:role          "listbox"
           :aria-label    "Aircraft by altitude"
@@ -730,15 +1115,26 @@
           :on-mouse-over on-stack-over!
           :on-mouse-out  on-stack-out!}
          [:div.adsb-stack-ruler
-          {:style             {:background (ruler-background theme)}
+          {:style             {:background (ruler-background theme window)}
+           ;; While the reader is moving the window, the ruler holds still: a
+           ;; tick drifts because an aircraft CLIMBED, never because the scale
+           ;; slid under it.
+           :class             (when moving? "adsb-stack-ruler-still")
+           :data-testid       "ruler"
+           :data-min-ft       (str (:min-ft window))
+           :data-max-ft       (str (:max-ft window))
            :on-pointer-down   on-ruler-down!
            :on-pointer-move   on-ruler-move!
            :on-pointer-up     on-ruler-up!
-           :on-pointer-cancel on-ruler-cancel!}
-          (for [g graduations]
-            ^{:key (first g)} [graduation g])
-          (for [a (:airborne bands)]
-            ^{:key (:aircraft/icao a)} [tick a tick-opts])]
+           :on-pointer-cancel on-ruler-cancel!
+           :on-wheel          on-ruler-wheel!
+           :on-double-click   on-ruler-double!}
+          (for [g (graduations window)]
+            ^{:key (first g)} [graduation window g])
+          (for [a visible]
+            ^{:key (:aircraft/icao a)} [tick a tick-opts])
+          [overflow-marker {:edge :below :n below :emergency? below-emergency?}]
+          [overflow-marker {:edge :above :n above :emergency? above-emergency?}]]
          [shelf {:band          :ground
                  :class         "adsb-stack-ground"
                  :label         "GND"

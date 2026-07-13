@@ -118,6 +118,57 @@
     (decl :height  "5px"
           :z-index 2)]
 
+   ;; THE RULER HOLDS STILL WHILE THE READER MOVES IT. The tick transition exists
+   ;; so a climbing aircraft glides instead of jumping; a zoom or a pan changes
+   ;; every tick's percentage at once, and easing 50 of them across the ruler
+   ;; would animate a fact about the SCALE as though it were a fact about the
+   ;; SKY. Held still, and the drift resumes the moment the window settles.
+   [".adsb-stack-ruler-still .adsb-stack-tick"
+    (decl :transition "none")]
+
+   ;; OVERFLOW — what the window is hiding, at the end it is hiding it beyond.
+   ;; NOTHING VANISHES SILENTLY: the census counts beside the ruler count the
+   ;; whole sky, and a windowed ruler shows a slice of it. If aircraft simply
+   ;; disappeared the two instruments would disagree, and the ruler would be the
+   ;; one lying. Red when what is out there is squawking — §7 does not bend for a
+   ;; view state the reader chose for an unrelated reason.
+   [:.adsb-stack-overflow
+    (decl :position             "absolute"
+          :z-index              4
+          :padding              "0 3px"
+          :background           "var(--paper-chrome)"
+          :border               "1px solid var(--rule-strong)"
+          :border-radius        "2px"
+          :font-size            "var(--t-2)"
+          :font-variant-numeric "tabular-nums"
+          :line-height          1.5
+          :color                "var(--faded-ink)"
+          :white-space          "nowrap"
+          :pointer-events       "none")]
+
+   [:.adsb-stack-overflow-emergency
+    (decl :background   "var(--emergency)"
+          :border-color "var(--emergency)"
+          :color        "var(--on-emergency)"
+          :font-weight  700)]
+
+   ;; Standing ruler: `above` is UP. The arrow is here and not in the hiccup
+   ;; because the DIRECTION is a fact about the stance, and the stance is this
+   ;; stylesheet's business — one DOM, rotated geometry.
+   [".adsb-stack-ruler .adsb-stack-overflow-above"
+    (decl :bottom "calc(100% + 3px)"
+          :right  0)]
+
+   [".adsb-stack-ruler .adsb-stack-overflow-above::before"
+    (decl :content "\"▲ \"")]
+
+   [".adsb-stack-ruler .adsb-stack-overflow-below"
+    (decl :top   "calc(100% + 3px)"
+          :right 0)]
+
+   [".adsb-stack-ruler .adsb-stack-overflow-below::before"
+    (decl :content "\"▼ \"")]
+
    ;; Selected: the magenta accent, prominent.
    [:.adsb-stack-tick-selected
     (decl :z-index 2)]
@@ -522,6 +573,26 @@
     [".adsb-stack-ruler .adsb-stack-tick:hover"
      (decl :height "auto"
            :width  "5px")]
+
+    ;; Lying down, the window's ends are its LEFT (the surface) and RIGHT (the
+    ;; ceiling) — the same fact, rotated with the scale, arrows and all.
+    [".adsb-stack-ruler .adsb-stack-overflow-above"
+     (decl :bottom "calc(100% + 3px)"
+           :right  0
+           :top    "auto"
+           :left   "auto")]
+
+    [".adsb-stack-ruler .adsb-stack-overflow-above::before"
+     (decl :content "\"▶ \"")]
+
+    [".adsb-stack-ruler .adsb-stack-overflow-below"
+     (decl :bottom "calc(100% + 3px)"
+           :left   0
+           :top    "auto"
+           :right  "auto")]
+
+    [".adsb-stack-ruler .adsb-stack-overflow-below::before"
+     (decl :content "\"◀ \"")]
 
     [".adsb-stack-ruler .adsb-stack-tick-selected"
      (decl :height "auto"
