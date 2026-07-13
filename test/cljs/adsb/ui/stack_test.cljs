@@ -252,6 +252,31 @@
       (is (nil? (stack/nearest-tick window [low] 50))
           "and with nothing in view there is nothing to point at"))))
 
+(deftest a-swipe-carries-and-then-it-stops
+  (testing "friction is framed per MILLISECOND, not per frame: a slow frame must
+            not brake harder than a fast one, or the same swipe would travel a
+            different distance on a busy machine"
+    (let [v 0.01]
+      (is (< (stack/decay-velocity v 16) v) "one frame of friction slows it")
+      (is (< (stack/decay-velocity v 32) (stack/decay-velocity v 16))
+          "a frame that took twice as long takes twice the friction")
+      (is (js/Number.isFinite (stack/decay-velocity v 0))
+          "and a zero-length frame is not a divide by zero")))
+
+  (testing "it carries, and it stops — a scroll that ran for two seconds would
+            feel like ice"
+    (let [spent (nth (iterate #(stack/decay-velocity % 16) 0.01) 60)]
+      (is (not (stack/flinging? spent))
+            "a second of friction has spent it")))
+
+  (testing "a fling below the floor is not a fling — a pan that crawls to a halt
+            over the last pixel reads as a stutter, not as momentum"
+    (is (not (stack/flinging? 0)))
+    (is (not (stack/flinging? (/ stack/fling-floor-pct-per-ms 2))))
+    (is (stack/flinging? (* stack/fling-floor-pct-per-ms 10)))
+    (is (stack/flinging? (* -10 stack/fling-floor-pct-per-ms))
+        "and it carries in either direction — the sky scrolls both ways")))
+
 (deftest the-ruler-holds-still-while-the-reader-moves-it
   (testing "a tick drifts because an aircraft CLIMBED — never because the scale
             slid under it. The transition that makes a climb glide would, on a

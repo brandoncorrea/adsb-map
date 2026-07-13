@@ -197,6 +197,29 @@
       full-window
       (assoc window :min-ft min' :max-ft (+ min' span')))))
 
+(def ^:const fling-friction
+  "How much of its speed a fling keeps per 16ms frame. 0.94 is the coefficient of
+  a thing sliding on paper: it carries, and it stops — a scroll that ran for two
+  seconds would feel like ice."
+  0.94)
+
+(def ^:const fling-floor-pct-per-ms
+  "Below this speed a fling is over. A pan that crawls to a halt over the last
+  pixel reads as a stutter, not as momentum."
+  0.0006)
+
+(defn decay-velocity
+  "A fling's speed after `dt-ms` of friction. Pure, and framed per-millisecond
+  rather than per-frame: a slow frame must not brake harder than a fast one, or
+  the same swipe would travel a different distance on a busy machine."
+  [velocity dt-ms]
+  (* velocity (js/Math.pow fling-friction (/ dt-ms 16))))
+
+(defn flinging?
+  "Is there still momentum worth spending a frame on?"
+  [velocity]
+  (> (js/Math.abs velocity) fling-floor-pct-per-ms))
+
 (defn pan-window
   "Slide the window by `delta-pct` of its own span, without resizing it. Stops at
   the surface and the ceiling rather than inventing sky beyond them."
@@ -612,7 +635,47 @@
   "How far a finger may travel and still be a tap rather than a drag."
   5)
 
-(defonce ^:private !gesture (atom nil))   ; {:x :y :moved? :pct}
+(defonce ^:private !gesture (atom nil))   ; {:x :y :moved? :pct :t :v}
+
+;; MOMENTUM. A swipe that stops dead the instant the finger leaves is not how any
+;; scrolling surface on a phone behaves, and the hand notices immediately: the
+;; ruler feels nailed down rather than pushed.
+;;
+;; So a pan carries. The gesture's own velocity — percent of the window per
+;; millisecond, smoothed, so one jittery sample cannot fling the sky — is handed
+;; to a frame loop that keeps panning under friction until it is spent.
+;;
+;; It stops for three reasons, and each is a thing the reader would otherwise
+;; have to fight:
+;;   * it runs out of speed;
+;;   * it reaches the surface or the ceiling — there is no more sky, and a fling
+;;     that kept firing into a clamped window would just spin;
+;;   * A FINGER TOUCHES THE RULER. Catching a moving scroll is the gesture
+;;     everyone already knows, and the touch that catches it must not also be a
+;;     tap that selects an aircraft.
+(defonce ^:private !fling (atom nil))    ; {:v v :raf id :t last-frame-ms}
+
+(defn- stop-fling! []
+  (some-> (:raf @!fling) js/cancelAnimationFrame)
+  (reset! !fling nil))
+
+(defn- fling-frame! [ts]
+  (when-let [{:keys [v t]} @!fling]
+    (let [dt     (max 1 (- ts (or t ts)))
+          before @(rf/subscribe [:stack/window])]
+      (rf/dispatch-sync [:stack/pan (* v dt)])
+      (let [after @(rf/subscribe [:stack/window])
+            v'    (decay-velocity v dt)]
+        (if (and (flinging? v') (not= before after))
+          (swap! !fling assoc :v v' :t ts
+                 :raf (js/requestAnimationFrame fling-frame!))
+          (stop-fling!))))))
+
+(defn- start-fling! [velocity]
+  (stop-fling!)
+  (when (flinging? velocity)
+    (reset! !fling {:v velocity :t nil
+                    :raf (js/requestAnimationFrame fling-frame!)})))
 
 (defn- track-pointer! [event]
   (swap! !pointers assoc (.-pointerId event)
@@ -632,6 +695,12 @@
   becoming is abandoned (nothing was chosen, so nothing is selected) and the
   pinch takes over."
   [event]
+  ;; A finger on a moving ruler catches it, exactly as it would catch a scrolling
+  ;; page — and that touch is a CATCH, not a tap: it must not also select.
+  (let [caught? (some? @!fling)]
+    (stop-fling!)
+    (when caught?
+      (swap! !gesture assoc :moved? true)))
   (track-pointer! event)
   (if (>= (count @!pointers) 2)
     (do (reset! !scrubbing? false)
@@ -642,7 +711,9 @@
       (reset! !gesture {:x      (.-clientX event)
                         :y      (.-clientY event)
                         :moved? false
-                        :pct    (axis-pct rect (.-clientX event) (.-clientY event))})
+                        :pct    (axis-pct rect (.-clientX event) (.-clientY event))
+                        :t      (js/performance.now)
+                        :v      0})
       ;; At full range the press lands on a tick immediately — a tap IS a
       ;; one-frame scrub, which is what gives a 3px tick a forgiving target
       ;; without fattening the ink. Zoomed in it does not, because the press may
@@ -673,19 +744,30 @@
         (reset! !pinch now))
 
       @!scrubbing?
-      (let [{:keys [x y moved? pct]} @!gesture
+      (let [{:keys [x y moved? pct t v]} @!gesture
             travel (js/Math.hypot (- (.-clientX event) x) (- (.-clientY event) y))
             moved? (or moved? (> travel tap-slop-px))
-            now    (axis-pct rect (.-clientX event) (.-clientY event))]
-        (swap! !gesture assoc :moved? moved? :pct now)
+            now    (axis-pct rect (.-clientX event) (.-clientY event))
+            ts     (js/performance.now)
+            dt     (max 1 (- ts (or t ts)))]
         (cond
-          (full-range?) (scrub! event)
+          (full-range?)
+          (do (swap! !gesture assoc :moved? moved? :pct now :t ts)
+              (scrub! event))
 
           ;; Zoomed: the finger drags the SCALE, so the window follows it — and
           ;; the sky under the finger stays under the finger, which is what makes
           ;; it feel like the ruler itself is being pushed.
           (and moved? pct now)
-          (rf/dispatch [:stack/pan (- pct now)]))))))
+          (let [delta (- pct now)
+                ;; Smoothed, so a single jittery sample at the end of a swipe
+                ;; cannot fling the whole sky.
+                v'    (+ (* 0.7 (/ delta dt)) (* 0.3 (or v 0)))]
+            (swap! !gesture assoc :moved? moved? :pct now :t ts :v v')
+            (rf/dispatch [:stack/pan delta]))
+
+          :else
+          (swap! !gesture assoc :moved? moved? :pct now :t ts))))))
 
 (defn- on-ruler-up!
   "A TAP selects the nearest tick — in both states, because a tap is not a drag.
@@ -697,18 +779,22 @@
     (reset! !pinch nil))
   (when @!scrubbing?
     (reset! !scrubbing? false)
-    (let [{:keys [moved?]} @!gesture]
+    (let [{:keys [moved? v]} @!gesture]
       (cond
         (not moved?) (do (scrub! event)                    ; name the nearest…
                          (rf/dispatch [:stack/scrub-end])) ; …and take it
-        (full-range?) (rf/dispatch [:stack/scrub-end])))
+        (full-range?) (rf/dispatch [:stack/scrub-end])
+        ;; A pan released with speed keeps going, under friction, exactly as a
+        ;; scroll does. It chose nothing: the reader was moving the chart.
+        :else (start-fling! (or v 0))))
     (reset! !gesture nil)))
 
 (defn- on-ruler-cancel!
   "The gesture was taken away from us (a system swipe, a call). Nothing was
-  chosen — end it without selecting."
+  chosen — end it without selecting, and let no momentum outlive it."
   [event]
   (drop-pointer! event)
+  (stop-fling!)
   (reset! !scrubbing? false)
   (reset! !pinch nil)
   (reset! !gesture nil))
@@ -723,6 +809,7 @@
   does not scroll behind it, so the strip may have the wheel outright."
   [event]
   (.preventDefault event)
+  (stop-fling!)
   (when-let [pct (axis-pct (ruler-rect (.-currentTarget event))
                            (.-clientX event)
                            (.-clientY event))]
@@ -731,8 +818,9 @@
 
 (defn- on-ruler-double!
   "Back to the whole sky — and to the whole colour ramp, which is the ruler's
-  other job."
+  other job. Any momentum dies with the window it was moving."
   [_event]
+  (stop-fling!)
   (rf/dispatch [:stack/reset-zoom]))
 
 ;; ---------------------------------------------------------------------
