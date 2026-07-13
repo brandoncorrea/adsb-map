@@ -68,6 +68,16 @@
   (server/stop!)
   (broadcast/stop! broadcaster))
 
+(defn- start-and-stop-broadcaster
+  "Start a broadcaster with `opts`, immediately stop its ticks, and return
+  the (now-inert) broadcaster map so its atoms can be inspected. For
+  wiring assertions that need no live server or clients."
+  [opts]
+  (let [broadcaster (broadcast/start! (merge {:picture (constantly cast-picture)}
+                                             opts))]
+    (broadcast/stop! broadcaster)
+    broadcaster))
+
 (defn- stream-response!
   "GET /api/stream (optionally with extra headers) and return the raw
   HttpResponse — status and headers inspectable, body an InputStream."
@@ -341,6 +351,33 @@
         (finally
           (.close admitted)
           (stop-streaming-server! streaming))))))
+
+(deftest the-client-ip-diagnostic-is-bounded-and-opt-in
+  ;; adsb-nnk: this is the throwaway that will tell us what CF-Connecting-IP
+  ;; the container really sees behind two Cloudflare layers. Its whole safety
+  ;; story is "off by default, and self-limiting when on" — so that is what
+  ;; the test pins.
+  (let [request {:headers     {"cf-connecting-ip" "1.2.3.4"
+                               "x-forwarded-for"  "1.2.3.4, 172.71.9.9"}
+                 :remote-addr "10.0.0.9"}
+        diagnose #'broadcast/diagnose-client-ip!]
+    (testing "with the flag off there is no counter, and a connect logs
+              nothing and does not throw"
+      (is (nil? (:stream/diagnose-remaining
+                  (start-and-stop-broadcaster {:diagnose-client-ip? false}))))
+      (is (nil? (diagnose {:stream/diagnose-remaining nil} request "1.2.3.4"))))
+
+    (testing "with the flag on the budget counts down, once per connect,
+              and stops dead at zero rather than logging forever"
+      (let [remaining {:stream/diagnose-remaining (atom 2)}]
+        (dotimes [_ 5] (diagnose remaining request "1.2.3.4"))
+        (is (zero? @(:stream/diagnose-remaining remaining))
+            "two logged, the next three were silent no-ops")))
+
+    (testing "the env flag / option seeds the hard-capped budget"
+      (is (= broadcast/diagnose-budget
+             @(:stream/diagnose-remaining
+                (start-and-stop-broadcaster {:diagnose-client-ip? true})))))))
 
 (deftest disconnect-frees-the-slot
   (testing "a client's disconnect releases its slot; the next connect

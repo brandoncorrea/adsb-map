@@ -173,6 +173,20 @@ services:
       #   scope: RUN_TIME
       #   value: replay
 
+      # ── Client-address diagnostic (adsb-nnk) ─────────────────────────────────
+      # TEMPORARY. Behind two Cloudflare layers (our zone in front of DO's own
+      # Cloudflare), the per-IP SSE cap keys on CF-Connecting-IP but nobody knows
+      # whether the container actually receives the real visitor there or a
+      # rotating inner-edge address. Set this to "true", redeploy, open the stream
+      # from a KNOWN address, then: doctl apps logs <app-id> --type run | grep
+      # SSE-CLIENT-IP-DIAG. It prints socket-peer, x-forwarded-for,
+      # cf-connecting-ip, and the resolved key side by side — whichever equals
+      # your known address is the one to key on. Self-caps at 20 lines. UNSET IT
+      # and redeploy once you have read the logs.
+      # - key: ADSB_DIAGNOSE_CLIENT_IP
+      #   scope: RUN_TIME
+      #   value: "true"
+
 ingress:
   rules:
     - component:

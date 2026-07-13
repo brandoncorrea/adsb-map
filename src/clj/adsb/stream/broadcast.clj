@@ -349,6 +349,47 @@
   (broadcast! broadcaster (sse/comment-frame "hb")))
 
 ;; ---------------------------------------------------------------------
+;; Client-address diagnostic (adsb-nnk) — TEMPORARY, and off by default.
+
+(def ^:const diagnose-client-ip-env
+  "Flag-gated, throwaway: log what the container ACTUALLY receives for a
+  client's address at SSE connect. It exists because one fact cannot be
+  inferred from source (adsb-nnk) — behind Cloudflare-in-front-of-
+  Cloudflare, nobody knows whether the CF-Connecting-IP the container
+  reads is the real visitor or an inner-edge address that rotates per
+  connection. So: set this flag, deploy, open the stream from an address
+  you know, read `doctl apps logs`, compare, then UNSET it and redeploy.
+  No committed spec sets it."
+  "ADSB_DIAGNOSE_CLIENT_IP")
+
+(def ^:const diagnose-budget
+  "Log at most this many connects, EVER, per process — a hard ceiling so
+  the diagnostic self-limits even if the flag is left on. These are
+  visitor IP addresses: a bounded burst is a measurement, an unbounded
+  stream is a surveillance log, and this app does not keep one."
+  20)
+
+(defn- diagnose-client-ip!
+  "No-op unless the diagnostic flag is on AND budget remains. Logs the
+  raw address inputs the container saw for this connect — every candidate
+  side by side — so the per-IP key can be settled against the real
+  deployment. The socket peer, both headers, and the resolved key are all
+  here precisely because which one equals the true visitor is the open
+  question. Greppable prefix; the count runs down so `doctl apps logs`
+  shows when it stopped."
+  [{:stream/keys [diagnose-remaining]} request resolved-ip]
+  (when diagnose-remaining
+    (let [[old _] (swap-vals! diagnose-remaining #(cond-> % (pos? %) dec))]
+      (when (pos? old)
+        (log/info "SSE-CLIENT-IP-DIAG"
+                  {:cf-connecting-ip (get-in request [:headers
+                                                      cf-connecting-ip-header])
+                   :x-forwarded-for  (get-in request [:headers "x-forwarded-for"])
+                   :socket-peer      (socket-peer-ip request)
+                   :resolved-key     resolved-ip
+                   :remaining        (dec old)})))))
+
+;; ---------------------------------------------------------------------
 ;; Connect
 
 (defn connect!
@@ -363,6 +404,7 @@
     :as          broadcaster}
    request]
   (let [ip (client-ip trust-forwarded? trusted-proxy-hops request)]
+    (diagnose-client-ip! broadcaster request ip)
     (http-kit/as-channel
       request
       {:on-open  (fn [channel]
@@ -458,9 +500,17 @@
                       forwarded-ip, then verify the real chain against
                       the deployment rather than assuming it.
 
+    :diagnose-client-ip?  TEMPORARY. Log the raw address inputs at SSE
+                      connect (ADSB_DIAGNOSE_CLIENT_IP, default off,
+                      capped at diagnose-budget lines). The only way to
+                      learn what CF-Connecting-IP the container actually
+                      receives behind two Cloudflare layers — see
+                      diagnose-client-ip-env and adsb-nnk.
+
   Returns a broadcaster to hand to connect!, client-count, and stop!."
   [{:keys [picture stats feeder interval-ms heartbeat-ms
-           max-clients max-per-ip trust-forwarded? trusted-proxy-hops]
+           max-clients max-per-ip trust-forwarded? trusted-proxy-hops
+           diagnose-client-ip?]
     :or   {stats        (constantly nil)
            feeder       (constantly nil)
            interval-ms  default-interval-ms
@@ -488,6 +538,11 @@
                          (env-limit "ADSB_TRUSTED_PROXY_HOPS")
                          default-trusted-proxy-hops)
                      :stream/last-reject-log-ms (atom 0)
+                     :stream/diagnose-remaining
+                     (when (if (some? diagnose-client-ip?)
+                             diagnose-client-ip?
+                             (env-flag? diagnose-client-ip-env))
+                       (atom diagnose-budget))
                      :stream/frame-id   (atom 0)
                      :stream/executor   executor}]
     (schedule! executor interval-ms #(broadcast-picture! broadcaster))
