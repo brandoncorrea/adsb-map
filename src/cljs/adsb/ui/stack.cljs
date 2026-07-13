@@ -297,14 +297,26 @@
           keyword))
 
 (defn- on-stack-click!
-  "Click a tick -> the map's existing [:aircraft/select icao] contract, the
-  same event a plane click fires. Click a shelf chip -> open or close that
-  shelf's sheet of names."
+  "Click a name -> FOCUS that aircraft: select it, and take the chart to it
+  (adsb.events/:aircraft/focus). These surfaces — the shelf clusters, the drawer's
+  rows — name aircraft the reader may not be able to see, including ones off the
+  edge of the chart entirely, and naming a thing you cannot see without showing it
+  to you is not much of an answer.
+
+  Click a caption -> open or close its drawer.
+
+  THE RULER IS NOT HANDLED HERE, and that is load-bearing. Its ticks select
+  through the SCRUB (`on-ruler-up!`), because a tap on a tick is a one-frame
+  scrub. If this handler also fired for them, a single tap would dispatch
+  [:aircraft/select icao] TWICE — and selection toggles now, so the aircraft would
+  light and go out in the same press, which is a bug with no visible symptom
+  except that nothing happens."
   [event]
-  (if-let [icao (event-icao event)]
-    (rf/dispatch [:aircraft/select icao])
-    (when-let [band (event-shelf event)]
-      (rf/dispatch [:stack/toggle-shelf band]))))
+  (when-not (some-> (.-target event) (.closest ".adsb-stack-ruler"))
+    (if-let [icao (event-icao event)]
+      (rf/dispatch [:aircraft/focus icao])
+      (when-let [band (event-shelf event)]
+        (rf/dispatch [:stack/toggle-shelf band])))))
 
 ;; A scrub in progress. Transient pointer state, not app state: nothing
 ;; outside this gesture can see it, and app-db is not where a half-finished

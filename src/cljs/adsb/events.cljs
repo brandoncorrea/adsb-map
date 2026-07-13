@@ -26,15 +26,49 @@
 ;; dispatches exactly [:aircraft/select icao] on an aircraft click. Do not
 ;; rename it or change its argument shape.
 
+;; SELECTING THE SELECTED DESELECTS IT. A selection is a spotlight, and pressing
+;; the thing already lit is how anyone expects to turn it off — on the map, on a
+;; ruler tick, or on a drawer row, all of which arrive here. The contract with
+;; the map layer is untouched: it still dispatches exactly [:aircraft/select
+;; icao] on a plane click, and clicking the lit plane now puts it out.
 (rf/reg-event-db
   :aircraft/select
   (fn [db [_ icao]]
-    (assoc db :aircraft/selected-icao icao)))
+    (if (= icao (:aircraft/selected-icao db))
+      (dissoc db :aircraft/selected-icao)
+      (assoc db :aircraft/selected-icao icao))))
 
 (rf/reg-event-db
   :aircraft/clear-selection
   (fn [db _]
     (dissoc db :aircraft/selected-icao)))
+
+;; FOCUS = SELECT, AND TAKE THE CHART THERE.
+;;
+;; The plain select is what the MAP dispatches: you clicked a plane you can
+;; already see, and flying to it would yank the chart out from under your own
+;; finger. Focus is what the STACK dispatches — the ruler, the drawer — where the
+;; aircraft you just named may be anywhere at all, including off the edge of the
+;; chart entirely. Naming a thing you cannot see and then not showing it to you
+;; is the whole of the complaint this answers.
+;;
+;; TWO GUARDS, and both are the same rule: only fly when there is a `where` and a
+;; reason to go.
+;;
+;;   * NOT WHEN DESELECTING. Pressing the lit aircraft puts it out; it does not
+;;     also fly you to the thing you just dismissed.
+;;   * NOT WITHOUT A POSITION. The NO POS drawer exists precisely BECAUSE those
+;;     aircraft have nowhere to be flown to — they are heard and never located.
+;;     They still select (the card still names them, the tick still lights); the
+;;     chart simply has nowhere to go, and stays where the reader left it.
+(rf/reg-event-fx
+  :aircraft/focus
+  (fn [{:keys [db]} [_ icao]]
+    (let [deselecting? (= icao (:aircraft/selected-icao db))
+          position     (get-in db [:aircraft/picture icao :aircraft/position])]
+      {:fx (cond-> [[:dispatch [:aircraft/select icao]]]
+             (and (not deselecting?) position)
+             (conj [:map/fly-to position]))})))
 
 ;; ---------------------------------------------------------------------
 ;; Aircraft hover — selection's transient sibling.

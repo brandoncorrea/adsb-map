@@ -25,6 +25,7 @@
     [adsb.map.maplibre :as maplibre]
     [adsb.map.selection :as selection]
     [adsb.map.theme :as theme]
+    [re-frame.core :as rf]
     [reagent.core :as r]))
 
 ;; Basemap: OpenFreeMap's "liberty" style — the production basemap (adsb-kh4.5),
@@ -125,6 +126,26 @@
     (.remove (.-classList control) attribution-open-class)
     control))
 
+;; ---------------------------------------------------------------------
+;; The camera, as an effect.
+;;
+;; The map is a stateful JS object and lives in the component below, so the
+;; effect reads it from here — the ONE place that knows whether a map currently
+;; exists. Registered at namespace level (an effect handler must exist before the
+;; first dispatch that names it), pointed at whatever map is mounted.
+;;
+;; A dead map is not an error: an edition flip tears the map down and builds
+;; another, and a fly-to that lands in that gap simply does not happen. There is
+;; no chart to move.
+
+(defonce ^:private !live-map (atom nil))
+
+(rf/reg-fx
+  :map/fly-to
+  (fn [position]
+    (when-let [m @!live-map]
+      (maplibre/fly-to! m position))))
+
 (defn map-container
   "The map's DOM anchor. Named (not an inline anonymous fn in the render
   path) so the zero-re-render proof in adsb.map.aircraft-layer-test can
@@ -156,6 +177,7 @@
               (let [style (basemap/edition-style @!raw-style th)
                     m     (maplibre/create! @!container (default-map-opts style))]
                 (reset! !map m)
+                (reset! !live-map m)          ; the camera effect's handle
                 ;; The credit shows, and folds five seconds later — the timeout
                 ;; the OSMF guidelines name (see attribution-fold-ms). MapLibre
                 ;; folds it on the first pan or zoom too, which is the other
@@ -192,7 +214,8 @@
                 (reset! !aircraft nil))
               (when-let [m @!map]
                 (maplibre/destroy! m)
-                (reset! !map nil)))
+                (reset! !map nil)
+                (reset! !live-map nil)))
             (reprint! [th]
               ;; The system slid between day and night: put the other
               ;; edition on the table. Only once the plate is fetched and

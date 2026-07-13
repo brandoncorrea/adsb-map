@@ -205,16 +205,6 @@
 ;; ---------------------------------------------------------------------
 ;; Interaction.
 
-(deftest clicking-a-tick-selects-that-aircraft
-  (testing "a tick click fires the map's [:aircraft/select icao] contract"
-    (rf-test/run-test-sync
-      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/on-the-ground])])
-      (render-stack!)
-      (is (nil? @(rf/subscribe [:aircraft/selected-icao])) "nothing selected yet")
-      (.click rtl/fireEvent (tick-el ups-icao))
-      (is (= ups-icao @(rf/subscribe [:aircraft/selected-icao]))
-          "the Stack selects the same identity the map would"))))
-
 (deftest hovering-a-tick-publishes-the-hover-identity
   (testing "pointer on a tick sets :aircraft/hovered-icao; pointer off
             clears it — the key the map layer will light aircraft from"
@@ -434,6 +424,82 @@
         (is (= "2" (.getAttribute el "data-positioned"))
             "a grounded aircraft is still an aircraft on the chart")))))
 
+;; ---------------------------------------------------------------------
+;; Focus — select, and take the chart there.
+
+(defn- capturing-flights!
+  "Stand in for the camera. The real :map/fly-to effect reaches into the live
+  MapLibre map (adsb.map.view); here it records where it was asked to go, which
+  is the whole of what this surface promises."
+  [!flights]
+  (rf/reg-fx :map/fly-to (fn [position] (swap! !flights conj position))))
+
+(deftest focusing-from-a-list-takes-the-chart-to-the-aircraft
+  (testing "a drawer names aircraft the reader may not be able to see — some off
+            the edge of the chart entirely. Naming a thing you cannot see and
+            then not showing it to you is not much of an answer"
+    (let [!flights (atom [])]
+      (capturing-flights! !flights)
+      (rf-test/run-test-sync
+        (rf/dispatch [:test/set-picture (by-icao [ups fixtures/on-the-ground])])
+        (rf/dispatch [:stack/toggle-shelf :ground])
+        (render-stack!)
+        (click-and-commit! (drawer-row "a1d645"))
+        (is (= "a1d645" @(rf/subscribe [:aircraft/selected-icao]))
+            "the aircraft is selected")
+        (is (= [(:aircraft/position fixtures/on-the-ground)] @!flights)
+            "and the chart flew to its position — the aircraft's own, not a guess")))))
+
+(deftest an-aircraft-with-no-position-is-selected-but-not-flown-to
+  (testing "the NO POS drawer exists BECAUSE those aircraft have nowhere to be
+            flown to — heard on the radio, never located. They still select; the
+            chart simply has nowhere to go, and stays where the reader left it"
+    (let [!flights (atom [])]
+      (capturing-flights! !flights)
+      (rf-test/run-test-sync
+        (rf/dispatch [:test/set-picture (by-icao [ups fixtures/never-positioned])])
+        (rf/dispatch [:stack/toggle-shelf :traffic])
+        (render-stack!)
+        (click-and-commit! (drawer-row "a10202"))
+        (is (= "a10202" @(rf/subscribe [:aircraft/selected-icao]))
+            "selected — the card still names it, the tick still lights")
+        (is (empty? @!flights)
+            "but the camera did not move: there is nowhere to move it to")))))
+
+(deftest pressing-the-focused-aircraft-unfocuses-it
+  (testing "a selection is a spotlight, and pressing the thing already lit is how
+            anyone expects to put it out"
+    (let [!flights (atom [])]
+      (capturing-flights! !flights)
+      (rf-test/run-test-sync
+        (rf/dispatch [:test/set-picture (by-icao [ups fixtures/on-the-ground])])
+        (rf/dispatch [:stack/toggle-shelf :ground])
+        (render-stack!)
+
+        (click-and-commit! (drawer-row "a1d645"))
+        (is (= "a1d645" @(rf/subscribe [:aircraft/selected-icao])) "lit")
+
+        (click-and-commit! (drawer-row "a1d645"))
+        (is (nil? @(rf/subscribe [:aircraft/selected-icao])) "and out again")
+        (is (= 1 (count @!flights))
+            "and it did NOT fly a second time: dismissing an aircraft must not
+             also take you to the thing you just dismissed")))))
+
+(deftest the-map-s-own-click-selects-without-moving-the-chart
+  (testing "the plain [:aircraft/select icao] contract is what the MAP dispatches
+            — you clicked a plane you can already see, and flying to it would
+            yank the chart out from under your own finger. It still toggles"
+    (let [!flights (atom [])]
+      (capturing-flights! !flights)
+      (rf-test/run-test-sync
+        (rf/dispatch [:test/set-picture (by-icao [ups])])
+        (rf/dispatch [:aircraft/select ups-icao])
+        (is (= ups-icao @(rf/subscribe [:aircraft/selected-icao])))
+        (is (empty? @!flights) "the map does not fly to what you just clicked on it")
+        (rf/dispatch [:aircraft/select ups-icao])
+        (is (nil? @(rf/subscribe [:aircraft/selected-icao]))
+            "and clicking the lit plane puts it out")))))
+
 (deftest there-is-only-ever-one-drawer
   (testing "open a second caption and the first one's aircraft are SWAPPED OUT,
             not stacked beside them. One panel, one list, and never a question
@@ -568,6 +634,28 @@
     (set! (.-top style) "0px")
     (set! (.-width style) "200px")
     (set! (.-height style) "20px")))
+
+(deftest tapping-a-tick-selects-it-exactly-once
+  ;; A real tap on a ruler tick fires pointerdown, pointerup AND click. The tick
+  ;; selects through the SCRUB (a tap is a one-frame scrub), so the Stack's click
+  ;; handler must ignore the ruler entirely — otherwise one press dispatches
+  ;; [:aircraft/select icao] twice, and since selection TOGGLES the aircraft would
+  ;; light and go out in the same press. A bug with no symptom but nothing
+  ;; happening.
+  (testing "a tap fires the map's [:aircraft/select icao] contract, once"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/squawking-7700])])
+      (render-stack!)
+      (lay-the-ruler-down!)
+      (is (nil? @(rf/subscribe [:aircraft/selected-icao])) "nothing selected yet")
+
+      ;; everything a browser sends for one tap, in order
+      (.pointerDown rtl/fireEvent (ruler) #js {:clientX 160 :clientY 10})
+      (.pointerUp rtl/fireEvent (ruler) #js {:clientX 160 :clientY 10})
+      (.click rtl/fireEvent (tick-el ups-icao))
+      (is (= ups-icao @(rf/subscribe [:aircraft/selected-icao]))
+          "the Stack selects the same identity the map would — and STAYS
+           selected: the click did not undo what the pointerup chose"))))
 
 (deftest scrubbing-the-ruler-names-the-nearest-aircraft
   (testing "drag along the ruler and each tick is named as the finger passes

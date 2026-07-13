@@ -66,6 +66,12 @@
     Longitudes are MapLibre's UNWRAPPED west/east and can run past ±180
     after a pan across the antimeridian; adsb.geo/edge-annotation
     normalizes for that.")
+  (fly-to! [this lng-lat]
+    "Ease the camera to `lng-lat` — a {:geo/lat :geo/lon} map, the domain's own
+    shape — keeping the current zoom unless the chart is further out than
+    `focus-zoom`, in which case it closes in to it. A CAMERA move, never a
+    selection: what is selected is app-db's business, and this only decides
+    where the chart is looking.")
   (on-move! [this f]
     "Call `f` (no args) when a camera movement SETTLES — MapLibre's
     moveend, which pan and zoom both conclude with. Deliberately not the
@@ -74,6 +80,13 @@
     handler lives as long as the map does; the map view tears clients
     down before it destroys the map, so clients guard with their own
     disposed flag rather than unregistering."))
+
+(def ^:const focus-zoom
+  "The closest the chart will pull in when flying to an aircraft — and the
+  FLOOR, not the target: a reader already zoomed further in than this keeps
+  their zoom, because flying to an aircraft should move the camera, not undo the
+  reader's own decision about how close they wanted to be."
+  9)
 
 (deftype MapLibreMap [^js gl-map]
   Map
@@ -90,6 +103,10 @@
     (.setData (.getSource gl-map id) (clj->js data)))
   (add-image! [_ id image opts]
     (.addImage gl-map id image (clj->js opts)))
+  (fly-to! [_ {:geo/keys [lat lon]}]
+    (.flyTo gl-map #js {:center #js [lon lat]
+                        :zoom   (max (.getZoom gl-map) focus-zoom)
+                        :speed  1.2}))
   (on-layer-click! [_ layer-id f]
     (.on gl-map "click" layer-id
          (fn [e]
