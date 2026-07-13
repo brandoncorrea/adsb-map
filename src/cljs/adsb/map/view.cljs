@@ -75,10 +75,49 @@
   {:style              style
    :center             default-center
    :zoom               default-zoom
-   ;; Attribution is required and never hidden — the basemap must credit
+   ;; Attribution is required and NEVER hidden — the basemap must credit
    ;; OpenFreeMap / OpenMapTiles / OpenStreetMap. The style JSON's sources
    ;; carry the text; enabling the control is what makes MapLibre render it.
-   :attributionControl true})
+   ;;
+   ;; `compact` is the credit as an (i) button rather than a banner of running
+   ;; text — MapLibre's own first-class mode for exactly this, and the credit is
+   ;; one tap from open, at every width. It is not removed and it is not
+   ;; unreachable; it is folded. `collapse-attribution!` below is what makes it
+   ;; start folded, because MapLibre opens it for you.
+   :attributionControl {:compact true}})
+
+(def ^:private attribution-selector ".maplibregl-ctrl-attrib")
+(def ^:private attribution-open-class "maplibregl-compact-show")
+
+(defn collapse-attribution!
+  "Fold the compact attribution shut inside `container`.
+
+  MapLibre's compact control is compact and OPEN: it sets both
+  `maplibregl-compact` (the (i) button exists) and `maplibregl-compact-show`
+  (…and it is expanded anyway), and only collapses on the reader's first
+  interaction with the map. So it opens every session as a banner of running
+  text across the map's bottom edge — the widest piece of chrome we have, and
+  the only one that says the same thing every time.
+
+  CALL THIS ON LOAD, NOT ON CREATE. At construction the control is still empty
+  (the credit rides the style's sources, which have not arrived), and MapLibre's
+  compact logic skips an empty control entirely. The pass that opens the credit
+  is the one that runs when the style lands.
+
+  Dropping the open-class then STICKS, and is not a race: MapLibre re-runs that
+  logic on resize and on further styledata, but it adds the open-class only when
+  `maplibregl-compact` is ABSENT — and we leave that one exactly where it is. So
+  it never re-opens itself behind us, and the (i) button still toggles it,
+  because the button's own handler owns the very class we drop.
+
+  Nothing is hidden: the credit is one tap away, the control is still there,
+  and if MapLibre ever changes those class names this quietly does nothing and
+  the attribution simply stays open — which is the safe way for it to fail."
+  [container]
+  (some-> container
+          (.querySelector attribution-selector)
+          .-classList
+          (.remove attribution-open-class)))
 
 (defn map-container
   "The map's DOM anchor. Named (not an inline anonymous fn in the render
@@ -110,6 +149,15 @@
               (let [style (basemap/edition-style @!raw-style th)
                     m     (maplibre/create! @!container (default-map-opts style))]
                 (reset! !map m)
+                ;; ON LOAD, not on create. At construction the control is still
+                ;; EMPTY — the style's sources, which carry the credit, have not
+                ;; arrived — and MapLibre's compact logic declines to touch an
+                ;; empty control. It runs again when the style lands, and THAT
+                ;; is the pass that opens the credit. Folding before it would be
+                ;; folding nothing, and MapLibre would open it a moment later.
+                ;; Re-run on every mount: a theme flip destroys and re-creates
+                ;; the map, and the new map arrives with a freshly opened credit.
+                (maplibre/on-load! m #(collapse-attribution! @!container))
                 (reset! !aircraft (aircraft-layer/attach! m th))
                 ;; The selection ring rides the same lifecycle: ring and
                 ;; map are created and torn down together (adsb.map.selection).

@@ -84,7 +84,46 @@
         "no token or key may ever reach the browser bundle"))
 
   (testing "attribution is enabled — the basemap must credit its source"
-    (is (true? (:attributionControl (view/default-map-opts raw-style))))))
+    (let [attribution (:attributionControl (view/default-map-opts raw-style))]
+      (is (map? attribution)
+          "the control is configured, never switched off")
+      (is (not (false? attribution))
+          "OpenFreeMap / OpenMapTiles / OpenStreetMap must be credited")
+      (is (true? (:compact attribution))
+          "as an (i) button rather than a banner — folded, never removed"))))
+
+(deftest the-credit-starts-folded-but-stays-reachable
+  ;; MapLibre's compact control is compact and OPEN: it sets the open-class on
+  ;; add and only collapses on the reader's first map interaction, so the credit
+  ;; greets every session as a banner across the map's bottom edge. We fold it —
+  ;; and folding is not hiding: the (i) button remains, and its own handler
+  ;; toggles the very class we drop.
+  (let [container (js/document.createElement "div")
+        attrib    (js/document.createElement "div")]
+    (set! (.-className attrib)
+          "maplibregl-ctrl maplibregl-ctrl-attrib maplibregl-compact maplibregl-compact-show")
+    (.appendChild container attrib)
+
+    (testing "the open-class is dropped, so the credit renders folded"
+      (view/collapse-attribution! container)
+      (is (not (.contains (.-classList attrib) "maplibregl-compact-show"))
+          "it starts shut"))
+
+    (testing "the (i) button survives — the credit is one tap away, not gone"
+      (is (.contains (.-classList attrib) "maplibregl-compact")
+          "the compact class is untouched, so MapLibre still draws the button
+           AND still declines to re-open the credit behind our back (its own
+           re-open path fires only when this class is absent)")
+      (is (.contains (.-classList attrib) "maplibregl-ctrl-attrib")
+          "and the control itself is still in the DOM"))))
+
+(deftest folding-the-credit-fails-safe
+  (testing "if MapLibre ever renames these classes, the fold quietly does
+            nothing and the attribution simply stays OPEN — the failure mode
+            leaves the credit visible, never missing"
+    (let [empty-container (js/document.createElement "div")]
+      (is (nil? (view/collapse-attribution! empty-container))
+          "no attribution control found: nothing to fold, and nothing thrown"))))
 
 (deftest shell-mounts-and-inits-map-through-seam
   (testing "mounting the shell creates exactly one map, printed in the current edition"
