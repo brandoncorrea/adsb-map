@@ -16,8 +16,24 @@
      the tests that assert on what was logged by redefining log* (coerce-test,
      receiver-test) see nothing and fail. Filtering at the appender leaves
      every log call firing exactly as it does in production and only declines
-     to print it. What still reaches the terminal is ERROR and above, which
-     nothing in the suite provokes on purpose — so if one prints, it is news. -->
+     to print it. What still reaches the terminal is ERROR and above.
+
+     TWO LOGGERS ARE SILENCED OUTRIGHT, because the suite provokes their errors
+     ON PURPOSE and each arrives with a full stack trace:
+
+       adsb.http.routes  routes-test throws `secret internal detail` at the
+                         handler to prove the error response does NOT leak it.
+                         The log line is the throw being caught, i.e. the test
+                         passing.
+       adsb.ingest.poll  poll-test hands the poll loop a callback that throws
+                         `boom`, to prove one bad batch does not kill the loop.
+                         It retries, so it logs four times.
+
+     Named rather than levelled away: every OTHER logger still prints at ERROR,
+     so an exception from code the suite did not deliberately break is still
+     news. Neither of these two is among the namespaces whose logging is
+     asserted on (coerce, receiver), so switching them off costs no coverage —
+     and the tests above assert on the RESPONSE and the LOOP, never on the log. -->
 <configuration>
   <appender name="console" class="ch.qos.logback.core.ConsoleAppender">
     <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
@@ -27,6 +43,10 @@
       <pattern>%d{HH:mm:ss.SSS} %-5level %logger{24} - %msg%n</pattern>
     </encoder>
   </appender>
+
+  <logger name="adsb.http.routes" level="OFF"/>
+  <logger name="adsb.ingest.poll" level="OFF"/>
+
   <root level="INFO">
     <appender-ref ref="console"/>
   </root>

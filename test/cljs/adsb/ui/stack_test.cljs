@@ -44,6 +44,14 @@
 (defn- tick-el [icao]
   (.getByTestId rtl/screen (str "tick:" icao)))
 
+(defn- drawer-row
+  "The drawer's row for an aircraft, or nil. Its own testid: a drawer row is not
+  always the aircraft's only node — one heard with an altitude but no position
+  is a tick on the ruler AND a row in the traffic drawer, which are two true
+  facts about it, not one fact twice."
+  [icao]
+  (.queryByTestId rtl/screen (str "drawer-tick:" icao)))
+
 (defn- alt-pct-of
   "The --alt-pct custom property carried inline by a tick, as a string, or
   the empty string when the tick is unplaced (a shelf resident)."
@@ -280,10 +288,8 @@
       (is (= "NO ALT1" (.-textContent (chip "unknown")))
           "and one holding apart, its altitude never reported"))))
 
-(deftest a-shelf-chip-opens-a-sheet-that-names-its-residents
-  (testing "tapping a chip answers the question the dots never could: WHO.
-            The dots and the sheet are never both present — two nodes for one
-            aircraft would be two answers to the same question"
+(deftest a-shelf-chip-opens-a-drawer-that-names-its-residents
+  (testing "tapping a caption answers the question a count never could: WHO"
     (rf-test/run-test-sync
       (rf/dispatch [:test/set-picture (by-icao [ups no-altitude])])
       (render-stack!)
@@ -296,23 +302,23 @@
       (is (= :unknown @(rf/subscribe [:stack/open-shelf])) "the shelf opens")
       (is (some? (.getByText rtl/screen "NOALT"))
           "and its resident is named at last")
-      (is (some? (.closest (tick-el "aaaaaa") ".adsb-stack-sheet"))
-          "as a row in the sheet, not a dot in a cluster")
+      (is (some? (drawer-row "aaaaaa"))
+          "as a row in the drawer, not a dot in a cluster")
       (is (= "true" (.getAttribute (chip "unknown") "aria-expanded")))
 
       (click-and-commit! (chip "unknown"))
       (is (nil? @(rf/subscribe [:stack/open-shelf])) "and tapping again closes it")
       (is (nil? (.queryByText rtl/screen "NOALT"))
-          "the sheet is gone, and its residents are dots again"))))
+          "the drawer is gone, and its residents are dots again"))))
 
 (deftest a-named-resident-is-still-selectable
-  (testing "a sheet row fires the same [:aircraft/select icao] contract a
-            tick does — the sheet names them, it does not sideline them"
+  (testing "a drawer row fires the same [:aircraft/select icao] contract a
+            tick does — the drawer names them, it does not sideline them"
     (rf-test/run-test-sync
       (rf/dispatch [:test/set-picture (by-icao [no-altitude])])
       (rf/dispatch [:stack/toggle-shelf :unknown])
       (render-stack!)
-      (.click rtl/fireEvent (tick-el "aaaaaa"))
+      (.click rtl/fireEvent (drawer-row "aaaaaa"))
       (is (= "aaaaaa" @(rf/subscribe [:aircraft/selected-icao]))
           "the altitude-less aircraft selects like any other"))))
 
@@ -409,7 +415,7 @@
     (rf-test/run-test-sync
       (rf/dispatch [:test/set-picture (by-icao [ups fixtures/never-positioned])])
       (render-stack!)
-      (let [el (.getByTestId rtl/screen "traffic")]
+      (let [el (.getByTestId rtl/screen "shelf:traffic")]
         (is (= "2" (.getAttribute el "data-total"))
             "both aircraft are heard")
         (is (= "1" (.getAttribute el "data-positioned"))
@@ -423,10 +429,79 @@
     (rf-test/run-test-sync
       (rf/dispatch [:test/set-picture (by-icao [ups fixtures/on-the-ground])])
       (render-stack!)
-      (let [el (.getByTestId rtl/screen "traffic")]
+      (let [el (.getByTestId rtl/screen "shelf:traffic")]
         (is (= "2" (.getAttribute el "data-total")))
         (is (= "2" (.getAttribute el "data-positioned"))
             "a grounded aircraft is still an aircraft on the chart")))))
+
+(deftest there-is-only-ever-one-drawer
+  (testing "open a second caption and the first one's aircraft are SWAPPED OUT,
+            not stacked beside them. One panel, one list, and never a question
+            about which one you are reading"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture
+                    (by-icao [ups fixtures/on-the-ground no-altitude])])
+      (render-stack!)
+
+      (click-and-commit! (.getByTestId rtl/screen "shelf:ground"))
+      (is (= 1 (.-length (.querySelectorAll js/document ".adsb-stack-drawer"))))
+      (is (= "ground" (.getAttribute (.getByTestId rtl/screen "drawer") "data-band")))
+      (is (some? (drawer-row "a1d645")) "the grounded aircraft is the one named")
+
+      (click-and-commit! (.getByTestId rtl/screen "shelf:unknown"))
+      (is (= 1 (.-length (.querySelectorAll js/document ".adsb-stack-drawer")))
+          "still exactly one drawer — the second did not open beside the first")
+      (is (= "unknown" (.getAttribute (.getByTestId rtl/screen "drawer") "data-band"))
+          "and it is showing the other band now")
+      (is (some? (drawer-row "aaaaaa")) "its residents are the altitude-less ones")
+      (is (nil? (drawer-row "a1d645"))
+          "and the grounded aircraft has gone back to being a dot"))))
+
+(deftest the-drawer-closes-from-its-own-button
+  (testing "an overlay you cannot dismiss is a trap"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/on-the-ground])])
+      (rf/dispatch [:stack/toggle-shelf :ground])
+      (render-stack!)
+      (is (some? (.queryByTestId rtl/screen "drawer")))
+      (click-and-commit! (.getByTestId rtl/screen "drawer-close"))
+      (is (nil? @(rf/subscribe [:stack/open-shelf])))
+      (is (nil? (.queryByTestId rtl/screen "drawer")) "shut"))))
+
+(deftest plotted-opens-onto-the-gap
+  ;; The aircraft that are HEARD and NOT ON THE MAP are the only ones in the app
+  ;; that cannot be reached by pointing at them — there is nothing to point at.
+  ;; The drawer is their only door.
+  (testing "the unplotted are the picture minus the positioned"
+    (let [picture (by-icao [ups fixtures/never-positioned fixtures/on-the-ground])]
+      (is (= ["a10202"] (map :aircraft/icao (stack/unplotted picture)))
+          "only the aircraft with no position at all")))
+
+  (testing "PLOTTED opens a drawer naming exactly those, and no others"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/never-positioned])])
+      (render-stack!)
+      (click-and-commit! (.getByTestId rtl/screen "shelf:traffic"))
+      (is (= "traffic" (.getAttribute (.getByTestId rtl/screen "drawer") "data-band")))
+      (is (some? (drawer-row "a10202"))
+          "the aircraft heard but never located is named at last")
+      (is (some? (tick-el "a10202"))
+          "AND it keeps its tick on the ruler: it has an altitude, and the scale
+           must still say so. Two surfaces, two true facts — not one fact twice")
+      (is (nil? (drawer-row ups-icao))
+          "the one you can already see on the map is not in the gap")))
+
+  (testing "with nothing missing there is no gap, so PLOTTED is no door: every
+            aircraft is on the map, and a caption with nobody behind it opens
+            nothing"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/on-the-ground])])
+      (render-stack!)
+      (let [chip (.getByTestId rtl/screen "shelf:traffic")]
+        (is (= "SPAN" (.-tagName chip)) "not a button")
+        (is (= "2/2" (.-textContent
+                      (.querySelector chip ".adsb-stack-shelf-count")))
+            "and it still states its fact")))))
 
 (deftest a-count-of-zero-is-not-a-button
   (testing "a chip at zero has no residents to name, so it opens a sheet of
@@ -442,8 +517,8 @@
             "and it carries no shelf hook, so a click on it dispatches nothing")
         (click-and-commit! gnd)
         (is (nil? @(rf/subscribe [:stack/open-shelf])) "so nothing opens")
-        (is (nil? (.querySelector js/document ".adsb-stack-sheet"))
-            "and no empty sheet is ever drawn"))))
+        (is (nil? (.querySelector js/document ".adsb-stack-drawer"))
+            "and no empty drawer is ever drawn"))))
 
   (testing "give it a resident and it becomes a door again"
     (rf-test/run-test-sync
@@ -453,16 +528,16 @@
         (is (= "BUTTON" (.-tagName gnd)) "a button, because now it has names to give")
         (click-and-commit! gnd)
         (is (= :ground @(rf/subscribe [:stack/open-shelf])))
-        (is (some? (.querySelector js/document ".adsb-stack-sheet")))))))
+        (is (some? (.querySelector js/document ".adsb-stack-drawer")))))))
 
-(deftest a-sheet-of-nobody-closes-itself
-  (testing "the last resident lands or ages out while its sheet stands open —
-            the sheet goes with them rather than hanging there empty"
+(deftest a-drawer-of-nobody-closes-itself
+  (testing "the last resident lands or ages out while its drawer stands open —
+            the drawer goes with them rather than hanging there empty"
     (rf-test/run-test-sync
       (rf/dispatch [:test/set-picture (by-icao [ups fixtures/on-the-ground])])
       (rf/dispatch [:stack/toggle-shelf :ground])
       (render-stack!)
-      (is (some? (.querySelector js/document ".adsb-stack-sheet"))
+      (is (some? (.querySelector js/document ".adsb-stack-drawer"))
           "open, with its one resident named")
 
       ;; Same reason click-and-commit! exists: Reagent queues the re-render and
@@ -471,8 +546,8 @@
       (rtl/act (fn []
                  (rf/dispatch [:test/set-picture (by-icao [ups])])  ; the tarmac empties
                  (r/flush)))
-      (is (nil? (.querySelector js/document ".adsb-stack-sheet"))
-          "and now there is nobody to name, so there is no sheet"))))
+      (is (nil? (.querySelector js/document ".adsb-stack-drawer"))
+          "and now there is nobody to name, so there is no drawer"))))
 
 ;; ---------------------------------------------------------------------
 ;; The scrub (adsb-4et) — a finger, in a real browser.

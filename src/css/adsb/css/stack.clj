@@ -290,51 +290,101 @@
           :bottom    "calc(100% + 6px)"
           :transform "translateX(-50%)")]])
 
-(def sheet
-  "The open shelf's sheet — its residents, NAMED (adsb-hsk). A dot cluster
-  can only ever tell you how many; this tells you who, which is the one
-  question the shelves could not answer in either stance. It floats above its
-  chip, so it costs the Stack no permanent room in either.
+(def drawer
+  "THE ONE DRAWER — the panel every caption opens, and the only place an
+  aircraft in an off-scale band can be NAMED. Open a second caption and this
+  panel's aircraft are swapped for the new ones; the chart never grows a second
+  window (adsb.ui.stack/drawer).
 
-  ORDER-CRITICAL: these rules restate a tick as a row, and they tie on
-  specificity with the dot rules in `shelves` above (.adsb-stack-sheet
-  .adsb-stack-tick vs .adsb-stack-shelf .adsb-stack-tick — both 0,2,0). They
-  win on SOURCE ORDER alone, so this block must stay after that one."
-  [[:.adsb-stack-sheet
-    (decl :position      "absolute"
-          :right         0
-          :bottom        "calc(100% + var(--s2))"
-          :z-index       4
-          :display       "flex"
+  IT OPENS ON THE LEFT, and there is only one wall it can open on. The right
+  edge is the Stack's; above it, the selection card; the bottom-right corner
+  holds the attribution's (i). The left edge is the only clear one — and on a
+  phone the drawer must also stop short of the recumbent Stack, which is what
+  the bottom inset does.
+
+  ORDER-CRITICAL: these rules restate a tick as a row and tie on specificity
+  with the dot rules in `shelves` above (both 0,2,0). They win on SOURCE ORDER
+  alone, so this block must stay after that one."
+  [[:.adsb-stack-drawer
+    (decl :position       "fixed"
+          :top            "var(--s3)"
+          :left           "var(--s3)"
+          :bottom         "calc(var(--stack-w) + var(--s3) + env(safe-area-inset-bottom, 0px))"
+          :z-index        4
+          :display        "flex"
           :flex-direction "column"
-          :gap           "1px"
-          :min-width     "100%"
-          :width         "max-content"
-          :max-width     "60vw"
-          :max-height    "40vh"
-          :overflow-y    "auto"
-          :padding       "var(--s2)"
-          :background    "var(--paper-chrome)"
-          :border        "1px solid var(--rule-strong)"
-          :border-radius "2px")]
+          :width          "260px"
+          :max-width      "calc(100vw - 2 * var(--s3))"
+          :background     "var(--paper-chrome)"
+          :border         "1px solid var(--rule-strong)"
+          :border-radius  "2px"
+          :box-shadow     "2px 2px 0 var(--rule-faint)"
+          :color          "var(--ink)"
+          :box-sizing     "border-box")]
 
-   ;; A resident, as a row: the dot it was, and the name it never had. The
-   ;; dot moves to a ::before so the row itself is free to be a row — the
-   ;; variant rules below tint that pseudo-element, never the row's own
-   ;; background, which would paint the whole strip magenta.
-   [".adsb-stack-sheet .adsb-stack-tick"
+   [:.adsb-stack-drawer-head
+    (decl :display       "flex"
+          :align-items   "center"
+          :gap           "var(--s2)"
+          :flex          "none"
+          :padding       "var(--s2) var(--s3)"
+          :border-bottom "1px solid var(--rule)")]
+
+   ;; voice: adsb.css.captions
+   [:.adsb-stack-drawer-title
+    (decl :color "var(--faded-ink)")]
+
+   [:.adsb-stack-drawer-count
+    (decl :margin-left          "auto"
+          :font-variant-numeric "tabular-nums"
+          :font-size            "var(--t-1)")]
+
+   [:.adsb-stack-drawer-close
+    (decl :display     "flex"
+          :align-items "center"
+          :justify-content "center"
+          :width       "24px"
+          :height      "24px"
+          :margin      "0 calc(-1 * var(--s2)) 0 var(--s2)"
+          :padding     0
+          :background  "none"
+          :border      "none"
+          :font        "inherit"
+          :font-size   "var(--t1)"
+          :line-height 1
+          :color       "var(--faded-ink)"
+          :cursor      "pointer")]
+
+   [:.adsb-stack-drawer-close:hover
+    (decl :color "var(--ink)")]
+
+   [:.adsb-stack-drawer-close:focus-visible
+    (decl :outline        "2px solid var(--magenta)"
+          :outline-offset "1px")]
+
+   ;; The list scrolls; the head does not go with it.
+   [:.adsb-stack-drawer-list
+    (decl :flex       "1 1 auto"
+          :overflow-y "auto"
+          :padding    "var(--s2)")]
+
+   ;; A resident, as a row: the dot it was, and the name it never had. The dot
+   ;; moves to a ::before so the row itself is free to be a row — the variant
+   ;; rules below tint that pseudo-element, never the row's own background,
+   ;; which would paint the whole strip magenta.
+   [".adsb-stack-drawer .adsb-stack-tick"
     (decl :display       "flex"
           :align-items   "center"
           :gap           "var(--s2)"
           :width         "auto"
           :height        "auto"
-          :min-height    "32px"
+          :min-height    "44px"        ; a finger's row, not a mouse's
           :padding       "0 var(--s2)"
           :border-radius 0
           :background    "none"
           :box-shadow    "none")]
 
-   [".adsb-stack-sheet .adsb-stack-tick::before"
+   [".adsb-stack-drawer .adsb-stack-tick::before"
     (decl :content       "\"\""
           :flex          "none"
           :width         "7px"
@@ -343,23 +393,31 @@
           :background    "var(--alt-ground)"
           :box-shadow    "0 0 0 1px var(--paper-halo)")]
 
-   [".adsb-stack-unknown .adsb-stack-sheet .adsb-stack-tick::before"
+   [".adsb-stack-drawer[data-band=\"unknown\"] .adsb-stack-tick::before"
     (decl :background "var(--alt-unknown)")]
 
-   [".adsb-stack-sheet .adsb-stack-tick-selected::before"
+   ;; The unplotted have no colour of their own — they are absent from the map,
+   ;; not painted a shade of it — so they wear the faded ink of a thing not drawn.
+   [".adsb-stack-drawer[data-band=\"traffic\"] .adsb-stack-tick::before"
+    (decl :background "var(--faded-ink)")]
+
+   [".adsb-stack-drawer .adsb-stack-tick-selected::before"
     (decl :background "var(--magenta)")]
 
-   [".adsb-stack-sheet .adsb-stack-tick-emergency::before"
+   [".adsb-stack-drawer .adsb-stack-tick-emergency::before"
     (decl :background "var(--emergency)"
           :box-shadow "0 0 0 1px var(--emergency)")]
 
-   ;; In a sheet the name is the row, not a tooltip pinned above a dot.
-   [".adsb-stack-sheet .adsb-stack-tick-label"
+   ;; In the drawer the name IS the row, not a tooltip pinned above a dot.
+   [".adsb-stack-drawer .adsb-stack-tick-label"
     (decl :position   "static"
           :transform  "none"
           :padding    0
           :background "none"
-          :border     "none")]])
+          :border     "none")]
+
+   [".adsb-stack-drawer .adsb-stack-tick:hover"
+    (decl :background "var(--paper-veil)")]])
 
 (def phone
   "Phone: the ruler lies down along the bottom edge — identical semantics,
@@ -518,16 +576,6 @@
            :position "absolute"
            :inset    "-14px -6px")]
 
-    ;; The sheets grow RIGHTWARD now, away from the (i) in the far corner, from
-    ;; chips that sit at the left.
-    [:.adsb-stack-sheet
-     (decl :left      0
-           :right     "auto"
-           :max-width "calc(100vw - 2 * var(--s3))")]
-
-    [".adsb-stack-sheet .adsb-stack-tick"
-     (decl :min-height "44px")]
-
     ;; The bottom edge is the Stack's now: the map attribution and the margin
     ;; column both step up out of its lane.
     [:.maplibregl-ctrl-bottom-right
@@ -535,6 +583,6 @@
            :bottom "calc(var(--stack-w) + env(safe-area-inset-bottom, 0px))")]))
 
 (def styles
-  ;; `sheet` after `shelves`, and `phone` last: both win their ties on source
+  ;; `drawer` after `shelves`, and `phone` last: both win their ties on source
   ;; order, and both say so in their own docstrings.
-  [column ticks labels shelves sheet phone])
+  [column ticks labels shelves drawer phone])

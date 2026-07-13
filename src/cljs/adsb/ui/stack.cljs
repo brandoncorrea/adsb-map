@@ -94,7 +94,8 @@
     [adsb.map.theme :as theme]
     [adsb.ui.health :as health]
     [clojure.string :as str]
-    [re-frame.core :as rf]))
+    [re-frame.core :as rf]
+    [reagent.core :as r]))
 
 ;; ---------------------------------------------------------------------
 ;; Tick geometry — pure. The layout math the browser tests assert directly.
@@ -166,6 +167,14 @@
     (apply min-key
            #(abs (- (altitude-pct (:aircraft/altitude-ft %)) pct))
            airborne)))
+
+(defn unplotted
+  "The aircraft in `picture` that the feeder HEARS and the chart cannot DRAW —
+  no position, so no glyph, so nothing on the map to point at. They are the gap
+  in `PLOTTED 57/62`, and the only aircraft in the app that can be reached in no
+  other way than through the drawer."
+  [picture]
+  (remove aircraft/positioned? (vals picture)))
 
 (defn airborne
   "The ruler's residents — the aircraft in `picture` that the scrub can
@@ -240,6 +249,11 @@
     (if (= band (:stack/open-shelf db))
       (dissoc db :stack/open-shelf)
       (assoc db :stack/open-shelf band))))
+
+(rf/reg-event-db
+  :stack/close-drawer
+  (fn [db _]
+    (dissoc db :stack/open-shelf)))
 
 (rf/reg-sub
   :stack/open-shelf
@@ -385,7 +399,7 @@
   label beside it — while hovered, while selected, always while the
   aircraft is squawking distress, and always inside an open sheet, which
   exists precisely to name its residents (`always-named?`)."
-  [aircraft* {:keys [selected-icao hovered-icao always-named?]}]
+  [aircraft* {:keys [selected-icao hovered-icao always-named? testid-prefix]}]
   (let [{:aircraft/keys [icao altitude-ft]} aircraft*
         band       (tick-band aircraft*)
         emergency? (aircraft/emergency? aircraft*)
@@ -394,7 +408,7 @@
     [:div.adsb-stack-tick
      (cond-> {:role          "option"
               :data-icao     icao
-              :data-testid   (str "tick:" icao)
+              :data-testid   (str (or testid-prefix "tick:") icao)
               :aria-selected selected?
               :aria-label    (tick-name aircraft*)
               :tab-index     0
@@ -430,24 +444,34 @@
 (defn- census-chip
   "One census caption: a swatch, a state, and how many aircraft are in it.
 
-  A BUTTON only when it has residents to name. A chip at zero opens a sheet of
-  nobody — a dead target, and an empty bordered box floating over the map — so
-  at zero it renders as a plain caption instead. The fact is still stated; it
-  simply is not offered as a door to nowhere."
-  [{:keys [band label color n interactive? open?]}]
+  A BUTTON only when it has residents to name. A chip at zero opens a drawer of
+  nobody — a dead target, and an empty panel over the chart — so at zero it
+  renders as a plain caption instead. The fact is still stated; it simply is not
+  offered as a door to nowhere.
+
+  `n` is the number of RESIDENTS BEHIND THE DOOR, which is not always the number
+  printed on it: PLOTTED shows a fraction and opens onto the gap, so it counts
+  the unplotted (`count-text` overrides what is shown). Every other caption
+  prints and opens the same set. `expansion`, when given, makes the label an
+  <abbr> carrying the long form."
+  [{:keys [band label expansion color n count-text data interactive? open?]}]
   (let [testid  (str "shelf:" (name band))
         swatch* (str "swatch:" (name band))
         body    [[swatch color swatch*]
-                 [:span.adsb-stack-shelf-label label]
-                 [:span.adsb-stack-shelf-count n]]]
+                 (if expansion
+                   [:abbr.adsb-stack-shelf-label {:title expansion} label]
+                   [:span.adsb-stack-shelf-label label])
+                 [:span.adsb-stack-shelf-count (or count-text n)]]]
     (if interactive?
       (into [:button.adsb-stack-shelf-chip
-             {:type          "button"
-              :data-shelf    (name band)
-              :data-testid   testid
-              :aria-expanded (boolean open?)}]
+             (merge data
+                    {:type          "button"
+                     :data-shelf    (name band)
+                     :data-testid   testid
+                     :aria-expanded (boolean open?)})]
             body)
-      (into [:span.adsb-stack-shelf-caption {:data-testid testid}] body))))
+      (into [:span.adsb-stack-shelf-caption (merge data {:data-testid testid})]
+            body))))
 
 (defn- shelf
   "A holding band at the ruler's foot — the ground cluster or the
@@ -455,11 +479,16 @@
   both at once (two DOM nodes for one aircraft would be two answers to
   `who is this?`):
 
-    * CLOSED — the dot cluster. Grouped, never ranked. The phone hides the
-      dots and keeps only the chip, which is the whole point: the cluster's
+    * ON THE STACK — the dot cluster. Grouped, never ranked. The phone hides
+      the dots and keeps only the chip, which is the whole point: the cluster's
       one fact is its count, and on the short axis the count is cheaper.
-    * OPEN — the sheet, where every resident is NAMED and selectable. What
-      a chip's number cannot tell you, and neither could the dots.
+    * IN THE DRAWER — where every resident is NAMED and selectable. What a
+      chip's number cannot tell you, and neither could the dots.
+
+  The drawer is not the shelf's, though. There is exactly ONE of it, and it
+  belongs to the Stack (see `drawer`): every caption feeds the same panel, and
+  opening a second one swaps the first one's aircraft out rather than stacking
+  another window on the chart.
 
   The chip leads with the state's SWATCH, so `● GND 3` is a legend row and a
   count in the same breath. The swatch matters most in the two places the dots
@@ -467,18 +496,15 @@
   there are no dots to take the colour from."
   [{:keys [band class label color aircraft open? selected-icao hovered-icao]}]
   (let [tick-opts {:selected-icao selected-icao :hovered-icao hovered-icao}
-        n         (count aircraft)
-        ;; A sheet of nobody is not a sheet. If the last resident lands or ages
-        ;; out while its sheet stands open, the sheet closes with them.
-        open?     (and open? (pos? n))]
+        n         (count aircraft)]
     [:div.adsb-stack-shelf {:class class :role "group" :aria-label label}
      [census-chip {:band band :label label :color color :n n
-                   :interactive? (pos? n) :open? open?}]
-     (if open?
-       [:div.adsb-stack-sheet
-        (for [a aircraft]
-          ^{:key (:aircraft/icao a)}
-          [tick a (assoc tick-opts :always-named? true)])]
+                   :interactive? (pos? n) :open? (and open? (pos? n))}]
+     ;; ONE NODE PER AIRCRAFT. While this band's drawer stands open its residents
+     ;; are named in there, so the cluster stands down: two DOM nodes for one
+     ;; aircraft would be two answers to `who is this?`, and the reader would
+     ;; have to work out which of the two to point at.
+     (when-not open?
        (for [a aircraft]
          ^{:key (:aircraft/icao a)} [tick a tick-opts]))]))
 
@@ -547,22 +573,98 @@
   position: heard, never located). `53/63` says `fifty-three of sixty-three` in
   the notation itself, and it is shorter than the two numbers it replaces.
 
-  It opens nothing and keys nothing — it is not a colour, so it takes no
-  swatch."
-  [picture]
-  (let [total  (count picture)
-        placed (count (filter aircraft/positioned? (vals picture)))]
+  It keys nothing — it is not a colour, so it takes no swatch. But it OPENS,
+  and what it opens is the gap: the aircraft that are heard and NOT on the map.
+  Those are the only aircraft in the app you cannot reach by pointing at them,
+  precisely because there is nothing to point at — so the drawer is the only way
+  to see who they are. The chip is a button exactly when that gap is non-empty,
+  which is the same rule every other caption keeps: a count of zero opens
+  nothing, because there is nobody behind it."
+  [picture open?]
+  (let [total     (count picture)
+        placed    (count (filter aircraft/positioned? (vals picture)))
+        unplotted (- total placed)]
     [:div.adsb-stack-shelf.adsb-stack-traffic
      {:role "group" :aria-label "Traffic"}
-     [:span.adsb-stack-shelf-caption
-      {:data-testid     "traffic"
-       :data-total      (str total)
-       :data-positioned (str placed)}
-      [:abbr.adsb-stack-shelf-label
-       {:title (str placed " of " total
-                    " aircraft plotted; the rest are heard but cannot be placed")}
-       "PLOTTED"]
-      [:span.adsb-stack-shelf-count (str placed "/" total)]]]))
+     [census-chip
+      {:band          :traffic
+       :label         "PLOTTED"
+       :expansion     (str placed " of " total " aircraft plotted; the rest are"
+                          " heard but cannot be placed")
+       :count-text    (str placed "/" total)
+       :n             unplotted
+       :data          {:data-total      (str total)
+                       :data-positioned (str placed)}
+       :interactive?  (pos? unplotted)
+       :open?         (and open? (pos? unplotted))}]]))
+
+(def ^:private drawer-titles
+  {:ground  "On the ground"
+   :unknown "No altitude reported"
+   :emergency "Squawking distress"
+   :traffic "Heard, not on the map"})
+
+(defn- on-drawer-key!
+  "Escape closes the drawer. It is an overlay over the chart, and an overlay you
+  cannot dismiss from the keyboard is a trap."
+  [event]
+  (when (= "Escape" (.-key event))
+    (rf/dispatch [:stack/close-drawer])))
+
+(defn- drawer
+  "THE ONE DRAWER. Every caption opens this same panel, and opening a second
+  swaps the first one's aircraft out — the chart never grows a second window,
+  and there is never a question of which list you are reading.
+
+  It names what a count cannot: `GND 3` is a fact, and these are the three. Each
+  row is the tick's own component, always named, still firing the map's
+  [:aircraft/select icao] contract — so an aircraft in the drawer selects exactly
+  as one on the ruler does.
+
+  It opens on the LEFT. The right belongs to the Stack and, above it, to the
+  selection card; the (i) sits in the bottom-right corner. The left edge is the
+  only clear wall in the room.
+
+  `:traffic` is the reason this is worth having at all: those aircraft are heard
+  and NOT on the map, so they are the only ones in the app that cannot be reached
+  by pointing at them. There is nothing to point at. This is the only door to
+  them."
+  [_props]                            ; reagent hands the props to the render fn
+  (r/create-class
+    {:display-name "adsb-stack-drawer"
+     :component-did-mount    #(.addEventListener js/document "keydown" on-drawer-key!)
+     :component-will-unmount #(.removeEventListener js/document "keydown" on-drawer-key!)
+     :reagent-render
+     (fn [{:keys [band aircraft selected-icao hovered-icao]}]
+       (let [title (get drawer-titles band (name band))]
+         [:div.adsb-stack-drawer
+          {:data-testid "drawer"
+           :data-band   (name band)
+           :role        "group"
+           :aria-label  title}
+          [:div.adsb-stack-drawer-head
+           [:span.adsb-stack-drawer-title title]
+           [:span.adsb-stack-drawer-count (count aircraft)]
+           [:button.adsb-stack-drawer-close
+            {:type        "button"
+             :data-testid "drawer-close"
+             :aria-label  "Close"
+             :on-click    #(rf/dispatch [:stack/close-drawer])}
+            "×"]]
+          [:div.adsb-stack-drawer-list
+           (for [a aircraft]
+             ^{:key (:aircraft/icao a)}
+             ;; A DISTINCT TESTID, because the duplication is REAL and intended.
+             ;; A drawer row is not always the aircraft's only node: an aircraft
+             ;; heard with an altitude but no position is a tick on the ruler
+             ;; (it IS at FL330 — that is true, and the scale must say so) AND a
+             ;; row in the traffic drawer (it is NOT on the map — also true).
+             ;; Two facts, two surfaces. Only the SHELF clusters stand down when
+             ;; their drawer opens, because those would be the same fact twice.
+             [tick a {:selected-icao selected-icao
+                      :hovered-icao  hovered-icao
+                      :always-named? true
+                      :testid-prefix "drawer-tick:"}])]]))}))
 
 (defn stack
   "The Stack, mounted permanently on the map's edge. A form-2 component:
@@ -621,8 +723,23 @@
                  :selected-icao selected-icao
                  :hovered-icao  hovered-icao}]
          [emergency-shelf @emergencies (:emergency-color palette)]
-         [traffic-caption @picture]
+         [traffic-caption @picture (= :traffic open-shelf)]
          ;; Is the instrument working? The one apparatus fact left in the app,
          ;; at the end of the row the reader already scans. Silent while all is
          ;; well (adsb.ui.health).
-         [health/health]]))))
+         [health/health]
+
+         ;; ONE drawer, whichever caption opened it — and none at all when the
+         ;; band it names has emptied out from under it (an aircraft can land,
+         ;; or age out of the picture, while its drawer stands open).
+         (let [residents (case open-shelf
+                           :ground    (:ground bands)
+                           :unknown   (:unknown bands)
+                           :emergency @emergencies
+                           :traffic   (unplotted @picture)
+                           nil)]
+           (when (seq residents)
+             [drawer {:band          open-shelf
+                      :aircraft      residents
+                      :selected-icao selected-icao
+                      :hovered-icao  hovered-icao}]))]))))

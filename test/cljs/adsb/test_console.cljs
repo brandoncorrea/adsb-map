@@ -21,7 +21,14 @@
     re-frame does not. re-frame.loggers captures console.warn when it loads —
     long before this namespace runs — so patching js/console cannot reach it,
     and re-frame's own `set-loggers!` is the only door. Same predicate, both
-    doors."
+    doors.
+
+  THIS IS A PRELOAD, and it has to be. re-frame announces `overwriting :event
+  handler` at REGISTRATION, and registration happens when a test namespace
+  loads — before a single test runs, and so before anything the runner's `init`
+  does could take effect. Installing from the runner silenced the two call-time
+  emitters and left every one of those lines on the terminal. Only code that
+  runs before the test namespaces load can catch them."
   (:require
     [clojure.string :as str]
     [re-frame.core :as rf]))
@@ -47,12 +54,16 @@
    ;; makes it safe.
    "outside of a reactive context"
 
-   ;; day8.re-frame.test/run-test-sync registers its own handlers per test, and
-   ;; several tests register a handler of the same name. Re-registration is how
-   ;; the harness works, not a collision anyone needs to hear about.
-   "overwriting :event handler"
-   "overwriting :fx handler"
-   "overwriting :sub handler"])
+   ;; Test namespaces register handlers of the same name, and re-registration is
+   ;; how the harness works — not a collision anyone needs to hear about.
+   ;;
+   ;; Matched on this prefix ALONE, and that is not laziness. re-frame logs the
+   ;; line as FOUR arguments — "re-frame: overwriting", ":event", "handler for:",
+   ;; and the id — which the console joins on the way out. The obvious pattern,
+   ;; "overwriting :event handler", is a substring of the printed LINE and of no
+   ;; single argument, so it matched nothing and every line still printed. Match
+   ;; what an argument actually contains, not what the terminal shows.
+   "re-frame: overwriting"])
 
 (defn- expected?
   "Is this console call one the suite provokes on purpose?"
@@ -63,23 +74,25 @@
                  (some #(str/includes? arg %) expected-noise)))
           args)))
 
-(defonce ^:private installed? (atom false))
-
-(defn install!
-  "Filter the suite's console. Idempotent: a hot reload must not wrap the
-  wrappers, or the originals are lost behind a chain of them."
+(defn- install!
+  "Filter the suite's console at both doors."
   []
-  (when (compare-and-set! installed? false true)
-    (let [console js/console
-          warn    (.-warn console)
-          info    (.-info console)
-          quietly (fn [emit]
-                    (fn [& args]
-                      (when-not (expected? args)
-                        (.apply emit console (to-array args)))))]
-      (set! (.-warn console) (quietly warn))
-      (set! (.-info console) (quietly info))
-      ;; re-frame holds its own captured reference; route it through the same
-      ;; predicate, to the ORIGINAL warn (not the patched one — that would
-      ;; double-filter, harmlessly but confusingly).
-      (rf/set-loggers! {:warn (quietly warn)}))))
+  (let [console js/console
+        warn    (.-warn console)
+        info    (.-info console)
+        quietly (fn [emit]
+                  (fn [& args]
+                    (when-not (expected? args)
+                      (.apply emit console (to-array args)))))]
+    (set! (.-warn console) (quietly warn))
+    (set! (.-info console) (quietly info))
+    ;; re-frame holds its own captured reference; route it through the same
+    ;; predicate, to the ORIGINAL warn (not the patched one — that would
+    ;; double-filter, harmlessly but confusingly).
+    (rf/set-loggers! {:warn (quietly warn)})
+    true))
+
+;; `defonce`, so a hot reload does not wrap the wrappers and lose the originals
+;; behind a chain of them. Not private: nothing reads it, and clj-kondo rightly
+;; objects to a private var nobody reads.
+(defonce console-filtered? (install!))

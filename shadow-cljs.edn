@@ -15,12 +15,20 @@
          :asset-path "/js"
          :modules    {:main {:init-fn adsb.core/init!}}}
 
-  ;; The preload runs before react-dom initializes, which is the only moment at
-  ;; which its DevTools advertisement can be pre-empted — see the namespace.
-  ;; The :app build deliberately does NOT carry it: in dev the suggestion is a
-  ;; fair one, and the production bundle has no such branch to silence.
+  ;; Both preloads exist because they must run BEFORE something they cannot
+  ;; otherwise reach, and each namespace says what. In order, which matters:
+  ;;
+  ;;   react-devtools-hook  before react-dom initializes — it requires nothing,
+  ;;                        deliberately, since requiring reagent here would
+  ;;                        load react-dom and lose the race it exists to win.
+  ;;   test-console         before the test namespaces load, since re-frame
+  ;;                        announces handler registration as they do.
+  ;;
+  ;; The :app build carries neither: in dev the DevTools suggestion is a fair
+  ;; one, and app code should never have its console filtered.
   :test {:target    :browser-test
          :test-dir  "target/browser-test"
          :ns-regexp "-test$"
          :runner-ns adsb.test-runner
-         :devtools  {:preloads [adsb.react-devtools-hook]}}}}
+         :devtools  {:preloads [adsb.react-devtools-hook
+                                adsb.test-console]}}}}
