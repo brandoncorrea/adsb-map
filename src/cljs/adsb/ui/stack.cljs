@@ -563,6 +563,12 @@
   (let [rect (.getBoundingClientRect view)]
     (if horizontal? (- x (.-left rect)) (- y (.-top rect)))))
 
+(defn- read-window!
+  "Push what the viewport is NOW showing into app-db. The window is a snapshot of
+  the DOM, and this is the only thing allowed to take it."
+  [^js view]
+  (rf/dispatch [:stack/scrolled (scroll->window (track-metrics view))]))
+
 (defn- apply-zoom!
   "Grow or shrink the track about `offset` (px into the viewport), and set the
   scroll so the sky there does not move. The zoom lands in app-db — the track's
@@ -570,14 +576,32 @@
   DOM directly, because the scroll offset IS the DOM's."
   [^js view zoom' offset]
   (let [{:keys [horizontal? track viewport] :as m} (track-metrics view)
-        zoom'  (clamp-zoom zoom')
-        track' (* viewport zoom')
+        zoom'   (clamp-zoom zoom')
+        track'  (* viewport zoom')
         scroll' (zoom-scroll m track' offset)]
     (rf/dispatch-sync [:stack/set-zoom zoom'])
-    ;; The track only takes its new length after the render, so the scroll must be
-    ;; corrected after it too — otherwise it is clamped against the OLD length and
-    ;; the sky under the fingers jumps.
-    (js/requestAnimationFrame
+
+    ;; THE NEW WINDOW IS COMPUTED, NOT READ BACK. A zoom can change what is on
+    ;; screen WITHOUT changing the scroll offset — zoom out at the surface end and
+    ;; the offset sits at 0 the whole way — so no scroll event fires and nothing
+    ;; would tell us. The snapshot would keep the ceiling it had when the track was
+    ;; long, and the overflow marker would go on reporting aircraft as hidden while
+    ;; they sat in plain sight on the ruler.
+    ;;
+    ;; And it must be COMPUTED rather than re-read, because the DOM has not caught
+    ;; up yet: --zoom lands in app-db here, but the track only takes its new length
+    ;; when Reagent renders. Reading the DOM in a requestAnimationFrame RACES that
+    ;; render and loses — it returns the OLD track length, which is exactly the
+    ;; stale ceiling this was meant to fix. We already know both numbers, so we do
+    ;; not need to ask.
+    (rf/dispatch-sync [:stack/scrolled
+                       (scroll->window (assoc m :scroll scroll' :track track'))])
+
+    ;; The scroll offset, though, IS the DOM's, and it can only be set once the
+    ;; track is long enough to hold it — otherwise the browser clamps it against
+    ;; the old length and the sky under the fingers jumps. So that one waits for
+    ;; the render it depends on.
+    (r/after-render
       (fn []
         (when (pos? track)
           (if horizontal?
@@ -701,7 +725,10 @@
   (let [view (.-currentTarget event)]
     (rf/dispatch [:stack/reset-zoom])
     (js/requestAnimationFrame
-      (fn [] (set! (.-scrollLeft view) 0) (set! (.-scrollTop view) 0)))))
+      (fn []
+        (set! (.-scrollLeft view) 0)
+        (set! (.-scrollTop view) 0)
+        (read-window! view)))))
 
 (defn- on-ruler-scroll!
   "The reader scrolled — natively, on the compositor, with the platform's own
@@ -710,7 +737,7 @@
   because two things must render from it — the overflow counts and the graduation
   step — and neither may lie about what the reader can see."
   [event]
-  (rf/dispatch [:stack/scrolled (scroll->window (track-metrics (.-currentTarget event)))]))
+  (read-window! (.-currentTarget event)))
 
 ;; ---------------------------------------------------------------------
 ;; Components — kebab-case functions returning hiccup.
