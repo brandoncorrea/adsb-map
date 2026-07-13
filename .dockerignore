@@ -28,6 +28,9 @@ node_modules
 # Frontend release bundle — the build's `shadow-cljs release app` regenerates it
 resources/public/js
 
+# Stylesheet — the build's `bb css` regenerates it from src/css (Garden)
+resources/public/app.css
+
 # Optional third-party enrichment DATA — fetched by `bb db:fetch`, never shipped
 resources/public/db
 

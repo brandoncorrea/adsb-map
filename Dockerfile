@@ -3,8 +3,9 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 1 — build the deployable uberjar (target/adsb.jar).
 #
-# `bb build` is the one build surface (bb.edn): it runs the shadow-cljs release
-# so resources/public/js holds the optimized frontend, then packages the AOT'd
+# `bb build` is the one build surface (bb.edn): it compiles the Garden stylesheet
+# to resources/public/app.css and runs the shadow-cljs release so
+# resources/public/js holds the optimized frontend, then packages the AOT'd
 # backend + resources into target/adsb.jar. That needs a JDK, the Clojure CLI,
 # Node (shadow-cljs), and babashka. The official clojure image gives us JDK 21 +
 # the Clojure CLI; we add Node and babashka on top.
@@ -41,9 +42,10 @@ WORKDIR /app
 COPY deps.edn shadow-cljs.edn ./
 COPY package.json package-lock.json ./
 #    Node deps (deterministic from the lockfile), then Maven/git deps for the
-#    build + cljs classpaths. `-P` downloads without running anything.
+#    build + cljs + css classpaths. `-P` downloads without running anything.
 RUN npm ci --no-audit --no-fund \
     && clojure -P -M:cljs \
+    && clojure -P -M:css \
     && clojure -P -T:build
 
 # 2) Sources and the build task file. resources/public/js and resources/public/db

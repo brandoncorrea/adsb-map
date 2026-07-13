@@ -26,6 +26,18 @@
                         re-frame/re-frame    {:mvn/version "1.4.3"}
                         day8.re-frame/test   {:mvn/version "0.1.7"}}}
 
+  ;; bb css / bb css:watch — Garden compiles src/css to the stylesheet at
+  ;; resources/public/app.css, which is BUILD OUTPUT (gitignored), never
+  ;; hand-edited. Both the source path and garden itself live here rather
+  ;; than in :paths, so the compiler never reaches the production classpath:
+  ;; the uberjar ships the compiled CSS and nothing that could compile it.
+  ;; org.flatland/ordered is not optional: garden rebuilds every declaration
+  ;; map and CSS order is load-bearing. See adsb.css.decl.
+  :css   {:extra-paths ["src/css"]
+          :extra-deps  {com.lambdaisland/garden {:mvn/version "1.9.606"}
+                        org.flatland/ordered    {:mvn/version "1.15.12"}}
+          :main-opts   ["-m" "adsb.css.build"]}
+
   ;; bb dev — the backend half: the full system (feeder poll + SSE +
   ;; http) on :8280 through the one composition root, adsb.main.
   ;; Requires ADSB_ULTRAFEEDER_URL — boot fails loudly without it.
@@ -33,10 +45,14 @@
 
   ;; bb test:clj — clojure.test over test/clj and test/cljc. babashka/fs is a
   ;; test-only convenience (temp files); the app itself uses clojure.java.io,
-  ;; so this never ships in the uberjar.
-  :test  {:extra-paths ["test/clj" "test/cljc" "test/cljs"]
+  ;; so this never ships in the uberjar. src/css and its two deps come along so
+  ;; adsb.css-test can hold the stylesheet up to the light; like the :css alias
+  ;; itself, none of it reaches the uberjar.
+  :test  {:extra-paths ["test/clj" "test/cljc" "test/cljs" "src/css"]
           :extra-deps  {io.github.cognitect-labs/test-runner {:git/tag "v0.5.1" :git/sha "dfb30dd"}
-                        babashka/fs                          {:mvn/version "0.5.22"}}
+                        babashka/fs                          {:mvn/version "0.5.22"}
+                        com.lambdaisland/garden              {:mvn/version "1.9.606"}
+                        org.flatland/ordered                 {:mvn/version "1.15.12"}}
           :exec-fn     cognitect.test-runner.api/test
           :exec-args   {:dirs ["test/clj" "test/cljc"]}}
 

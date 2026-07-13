@@ -13,8 +13,22 @@
    :depends [-npm-install]
    :task    (shell "npx playwright install chromium")}
 
+  css
+  {:doc  "Compile the Garden stylesheet to resources/public/app.css.
+          That file is BUILD OUTPUT — generated, gitignored, never edited by
+          hand. src/css/adsb/css/*.clj is the source of truth; start at
+          adsb.css.app, which is the cascade."
+   :task (shell "clojure -M:css")}
+
+  css:watch
+  {:doc  "Recompile the stylesheet on every save under src/css. Writes once on
+          start, so this alone is enough to get a styled page. The browser
+          does not live-reload CSS — refresh to see the change."
+   :task (shell "clojure -M:css --watch")}
+
   dev
-  {:doc     "Backend on :8280 + shadow-cljs watch + nREPL, together.
+  {:doc     "Backend on :8280 + shadow-cljs watch + Garden watch + nREPL,
+             together.
              Config comes from the environment, backfilled from .env by
              adsb.env — bb does nothing special for it, EXCEPT ADSB_DEV_CSP.
 
@@ -30,6 +44,7 @@
    :task    (run! p/check
               (doall
                 (for [[cmd env] [["npx shadow-cljs watch app" nil]
+                                 ["clojure -M:css --watch" nil]
                                  ["clojure -M:dev" {"ADSB_DEV_CSP" "true"}]
                                  ["clojure -M:nrepl" nil]]]
                   (p/process (cond-> {:inherit  true
@@ -38,13 +53,14 @@
                              cmd))))}
 
   dev-
-  {:doc     "shadow-cljs watch + nREPL, together.
+  {:doc     "shadow-cljs watch + Garden watch + nREPL, together.
              Config comes from the environment, backfilled from .env by
              adsb.env — bb does nothing special for it."
    :depends [-npm-install]
    :task    (run! p/check
               (doall
                 (for [cmd ["npx shadow-cljs watch app"
+                           "clojure -M:css --watch"
                            "clojure -M:nrepl"]]
                   (p/process {:inherit true :shutdown p/destroy-tree} cmd))))}
 
@@ -84,10 +100,17 @@
    :task (shell "clojure -M:lint --lint src test")}
 
   build
-  {:doc     "Deployable artifact: optimized CLJS release + uberjar. Deletes
-             stale compiled js first so only the release bundle ships, then
-             packages target/adsb.jar (build.clj). Echoes the artifact path."
-   :depends [-npm-install]
+  {:doc     "Deployable artifact: Garden stylesheet + optimized CLJS release +
+             uberjar. Deletes stale compiled js first so only the release
+             bundle ships, then packages target/adsb.jar (build.clj). Echoes
+             the artifact path.
+
+             The stylesheet is compiled BEFORE the uberjar because build.clj
+             copies resources/ into the jar — app.css has to exist by then.
+             Garden itself stays out of the jar: it is an :css alias dep, not
+             a :paths dep, so the artifact ships the compiled CSS and nothing
+             that could compile it."
+   :depends [-npm-install css]
    :task    (do (fs/delete-tree "resources/public/js")
                 (shell "npx shadow-cljs release app")
                 (shell "clojure -T:build uber")

@@ -19,6 +19,9 @@ resources/public/db/
 .shadow-cljs/
 node_modules/
 resources/public/js/
+# The stylesheet is compiled from src/css by Garden (`bb css`), exactly as the
+# js is compiled from src/cljs by shadow. Source of truth: adsb.css.app.
+resources/public/app.css
 target/
 .clj-kondo/.cache/
 .nrepl-port
