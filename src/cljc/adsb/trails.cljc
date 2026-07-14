@@ -25,6 +25,13 @@
   A position is two doubles; 60 x ~a few hundred aircraft is a few MB, and
   it does not grow with time — only with the size of the sky.
 
+  The trim that enforces (1) must MATERIALIZE. `subvec` returns a view onto
+  the vector it was cut from, and `conj` on a view appends to that BACKING
+  vector — so a ring trimmed with a bare `subvec` reports a count of 60 while
+  quietly retaining every position the aircraft has ever reported. A loitering
+  helicopter would grow without bound, which is exactly what invariant (1)
+  claims cannot happen (adsb-3kf).
+
   ## Append-on-change
 
   A position is appended only when it DIFFERS from the ring's newest point.
@@ -45,7 +52,13 @@
   "Append `position` (a `{:geo/lat _ :geo/lon _}`) to `ring`, returning the
   new ring. A no-op when `position` equals the ring's newest point — the
   trail records movement, not stillness. Caps the result at `max-positions`,
-  dropping the oldest. `ring` may be nil (an aircraft's first sighting)."
+  dropping the oldest. `ring` may be nil (an aircraft's first sighting).
+
+  The overflow trim copies into a fresh vector rather than handing back the
+  `subvec` view: a view keeps its backing vector alive, and conj-ing onto one
+  appends to that backing, so the dropped positions would never be reclaimed.
+  The copy is O(max-positions) on an overflowing append — 60 pointers at feed
+  cadence, which buys the memory bound the namespace promises."
   [ring position]
   (let [ring (or ring [])]
     (if (= position (peek ring))
@@ -53,7 +66,7 @@
       (let [grown (conj ring position)
             n     (count grown)]
         (if (> n max-positions)
-          (subvec grown (- n max-positions))
+          (into [] (subvec grown (- n max-positions)))
           grown)))))
 
 (defn accumulate

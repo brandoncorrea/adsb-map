@@ -12,6 +12,16 @@
 
 (defn- pos [lat lon] {:geo/lat lat :geo/lon lon})
 
+(defn- view?
+  "Is `v` a `subvec` VIEW rather than a vector of its own? A view still points
+  at the vector it was cut from, and conj-ing onto one appends to that backing
+  — so a ring that is a view retains every position ever dropped from it, no
+  matter what it reports as its count (adsb-3kf). Both runtimes have the same
+  structure under a different name, so both are named here."
+  [v]
+  #?(:clj  (instance? clojure.lang.APersistentVector$SubVector v)
+     :cljs (instance? cljs.core/Subvec v)))
+
 ;; ---------------------------------------------------------------------
 ;; append-position — the ring
 
@@ -55,6 +65,22 @@
                (peek ring)))
         (is (= (pos 10 10) (first ring))
             "the first ten positions were dropped off the front")))))
+
+(deftest append-actually-releases-the-positions-it-drops
+  (testing "a long-dwelling aircraft (a loitering helicopter, pattern traffic)
+            retains max-positions, not its whole history — the cap is a real
+            memory bound, not just a count (adsb-3kf)"
+    (let [ring (reduce (fn [r i] (trails/append-position r (pos i i)))
+                       nil
+                       (range (* 10 trails/max-positions)))]
+      (is (= trails/max-positions (count ring)))
+      (is (not (view? ring))
+          "the trimmed ring must be a vector of its own — a subvec view holds
+           its backing vector alive, so every dropped position stays reachable
+           and memory grows linearly with dwell time")
+
+      (testing "and it stays that way as the ring keeps turning over"
+        (is (not (view? (trails/append-position ring (pos 999 999)))))))))
 
 ;; ---------------------------------------------------------------------
 ;; accumulate — folding a picture into history
