@@ -127,6 +127,30 @@
         "and it settles UP out of the bar, not down out of the sky")
     (is (empty? extra) "two stances, two rules, nothing else claiming it")))
 
+(deftest the-watch-reloads-our-tree-and-only-ours-in-dependency-order
+  ;; The watch must NEVER reload garden itself: re-evaluating garden.types
+  ;; mints a new CSSAtRule class each pass while garden.compiler keeps its
+  ;; protocols extended on the original, and every at-media record then dies
+  ;; on `(empty record)` — "Can't create empty: garden.types.CSSAtRule", on
+  ;; every save, forever (adsb-qil). So it load-files OUR sources instead,
+  ;; ordered by the requires read from their own ns forms. This holds that
+  ;; order to the facts it must respect.
+  (let [sources (keys (#'build/sources))
+        ordered (vec (#'build/in-dependency-order sources))
+        at      (fn [file]
+                  (first (keep-indexed
+                           (fn [i path] (when (str/ends-with? path file) i))
+                           ordered)))]
+    (is (= (count sources) (inc (count ordered)))
+        "every Garden source is loaded except one")
+    (is (nil? (at "build.clj"))
+        "…and the exception is the watch itself: it must not re-evaluate the
+        very loop it is running")
+    (is (< (at "decl.clj") (at "tokens.clj")) "decl loads before its users")
+    (is (< (at "card.clj") (at "panel.clj")) "the shared card face precedes the panel")
+    (is (< (at "card.clj") (at "stack.clj")) "and the stack")
+    (is (< (at "stack.clj") (at "app.clj")) "the cascade assembles last")))
+
 (deftest the-night-edition-only-repoints-the-day
   ;; The two editions are one mechanism (adsb-dgb.7). A variable that exists
   ;; only under prefers-color-scheme: dark resolves to NOTHING in the day
