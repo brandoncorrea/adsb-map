@@ -46,6 +46,22 @@
       (is (= {:geo/lat 39.0 :geo/lon -104.0}
              (get-in picture [ups-icao :aircraft/position])))))
 
+  (testing "an explicit airborne false clears a landed aircraft's on-ground
+            marker — a departure must not read GND at altitude (adsb-b0w)"
+    (let [picture (-> {}
+                      (accumulator/accumulate
+                        {:aircraft/icao ups-icao :aircraft/on-ground? true}
+                        t0)
+                      (accumulator/accumulate
+                        {:aircraft/icao ups-icao
+                         :aircraft/on-ground? false
+                         :aircraft/altitude-ft 3800}
+                        (+ t0 1000)))]
+      (is (false? (get-in picture [ups-icao :aircraft/on-ground?]))
+          "the merge overwrites the stale true; the field cannot go absent
+           on a plain merge, so the source has to say airborne out loud")
+      (is (= 3800 (get-in picture [ups-icao :aircraft/altitude-ft])))))
+
   (testing "every applied delta refreshes the seen stamp to now-ms"
     (let [picture (-> {}
                       (accumulator/accumulate

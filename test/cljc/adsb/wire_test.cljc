@@ -68,6 +68,14 @@
       (is (true? (:on-ground wire-aircraft)))
       (is (not (contains? wire-aircraft :altitude)))))
 
+  (testing "an explicitly airborne aircraft carries no on-ground flag — the
+            wire marker stays true-or-omitted even though the domain field
+            can now say false (adsb-b0w)"
+    (let [wire-aircraft (wire/aircraft->wire
+                          (assoc fixtures/ups-2717 :aircraft/on-ground? false))]
+      (is (not (contains? wire-aircraft :on-ground)))
+      (is (= 34775 (:altitude wire-aircraft)))))
+
   (testing "absent facts stay absent — never defaulted to zero"
     (let [wire-aircraft (wire/aircraft->wire fixtures/never-positioned)]
       (is (not (contains? wire-aircraft :lat)))

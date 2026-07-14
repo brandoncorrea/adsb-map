@@ -158,10 +158,19 @@
 
 (defn- ->on-ground?
   "true when the on-ground flag is set (SBS emits -1, some feeders 1),
-  else nil. Like the domain marker this is true-or-absent: \"0\" (airborne)
-  means the field simply says nothing, never an explicit false."
+  false when the line explicitly reports airborne (\"0\"), nil when the
+  field is absent or unreadable.
+
+  The explicit false is load-bearing (adsb-b0w). Deltas fold through a
+  plain merge, where an absent field persists — so a nil for airborne
+  would leave a landed aircraft's stale `true` in place forever, and no
+  later message could ever clear it: the aircraft would climb out of the
+  airport reading GND at FL380. Saying false out loud is what lets the
+  merge overwrite, and keeps the accumulator a plain merge."
   [s]
-  (when (#{"-1" "1"} s) true))
+  (cond
+    (#{"-1" "1"} s) true
+    (= "0" s)       false))
 
 ;; ---------------------------------------------------------------------
 ;; One line -> one delta
@@ -200,7 +209,9 @@
             track     (assoc :aircraft/track-deg track)
             vert-rate (assoc :aircraft/baro-rate-fpm vert-rate)
             squawk    (assoc :aircraft/squawk squawk)
-            on-ground (assoc :aircraft/on-ground? on-ground)))))))
+            ;; some?, not truthiness — an explicit airborne false has to
+            ;; reach the delta to clear a stale on-ground (adsb-b0w).
+            (some? on-ground) (assoc :aircraft/on-ground? on-ground)))))))
 
 ;; ---------------------------------------------------------------------
 ;; The reader: fold each line into the picture at arrival time. Effects

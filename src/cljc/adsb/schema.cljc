@@ -66,6 +66,11 @@
    [:aircraft/callsign {:optional true} [:string {:min 1 :max 8}]]
    [:aircraft/position {:optional true} position]
    [:aircraft/altitude-ft {:optional true} number?]
+   ;; NOT a true-or-absent marker: an explicit false means the aircraft
+   ;; said it is airborne, and absent means it never said either way. The
+   ;; streaming path needs that distinction — deltas fold through a plain
+   ;; merge, so only a false can clear a landed aircraft's stale true once
+   ;; it takes off again (adsb.ingest.sbs, adsb-b0w).
    [:aircraft/on-ground? {:optional true} :boolean]
    [:aircraft/squawk {:optional true} squawk]
    [:aircraft/ground-speed-kt {:optional true} number?]
@@ -99,9 +104,9 @@
    [:aircraft/position-suspect? {:optional true} :boolean]
    ;; True only when the position derives from multilateration rather
    ;; than the aircraft's own ADS-B — lower-confidence data the UI
-   ;; renders distinctly (adsb.ingest.coerce). Like on-ground? and
-   ;; position-suspect?, this is a true-or-absent marker: absent means
-   ;; not-MLAT, never an explicit false.
+   ;; renders distinctly (adsb.ingest.coerce). Like position-suspect?,
+   ;; this is a true-or-absent marker: absent means not-MLAT, never an
+   ;; explicit false.
    [:aircraft/mlat? {:optional true} :boolean]])
 
 ;; ---------------------------------------------------------------------
