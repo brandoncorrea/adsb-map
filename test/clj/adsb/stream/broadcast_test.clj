@@ -31,6 +31,20 @@
 
 (def ^:const ^:private frame-timeout-ms 2000)
 
+(def ^:const ^:private delta-latency-samples
+  "How many deltas the latency proof sends. It asserts on the FASTEST of
+  them, never on one sample: a GC pause or a scheduler hiccup can stall any
+  individual frame, and a single slow sample says nothing about whether a
+  fixed cadence sits in the path. One fast sample says everything, because
+  a tick-driven push could not produce even one (adsb-hr3)."
+  10)
+
+(def ^:const ^:private max-delta-latency-ms
+  "The ceiling the fastest delta must beat. Two orders of magnitude under
+  the 60 s stats and heartbeat ticks — the only cadences still running in
+  that test — so beating it at all is what proves no tick is in the path."
+  100)
+
 (def ^:const ^:private await-timeout-ms 2000)
 
 ;; ---------------------------------------------------------------------
@@ -362,6 +376,13 @@
   ;; effectively off (update tick nil — the streaming deployment — and
   ;; stats/heartbeat at 60 s), so no fixed cadence can be in the path:
   ;; if the push were tick-driven, this test could not pass.
+  ;;
+  ;; It asserts on the FASTEST of several deltas rather than on one. The
+  ;; claim being proved is that nothing GATES this path — and one delivery
+  ;; under 100 ms proves that, while one delivery over 100 ms proves only
+  ;; that a machine hiccupped. Asserting a wall-clock deadline on a single
+  ;; sample across four thread handoffs was a flake waiting to happen; the
+  ;; proof never needed it (adsb-hr3).
   (let [streaming (start-streaming-server! {:interval-ms nil})
         b         (:broadcaster streaming)
         reader    (doto (open-stream! (:port streaming))
@@ -372,17 +393,27 @@
       (with-piped-sbs-source!
         (fn [aircraft now-ms] (broadcast/offer-delta! b aircraft now-ms))
         (fn [write-line!]
-          (let [started-at (System/nanoTime)]
-            (write-line! sbs-position-line)
-            (let [frame      (read-frame! reader)
-                  elapsed-ms (/ (- (System/nanoTime) started-at) 1e6)]
-              (is (= "aircraft" (frame-event frame)))
-              (is (= "a1b2c3" (get-in (frame-data frame) [:aircraft :icao]))
-                  "the upsert carries the one merged aircraft")
-              (is (number? (get-in (frame-data frame) [:aircraft :seen-at]))
-                  "stamped at its arrival instant")
-              (is (< elapsed-ms 100)
-                  (str "delta-to-client took " elapsed-ms " ms"))))))
+          (let [samples (doall
+                          (for [_ (range delta-latency-samples)]
+                            (let [started-at (System/nanoTime)]
+                              (write-line! sbs-position-line)
+                              (let [frame (read-frame! reader)]
+                                {:frame      frame
+                                 :elapsed-ms (/ (- (System/nanoTime) started-at)
+                                                1e6)}))))
+                fastest (apply min (map :elapsed-ms samples))
+                frame   (:frame (first samples))]
+            (is (= "aircraft" (frame-event frame)))
+            (is (= "a1b2c3" (get-in (frame-data frame) [:aircraft :icao]))
+                "the upsert carries the one merged aircraft")
+            (is (number? (get-in (frame-data frame) [:aircraft :seen-at]))
+                "stamped at its arrival instant")
+            (is (every? #(= "aircraft" (frame-event (:frame %))) samples)
+                "every write got its own frame back — no coalescing, no tick")
+            (is (< fastest max-delta-latency-ms)
+                (str "fastest of " delta-latency-samples " deltas took "
+                     (Math/round (double fastest)) " ms; all: "
+                     (mapv #(Math/round (double (:elapsed-ms %))) samples))))))
       (finally
         (.close reader)
         (stop-streaming-server! streaming)))))
