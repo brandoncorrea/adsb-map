@@ -139,8 +139,12 @@
       (is (some? (.getByText rtl/screen "UPS2717")) "callsign as the title")
       (is (some? (.getByText rtl/screen "abc0e4"))   "icao")
       (is (some? (.getByText rtl/screen "34775"))    "altitude, a number")
-      (is (some? (.getByText rtl/screen "450.5"))    "ground speed")
-      (is (some? (.getByText rtl/screen "97.14"))    "track")
+      ;; The fixture carries the feeder's own precision — 450.5 kt, 97.14° —
+      ;; and the panel prints aviation's: whole knots, three-digit bearing.
+      (is (some? (.getByText rtl/screen "451"))      "ground speed, whole knots")
+      (is (nil? (.queryByText rtl/screen "450.5"))   "never the raw fraction")
+      (is (some? (.getByText rtl/screen "097°"))     "track, a three-digit bearing")
+      (is (nil? (.queryByText rtl/screen "97.14"))   "never the raw fraction")
       (is (some? (.getByText rtl/screen "6040"))     "squawk")
       (is (some? (.getByText rtl/screen "-960"))     "vertical rate")))
 

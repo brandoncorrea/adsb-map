@@ -24,6 +24,7 @@
   (:require [adsb.aircraft :as aircraft]
             [adsb.enrich :as enrich]
             [adsb.ui.alert :as alert]
+            [adsb.ui.units :as units]
             [clojure.string :as str]
             [re-frame.core :as rf]))
 
@@ -198,8 +199,10 @@
          [fact "Registration" (enrich/registration enrichment)]
          [fact "Operator" (enrich/operator enrichment)]
          [fact "Altitude" (altitude-display aircraft)]
-         [fact "Ground speed" ground-speed-kt]
-         [fact "Track" track-deg]
+         ;; Whole knots, three-digit bearing — aviation's own precision, not
+         ;; the feeder's (adsb.ui.units). nil stays nil, so absent still dashes.
+         [fact "Ground speed" (units/knots ground-speed-kt)]
+         [fact "Track" (units/track track-deg)]
          [fact "Squawk" squawk]
          [fact "Vertical rate" baro-rate-fpm]
          [fact "Seen" (when seen (str seen "s ago"))]]])]))
