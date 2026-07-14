@@ -165,47 +165,6 @@
              :edge/distance-m  (distance centre target)}))))))
 
 ;; ---------------------------------------------------------------------
-;; Dead reckoning — projecting an aircraft between real frames
-;;
-;; Positions arrive at ~1 Hz; the map draws at ~60. Between real frames
-;; the imperative aircraft layer projects each aircraft forward along
-;; its reported track at its reported ground speed, measured from its
-;; LAST REAL observation instant — pure math over reported facts, never
-;; a substitute for them: the next real frame resets the base. The
-;; projection is honest only while the aircraft is fresh: past the
-;; shared stale threshold it holds its last real position, because a
-;; silent plane gliding forever is a lie.
-
-(defn projectable?
-  "True when dead reckoning may honestly move this aircraft at `now-ms`:
-  it has a position to project from, an observation instant to measure
-  elapsed time from, BOTH ground speed and track (absent is not zero —
-  a missing vector grounds the projection), and it is not yet stale
-  (adsb.aircraft/stale-threshold-ms, the shared domain line)."
-  [{:aircraft/keys [position seen-at-ms ground-speed-kt track-deg]
-    :as aircraft}
-   now-ms]
-  (boolean
-    (and position seen-at-ms ground-speed-kt track-deg
-         (not (aircraft/stale? aircraft now-ms)))))
-
-(defn project-aircraft
-  "The aircraft with its position dead-reckoned forward to `now-ms` —
-  along `:aircraft/track-deg` at `:aircraft/ground-speed-kt` from its
-  last real observation (`:aircraft/seen-at-ms`). Returned unchanged
-  when projection would not be honest (`projectable?`), and a `now-ms`
-  before the observation projects nowhere rather than backward."
-  [aircraft now-ms]
-  (if (projectable? aircraft now-ms)
-    (let [{:aircraft/keys [position seen-at-ms ground-speed-kt track-deg]}
-          aircraft
-          elapsed-s  (/ (max 0 (- now-ms seen-at-ms)) millis-per-second)
-          distance-m (* (knots->mps ground-speed-kt) elapsed-s)]
-      (assoc aircraft
-             :aircraft/position (destination position track-deg distance-m)))
-    aircraft))
-
-;; ---------------------------------------------------------------------
 ;; Domain aircraft -> GeoJSON
 ;;
 ;; Feature `:properties` keys are simple, UNqualified keywords. clj->js

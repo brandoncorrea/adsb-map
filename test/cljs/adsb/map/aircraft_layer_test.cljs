@@ -8,7 +8,6 @@
   — the centerpiece — N picture updates cost ZERO Reagent re-renders."
   (:require
     [adsb.fixtures :as fixtures]
-    [adsb.geo :as geo]
     [adsb.map.aircraft-layer :as layer]
     [adsb.map.maplibre :as maplibre]
     [adsb.map.style :as style]
@@ -91,20 +90,6 @@
 
 (defn- feature-by-icao [features icao]
   (some #(when (= icao (get-in % [:properties :icao])) %) features))
-
-(defn- feature-position
-  "The icao's latest pushed coordinates as a `{:geo/lat _ :geo/lon _}`
-  position, ready for geo/distance and geo/bearing."
-  [fake icao]
-  (let [[lon lat] (get-in (feature-by-icao (last-features fake) icao)
-                          [:geometry :coordinates])]
-    {:geo/lat lat :geo/lon lon}))
-
-(defn- close?
-  "Within `tol` of `expected` — projected geo math never lands on a
-  literal."
-  [expected actual tol]
-  (< (abs (- expected actual)) tol))
 
 ;; ---------------------------------------------------------------------
 ;; setData carries exactly the positioned aircraft
@@ -339,6 +324,35 @@
           (testing "detach! cancels the tick through the seam"
             (is (= [:tick-id] @!cleared))))))))
 
+;; With prediction gone (adsb-a4g), the tick is the ONLY thing that
+;; advances the clock between frames — so it alone must carry the stale
+;; flag from fresh to stale for a silent aircraft. A real frame stamps
+;; the flag; a tick with no new frame must flip it.
+
+(deftest client-tick-flips-the-stale-flag-on-the-clock
+  (rf-test/run-test-sync
+    (let [{:keys [m] :as fake} (recording-map)
+          !tick (atom nil)]
+      (with-redefs [layer/set-interval!   (fn [f _ms] (reset! !tick f) :tick-id)
+                    layer/clear-interval! (fn [_id] nil)]
+        (let [handle   (layer/attach! m)
+              heard    (assoc fixtures/ups-2717 :aircraft/seen-at-ms 0)
+              icao     (:aircraft/icao heard)
+              stale-of (fn [] (get-in (feature-by-icao (last-features fake) icao)
+                                      [:properties :stale]))]
+          (fire-load! fake)
+          (testing "heard 30 s ago — under the 60 s line, so not yet stale"
+            (with-redefs [layer/now-ms (constantly 30000)]
+              (rf/dispatch [:stream/received (frame [heard])])
+              (r/flush))
+            (is (false? (stale-of))))
+          (testing "with no new frame, a tick past the stale line flips the
+                    flag to true — staleness rides the clock alone"
+            (with-redefs [layer/now-ms (constantly 90000)]
+              (@!tick))
+            (is (true? (stale-of))))
+          (layer/detach! handle))))))
+
 ;; ---------------------------------------------------------------------
 ;; adsb-6wd.1: THE TRAIL SOURCE. A second GeoJSON source + line layer,
 ;; born at load with lineMetrics so its gradient can fade tail-to-head, and
@@ -483,267 +497,3 @@
             (is (= (+ pushes-at-load n) (count (aircraft-set-data fake)))
                 "no push after unmount"))))
       (.remove node))))
-
-;; ---------------------------------------------------------------------
-;; adsb-6wd.2: THE PROJECTION LOOP. Between real frames a rAF loop
-;; dead-reckons the cached picture forward (adsb.geo) and pushes the
-;; aircraft source only — trails stay a record of truth. Like the tick,
-;; the loop is driven through seams with a fake clock: tests capture the
-;; frame callback and the visibility handler and fire them by hand.
-
-(defn- with-raf-seams
-  "Run `body-fn` with the projection loop's seams faked, passing it the
-  recording atoms: :!frame (the latest captured rAF callback),
-  :!scheduled (how many frames were requested), :!cancelled (cancelled
-  handles), :!vis (the captured visibility handler), :!vis-removed
-  (handlers unhooked), and :!hidden? (drives document-hidden?)."
-  [body-fn]
-  (let [!frame     (atom nil)
-        !scheduled (atom 0)
-        !cancelled (atom [])
-        !vis       (atom nil)
-        !vis-removed (atom [])
-        !hidden?   (atom false)]
-    (with-redefs [layer/request-animation-frame!
-                  (fn [f] (reset! !frame f) (swap! !scheduled inc) :raf-id)
-                  layer/cancel-animation-frame!
-                  (fn [id] (swap! !cancelled conj id))
-                  layer/document-hidden? (fn [] @!hidden?)
-                  layer/on-visibility-change! (fn [h] (reset! !vis h))
-                  layer/off-visibility-change!
-                  (fn [h] (swap! !vis-removed conj h))]
-      (body-fn {:!frame !frame :!scheduled !scheduled
-                :!cancelled !cancelled :!vis !vis
-                :!vis-removed !vis-removed :!hidden? !hidden?}))))
-
-;; ups-2717 carries gs 450.5 kt and track 97.14° — ten seconds of dead
-;; reckoning is 450.5 kt * 0.5144 m/s/kt * 10 s.
-(def ^:private ten-seconds-of-ups-m 2317.6)
-
-(deftest raf-frames-glide-a-projectable-aircraft-between-real-frames
-  (rf-test/run-test-sync
-    (with-raf-seams
-      (fn [{:keys [!frame]}]
-        (let [{:keys [m] :as fake} (recording-map)
-              handle (layer/attach! m)
-              icao   (:aircraft/icao fixtures/ups-2717)
-              heard  (assoc fixtures/ups-2717 :aircraft/seen-at-ms 0)]
-          (fire-load! fake)
-          (testing "attach! started the projection loop through the seam"
-            (is (fn? @!frame)))
-          (with-redefs [layer/now-ms (constantly 0)]
-            (rf/dispatch [:stream/received (frame [heard])])
-            (r/flush))
-          (let [base         (feature-position fake icao)
-                trail-pushes (count (trail-set-data fake))]
-            (testing "an animation frame 10 s on pushes the aircraft
-                      ~2.3 km along its 97.14° track — the glide"
-              (with-redefs [layer/now-ms (constantly 10000)]
-                (@!frame 0))
-              (let [projected (feature-position fake icao)]
-                (is (close? ten-seconds-of-ups-m
-                            (geo/distance base projected) 5))
-                (is (close? 97.14 (geo/bearing base projected) 0.5))))
-            (testing "pushes are throttled inside rAF: a frame 10 ms
-                      later reschedules but pushes nothing"
-              (let [pushes (count (aircraft-set-data fake))]
-                (with-redefs [layer/now-ms (constantly 10010)]
-                  (@!frame 0))
-                (is (= pushes (count (aircraft-set-data fake))))))
-            (testing "the trail source is untouched by projection — the
-                      ribbon stays a record of REAL positions"
-              (is (= trail-pushes (count (trail-set-data fake))))))
-          (layer/detach! handle))))))
-
-(deftest a-real-frame-snaps-the-projection-back-to-truth
-  (rf-test/run-test-sync
-    (with-raf-seams
-      (fn [{:keys [!frame]}]
-        (let [{:keys [m] :as fake} (recording-map)
-              handle (layer/attach! m)
-              icao   (:aircraft/icao fixtures/ups-2717)
-              heard  (assoc fixtures/ups-2717 :aircraft/seen-at-ms 0)]
-          (fire-load! fake)
-          (with-redefs [layer/now-ms (constantly 0)]
-            (rf/dispatch [:stream/received (frame [heard])])
-            (r/flush))
-          (with-redefs [layer/now-ms (constantly 10000)]
-            (@!frame 0)) ;; glide 10 s away from the base
-          (testing "a real frame lands: the pushed position is the
-                    REPORTED one, exactly — the snap"
-            (with-redefs [layer/now-ms (constantly 11000)]
-              (rf/dispatch
-                [:stream/received
-                 (frame [(assoc heard
-                                :aircraft/seen-at-ms 11000
-                                :aircraft/position {:geo/lat 28.0
-                                                    :geo/lon -83.9})])])
-              (r/flush))
-            (is (= [-83.9 28.0]
-                   (get-in (feature-by-icao (last-features fake) icao)
-                           [:geometry :coordinates]))))
-          (testing "the next projection measures from the NEW base — the
-                    real frame reset it"
-            (with-redefs [layer/now-ms (constantly 12000)]
-              (@!frame 0))
-            (is (close? 231.8 ;; one second at 450.5 kt
-                        (geo/distance {:geo/lat 28.0 :geo/lon -83.9}
-                                      (feature-position fake icao))
-                        1)))
-          (layer/detach! handle))))))
-
-(deftest projection-holds-what-it-cannot-honestly-move
-  (rf-test/run-test-sync
-    (with-raf-seams
-      (fn [{:keys [!frame]}]
-        (let [{:keys [m] :as fake} (recording-map)
-              handle     (layer/attach! m)
-              heard-ups  (assoc fixtures/ups-2717 :aircraft/seen-at-ms 0)
-              ;; heard, positioned, fresh — but no track: absent is not
-              ;; zero, so dead reckoning must not move it.
-              trackless  (-> fixtures/squawking-7700
-                             (assoc :aircraft/seen-at-ms 0)
-                             (dissoc :aircraft/track-deg))
-              ups-icao   (:aircraft/icao heard-ups)
-              still-icao (:aircraft/icao trackless)]
-          (fire-load! fake)
-          (testing "a sky where NOTHING may honestly move pushes nothing
-                    — the loop idles instead of re-sending stillness"
-            (with-redefs [layer/now-ms (constantly 0)]
-              (rf/dispatch [:stream/received (frame [trackless])])
-              (r/flush))
-            (let [pushes (count (aircraft-set-data fake))]
-              (with-redefs [layer/now-ms (constantly 10000)]
-                (@!frame 0))
-              (is (= pushes (count (aircraft-set-data fake))))))
-          (testing "in a mixed sky the vector-less aircraft holds its
-                    real position while its neighbour glides"
-            (with-redefs [layer/now-ms (constantly 0)]
-              (rf/dispatch [:stream/received (frame [heard-ups trackless])])
-              (r/flush))
-            (let [ups-base   (feature-position fake ups-icao)
-                  still-base (feature-position fake still-icao)]
-              (with-redefs [layer/now-ms (constantly 10000)]
-                (@!frame 0))
-              (is (close? ten-seconds-of-ups-m
-                          (geo/distance ups-base
-                                        (feature-position fake ups-icao))
-                          5))
-              (is (= still-base (feature-position fake still-icao))
-                  "no track, no movement — absent is not zero")))
-          (testing "past the stale threshold nothing projects: the whole
-                    sky holds, so the loop pushes nothing"
-            (let [pushes (count (aircraft-set-data fake))]
-              (with-redefs [layer/now-ms (constantly 70000)] ;; > 60 s
-                (@!frame 0))
-              (is (= pushes (count (aircraft-set-data fake)))
-                  "a silent plane gliding forever would be a lie")))
-          (layer/detach! handle))))))
-
-(deftest detach-stops-the-projection-loop
-  (rf-test/run-test-sync
-    (with-raf-seams
-      (fn [{:keys [!frame !scheduled !cancelled !vis !vis-removed]}]
-        (let [{:keys [m] :as fake} (recording-map)
-              handle (layer/attach! m)]
-          (fire-load! fake)
-          (with-redefs [layer/now-ms (constantly 0)]
-            (rf/dispatch
-              [:stream/received
-               (frame [(assoc fixtures/ups-2717 :aircraft/seen-at-ms 0)])])
-            (r/flush))
-          (layer/detach! handle)
-          (testing "detach! cancels the pending frame and unhooks the
-                    visibility handler through the seams"
-            (is (= [:raf-id] @!cancelled))
-            (is (= [@!vis] @!vis-removed)))
-          (testing "a straggler frame after detach pushes nothing and
-                    does not reschedule"
-            (let [pushes    (count (set-data-calls fake))
-                  scheduled @!scheduled]
-              (with-redefs [layer/now-ms (constantly 10000)]
-                (@!frame 0))
-              (is (= pushes (count (set-data-calls fake))))
-              (is (= scheduled @!scheduled)))))))))
-
-(deftest a-hidden-tab-pauses-the-projection-loop
-  (rf-test/run-test-sync
-    (with-raf-seams
-      (fn [{:keys [!frame !scheduled !cancelled !vis !hidden?]}]
-        (let [{:keys [m] :as fake} (recording-map)
-              handle (layer/attach! m)
-              icao   (:aircraft/icao fixtures/ups-2717)]
-          (fire-load! fake)
-          (with-redefs [layer/now-ms (constantly 0)]
-            (rf/dispatch
-              [:stream/received
-               (frame [(assoc fixtures/ups-2717 :aircraft/seen-at-ms 0)])])
-            (r/flush))
-          (testing "hiding the tab cancels the pending frame"
-            (is (fn? @!vis) "a visibility handler was registered")
-            (reset! !hidden? true)
-            (@!vis)
-            (is (= [:raf-id] @!cancelled)))
-          (testing "a straggler frame while hidden pushes nothing and
-                    does not reschedule — a background tab burns no CPU"
-            (let [pushes    (count (aircraft-set-data fake))
-                  scheduled @!scheduled]
-              (with-redefs [layer/now-ms (constantly 10000)]
-                (@!frame 0))
-              (is (= pushes (count (aircraft-set-data fake))))
-              (is (= scheduled @!scheduled))))
-          (testing "showing the tab again restarts the loop, and the
-                    glide resumes from the cached picture"
-            (let [scheduled @!scheduled
-                  base      (feature-position fake icao)]
-              (reset! !hidden? false)
-              (@!vis)
-              (is (= (inc scheduled) @!scheduled) "one fresh frame requested")
-              (with-redefs [layer/now-ms (constantly 10000)]
-                (@!frame 0))
-              (is (close? ten-seconds-of-ups-m
-                          (geo/distance base (feature-position fake icao))
-                          5))))
-          (layer/detach! handle))))))
-
-;; The zero-re-render guarantee extends to the projection loop: rAF
-;; pushes ride the same imperative path as frame pushes, so N projected
-;; frames cost N setData calls and ZERO Reagent work.
-
-(deftest raf-projection-costs-zero-reagent-re-renders
-  (rf-test/run-test-sync
-    (with-raf-seams
-      (fn [{:keys [!frame]}]
-        (let [node (.createElement js/document "div")
-              _ (.appendChild (.-body js/document) node)
-              {:keys [m] :as fake} (recording-map)
-              !renders (atom 0)
-              real-container view/map-container
-              n 20]
-          (with-redefs [maplibre/create! (fn [_container _opts] m)
-                        view/load-style! stub-load-style!
-                        view/map-container (fn [!c]
-                                             (swap! !renders inc)
-                                             (real-container !c))]
-            (let [root (test-dom/mount! [views/app-root] node)]
-              (fire-load! fake)
-              (with-redefs [layer/now-ms (constantly 0)]
-                (rf/dispatch
-                  [:stream/received
-                   (frame [(assoc fixtures/ups-2717 :aircraft/seen-at-ms 0)])])
-                (r/flush))
-              (let [renders @!renders
-                    pushes  (count (aircraft-set-data fake))]
-                (dotimes [i n]
-                  ;; 100 ms apart — every frame clears the push throttle.
-                  (with-redefs [layer/now-ms (constantly (* (inc i) 100))]
-                    (@!frame 0)))
-                (testing "N projection frames: N setData calls, ZERO
-                          additional Reagent work"
-                  (is (= (+ pushes n) (count (aircraft-set-data fake)))
-                      "every projection frame reached the GPU path")
-                  (is (= renders @!renders)
-                      "the render count never moved — projection bypasses
-                      React")))
-              (test-dom/unmount! root)))
-          (.remove node))))))

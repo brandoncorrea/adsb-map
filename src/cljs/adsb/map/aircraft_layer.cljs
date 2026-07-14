@@ -56,42 +56,14 @@
   scheduling goes through the `set-interval!`/`clear-interval!` seams so
   tests drive it with a fake clock instead of waiting real seconds.
 
-  ## The projection loop — gliding between frames (adsb-6wd.2)
-
-  Real positions arrive at ~1 Hz; drawn at 1 Hz they teleport. So a
-  third push path runs between frames: a requestAnimationFrame loop
-  dead-reckons every projectable aircraft forward from its LAST REAL
-  observation (adsb.geo/project-aircraft — pure, along track at ground
-  speed, stale aircraft and aircraft missing gs or track held in place)
-  and pushes the projected FeatureCollection into the AIRCRAFT source
-  only. The trail source is deliberately untouched: trails record real
-  positions, so the ribbon stays a record of truth under a projected
-  head — honest and cheap.
-
-  The three push paths compose instead of fighting because all three
+  There is no prediction (adsb-a4g): an aircraft renders at its last REAL
+  position until the next frame arrives, hopping at feed cadence. The two
+  push paths — the track on a real frame, the tick on the clock — both
   derive from the same `!state` cache (the track is the only subscriber;
-  the tick and the rAF loop read the cache, never a subscription) and
-  all three funnel through the same seam:
-
-    - a REAL frame (the track) pushes reported positions — that push IS
-      the snap back to truth, and it resets the projection base;
-    - the 5 s tick re-pushes reported positions with a fresh clock so
-      aging survives a stream stall (a momentary sub-frame regression to
-      the base, corrected by the next projection push ≤50 ms later);
-    - the rAF loop pushes projected positions between them.
-
-  The loop rides rAF but throttles its pushes to ~20 Hz
-  (`projection-push-interval-ms`): the spherical trig is cheap, but each
-  push pays clj->js plus MapLibre's GeoJSON re-index, and THAT dominates
-  — while at map scales an airliner crawls a few pixels per second, so
-  20 Hz reads exactly as smooth as 60. When nothing may honestly move
-  (empty sky, all stale or vector-less) the loop pushes nothing at all.
-  It starts on attach! (at map load), stops on detach!, and PAUSES while
-  the document is hidden — a background tab must not burn CPU projecting
-  planes nobody sees. rAF, cancellation, and visibility all go through
-  seams (`request-animation-frame!`, `document-hidden?`, ...) so tests
-  drive the loop frame by frame with a fake clock. React never hears of
-  any of it — the zero-re-render proof covers this path too.
+  the tick reads the cache, never a subscription) and both funnel through
+  the same seam. A real frame pushes reported positions; the 5 s tick
+  re-pushes the same positions with a fresh clock so the fade advances
+  and aged-out aircraft drop even through a stream stall.
 
   ## Styling and the icon assets
 
@@ -263,48 +235,6 @@
   [id]
   (js/clearInterval id))
 
-;; ---------------------------------------------------------------------
-;; The projection loop's seams. Same idea as the interval seams: tests
-;; capture the frame callback and the visibility handler and drive them
-;; directly, with `now-ms` redef'd, instead of waiting on a real screen.
-
-(def ^:const projection-push-interval-ms
-  "Minimum interval between projection pushes — ~20 Hz inside the rAF
-  loop. The dead-reckoning trig is cheap; each push's clj->js and
-  MapLibre GeoJSON re-index is the dominant cost, so we push at a rate
-  the eye still reads as continuous (an airliner moves a few pixels per
-  second at map scales) rather than at the full ~60 fps rAF offers."
-  50)
-
-(defn request-animation-frame!
-  "Schedule `f` for the next animation frame, returning a handle for
-  `cancel-animation-frame!`. A seam over js/requestAnimationFrame so
-  tests drive the projection loop frame by frame with a fake clock."
-  [f]
-  (js/requestAnimationFrame f))
-
-(defn cancel-animation-frame!
-  "Cancel the pending animation frame named by `id`."
-  [id]
-  (js/cancelAnimationFrame id))
-
-(defn document-hidden?
-  "True when the document is not visible (a background tab). A seam so
-  tests can hide the tab without a real visibility change."
-  []
-  (.-hidden js/document))
-
-(defn on-visibility-change!
-  "Register `f` on the document's visibilitychange event. A seam so
-  tests capture the handler and fire it directly."
-  [f]
-  (.addEventListener js/document "visibilitychange" f))
-
-(defn off-visibility-change!
-  "Remove a handler registered by `on-visibility-change!`."
-  [f]
-  (.removeEventListener js/document "visibilitychange" f))
-
 (defn picture->feature-collection
   "The app-db picture (icao -> domain aircraft) as a GeoJSON
   FeatureCollection, staleness judged at `at-ms`. Pure — delegates to
@@ -333,68 +263,6 @@
     (maplibre/set-source-data! m trail-source-id trail-fc)
     (maplibre/set-source-data! m source-id fc)))
 
-(defn- push-projected!
-  "Dead-reckon the cached picture to `at-ms` (adsb.geo/project-aircraft
-  — unprojectable aircraft hold their real position) and push the result
-  into the AIRCRAFT source only. The trail source is untouched ON
-  PURPOSE: trails record reported positions (adsb.trails appends real
-  frames), so the ribbon stays a record of truth under a projected head.
-  Skipped entirely when nothing may honestly move — an empty sky, or
-  every aircraft stale or missing gs/track — since the real pushes and
-  the 5 s tick already cover a motionless picture. Returns true when a
-  push happened, so the loop can advance its throttle clock only then."
-  [m picture at-ms]
-  (let [sky (vals picture)]
-    (when (some #(geo/projectable? % at-ms) sky)
-      (maplibre/set-source-data!
-        m source-id
-        (geo/aircraft-picture->feature-collection
-          (map #(geo/project-aircraft % at-ms) sky)
-          at-ms))
-      true)))
-
-(defn- start-projection-loop!
-  "Start (or, after a hidden tab returns, resume) the rAF projection
-  loop over `!state`'s cached picture. Each frame pushes the projected
-  sky at most every `projection-push-interval-ms` and reschedules
-  itself; the loop stops on its own when the layer is detached or the
-  tab hides (the visibility handler restarts it). The throttle clock
-  advances only when a push actually happened, so an idle sky's first
-  movable frame pushes immediately. One `frame` closure is allocated
-  per start and reused every frame — nothing allocates per frame but
-  the FeatureCollection itself."
-  [m !state]
-  (letfn [(frame [_t]
-            (let [{:keys [disposed? hidden? last-projection-ms picture]}
-                  @!state
-                  at-ms (now-ms)]
-              (when-not (or disposed? hidden?)
-                (when (>= (- at-ms (or last-projection-ms 0))
-                          projection-push-interval-ms)
-                  (when (push-projected! m picture at-ms)
-                    (swap! !state assoc :last-projection-ms at-ms)))
-                (swap! !state assoc :raf (request-animation-frame! frame)))))]
-    (swap! !state assoc :raf (request-animation-frame! frame))))
-
-(defn- watch-visibility!
-  "Pause the projection loop while the document is hidden — a background
-  tab must not burn CPU projecting planes nobody can see — and resume it
-  on return. Only the rAF loop pauses: the track and the 5 s tick keep
-  the cached picture current while hidden, so the loop resumes from
-  fresh bases. The handler is kept in `!state` so detach! can remove it."
-  [m !state]
-  (let [handler (fn []
-                  (if (document-hidden?)
-                    (do (swap! !state assoc :hidden? true)
-                        (when-let [raf (:raf @!state)]
-                          (cancel-animation-frame! raf)
-                          (swap! !state assoc :raf nil)))
-                    (when (:hidden? @!state)
-                      (swap! !state assoc :hidden? false)
-                      (start-projection-loop! m !state))))]
-    (swap! !state assoc :visibility-handler handler)
-    (on-visibility-change! handler)))
-
 (defn attach!
   "Wire the aircraft layer onto map `m` (an adsb.map.maplibre/Map),
   printed in `theme`'s edition (defaulting to the current one — the map
@@ -406,15 +274,11 @@
   buffering (ns docstring)."
   ([m] (attach! m @theme/!theme))
   ([m theme]
-  (let [!state (atom {:disposed?          false
-                      :track              nil
-                      :tick               nil
-                      :picture            nil
-                      :history            {}
-                      :raf                nil
-                      :hidden?            false
-                      :visibility-handler nil
-                      :last-projection-ms 0})]
+  (let [!state (atom {:disposed? false
+                      :track     nil
+                      :tick      nil
+                      :picture   nil
+                      :history   {}})]
     (maplibre/on-load!
       m
       (fn []
@@ -461,35 +325,20 @@
           (swap! !state assoc :tick
                  (set-interval!
                    (fn [] (push! m (:history @!state) (:picture @!state)))
-                   tick-interval-ms))
-          ;; The projection loop (ns docstring): between real frames,
-          ;; dead-reckon the cached picture and push the aircraft source
-          ;; only. It reads the SAME !state cache the tick does — never a
-          ;; subscription — so it can neither fight the track nor wake
-          ;; React. Paused from birth if the tab is already hidden; the
-          ;; visibility handler starts it when the tab first shows.
-          (swap! !state assoc :hidden? (document-hidden?))
-          (watch-visibility! m !state)
-          (when-not (:hidden? @!state)
-            (start-projection-loop! m !state)))))
+                   tick-interval-ms)))))
     !state)))
 
 (defn detach!
   "Stop pushing into the map: dispose the reaction (which also releases
-  the cached subscription), cancel the client tick, stop the projection
-  loop, and unhook the visibility handler. Call from will-unmount,
-  BEFORE the map is destroyed. Safe when the load event never fired:
-  the pending load callback sees :disposed? and does nothing, so no
-  track, tick, or loop was ever created."
+  the cached subscription) and cancel the client tick. Call from
+  will-unmount, BEFORE the map is destroyed. Safe when the load event
+  never fired: the pending load callback sees :disposed? and does
+  nothing, so no track or tick was ever created."
   [!state]
-  (let [{:keys [track tick raf visibility-handler]} @!state]
+  (let [{:keys [track tick]} @!state]
     (swap! !state assoc
            :disposed? true
            :track nil
-           :tick nil
-           :raf nil
-           :visibility-handler nil)
+           :tick nil)
     (some-> track r/dispose!)
-    (some-> tick clear-interval!)
-    (some-> raf cancel-animation-frame!)
-    (some-> visibility-handler off-visibility-change!)))
+    (some-> tick clear-interval!)))
