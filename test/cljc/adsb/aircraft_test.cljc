@@ -75,6 +75,29 @@
       (is (= captured-at-ms
              (get-in picture [ups-icao :aircraft/seen-at-ms])))))
 
+  (testing "an aircraft that arrives already stamped keeps its stamp — the
+            streaming accumulator's snapshots carry an absolute seen-at-ms
+            and no seen-s, and re-deriving from capture time would re-hear
+            a long-silent aircraft as if it had just spoken (adsb-0g0)"
+    (let [heard-at (- captured-at-ms 100000)
+          streamed (-> fixtures/ups-2717
+                       (dissoc :aircraft/seen-s)
+                       (assoc :aircraft/seen-at-ms heard-at))
+          picture  (aircraft/merge-batch {} [streamed] captured-at-ms)]
+      (is (= heard-at
+             (get-in picture [ups-icao :aircraft/seen-at-ms])))))
+
+  (testing "a streamed aircraft silent past the threshold ages out of the
+            merged picture — its true stamp, not the capture instant, is
+            what age-out reads"
+    (let [heard-at (- captured-at-ms
+                      (inc aircraft/age-out-threshold-ms))
+          streamed (-> fixtures/ups-2717
+                       (dissoc :aircraft/seen-s)
+                       (assoc :aircraft/seen-at-ms heard-at))]
+      (is (empty? (-> (aircraft/merge-batch {} [streamed] captured-at-ms)
+                      (aircraft/age-out captured-at-ms))))))
+
   (testing "the capture-relative seen-s is replaced by absolute seen-at-ms"
     (let [picture (aircraft/merge-batch {} [fixtures/ups-2717]
                                         captured-at-ms)

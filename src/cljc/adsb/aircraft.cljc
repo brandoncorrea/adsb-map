@@ -77,15 +77,27 @@
 
 (defn observed-at-ms
   "The absolute instant an ingested aircraft was heard, given the
-  instant its batch was captured. The feeder's seen is seconds-since-
-  last-message at CAPTURE time, so the observation instant is capture
-  minus seen — treating arrival as observation would make a message
-  heard 250 s before capture look fresh. Absent seen pins the
-  observation to the capture itself: the freshest instant we can
-  honestly claim, so an aircraft can only be older than the picture
+  instant its batch was captured.
+
+  An aircraft that ALREADY carries :aircraft/seen-at-ms was stamped
+  when it was heard, by the source that assembled it — the streaming
+  accumulator stamps every message with its receiving instant
+  (adsb.accumulator/merge-delta), and its snapshots carry no seen-s at
+  all. That stamp is the observation; re-deriving one from capture time
+  would re-hear a 100 s-silent aircraft as if it had just spoken, which
+  is both a lie about freshness and, to the jump detector, a 33,000 kt
+  teleport (adsb-0g0).
+
+  Otherwise the stamp is derived. The feeder's seen is seconds-since-
+  last-message at CAPTURE time (aircraft.json), so the observation
+  instant is capture minus seen — treating arrival as observation would
+  make a message heard 250 s before capture look fresh. Neither field
+  pins the observation to the capture itself: the freshest instant we
+  can honestly claim, so an aircraft can only be older than the picture
   says, never fresher."
-  [{:aircraft/keys [seen-s]} captured-at-ms]
-  (long (- captured-at-ms (* 1000 (or seen-s 0)))))
+  [{:aircraft/keys [seen-at-ms seen-s]} captured-at-ms]
+  (long (or seen-at-ms
+            (- captured-at-ms (* 1000 (or seen-s 0))))))
 
 (defn- ->observation
   "Stamp an ingested aircraft with the absolute instant it was heard

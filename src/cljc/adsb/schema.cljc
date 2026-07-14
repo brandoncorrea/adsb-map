@@ -72,8 +72,12 @@
    [:aircraft/track-deg {:optional true} number?]
    [:aircraft/baro-rate-fpm {:optional true} number?]
    [:aircraft/seen-s {:optional true} number?]
-   ;; Stamped by adsb.aircraft/merge-batch (capture time minus seen);
-   ;; absent on aircraft fresh from ingest.
+   ;; The absolute instant the aircraft was heard. Stamped when the
+   ;; message arrives on the streaming path (adsb.accumulator), and
+   ;; derived at merge from capture time minus seen on the poll path
+   ;; (adsb.aircraft/observed-at-ms) — which honours an existing stamp
+   ;; rather than overwriting it. Absent on a polled aircraft fresh from
+   ;; ingest, which carries only the capture-relative seen-s.
    [:aircraft/seen-at-ms {:optional true} number?]
    [:aircraft/rssi {:optional true} number?]
    ;; Set at merge time when a new position implies an impossible jump

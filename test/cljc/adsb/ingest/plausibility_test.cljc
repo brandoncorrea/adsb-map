@@ -197,6 +197,63 @@
                             :aircraft/position-suspect?)))))))
 
 ;; ---------------------------------------------------------------------
+;; The streaming path: snapshots, not polls (adsb-0g0)
+;;
+;; SBS and Beast reach merge-batch through adsb.accumulator, whose
+;; snapshots carry an ABSOLUTE :aircraft/seen-at-ms and no
+;; :aircraft/seen-s — and whose aircraft are repeated, unchanged, in
+;; every snapshot the poll loop takes while the radio is quiet. So the
+;; previous picture's stamp must be the instant the aircraft was HEARD,
+;; not the instant it was last snapshotted; otherwise a reception gap —
+;; a hill, a banked turn, an antenna null — collapses to a one-second
+;; elapsed and the jump detector reads ordinary flight as a teleport.
+
+(defn- streamed
+  "An accumulator-shaped observation: positioned, absolutely stamped,
+  and carrying no capture-relative seen."
+  [position heard-at-ms]
+  (-> fixtures/ups-2717
+      (dissoc :aircraft/seen-s)
+      (at-position position)
+      (assoc :aircraft/seen-at-ms heard-at-ms)))
+
+(deftest merge-batch-flagging-jumps-on-streamed-snapshots
+  (let [origin     {:geo/lat 28.0 :geo/lon -82.5}
+        ;; ~12 nm north: 100 s of flight at ~430 kt, or one impossible
+        ;; second at ~43,000 kt. Which one it reads as is the bug.
+        moved-on   (update origin :geo/lat + 0.2)
+        heard-at   captured-at-ms
+        gap-ms     100000
+        ;; Heard, then 99 s of silence — the accumulator repeats the same
+        ;; stamped aircraft in every snapshot — then heard again, moved.
+        picture    (-> {}
+                       (plausibility/merge-batch-flagging-jumps
+                         [(streamed origin heard-at)] heard-at)
+                       (plausibility/merge-batch-flagging-jumps
+                         [(streamed origin heard-at)] (+ heard-at 99000))
+                       (plausibility/merge-batch-flagging-jumps
+                         [(streamed moved-on (+ heard-at gap-ms))]
+                         (+ heard-at gap-ms)))
+        aircraft   (get picture ups-icao)]
+
+    (testing "the stored stamp is when the aircraft was heard, not when
+              the snapshot was taken"
+      (is (= (+ heard-at gap-ms) (:aircraft/seen-at-ms aircraft))))
+
+    (testing "a 100 s reception gap on a moving aircraft is ordinary
+              flight, not a jump"
+      (is (not (contains? aircraft :aircraft/position-suspect?))))
+
+    (testing "a genuinely impossible hop across a streamed gap is still
+              flagged — honest stamps sharpen the detector, not blunt it"
+      (let [jumped (-> picture
+                       (plausibility/merge-batch-flagging-jumps
+                         [(streamed mid-atlantic (+ heard-at gap-ms 1000))]
+                         (+ heard-at gap-ms 1000))
+                       (get ups-icao))]
+        (is (true? (:aircraft/position-suspect? jumped)))))))
+
+;; ---------------------------------------------------------------------
 ;; Privacy: the receiver's location must never reach a domain aircraft
 ;; (bead adsb-nqf.3 — one aircraft's position plus its r_dst/r_dir
 ;; locates the antenna exactly).
