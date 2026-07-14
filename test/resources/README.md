@@ -102,6 +102,37 @@ nothing to redact here. To be **superseded or augmented by a real capture**
 off the feeder — tracked as bead **adsb-c75** — which must be reviewed
 against `docs/validation-boundaries.md` before it lands.
 
+## sbs-capture-2026-07-14.txt
+
+A genuine SBS BaseStation capture — ~30 seconds of ultrafeeder's port 30003
+recorded on **2026-07-14** over the Access-gated Cloudflare Tunnel
+(`wss://sbs.bwawan.com`, service-token auth; the websocket leg was unwrapped,
+the payload bytes are untouched). This is the real capture bead **adsb-c75**
+called for. It is what the feeder actually sent, warts included — do not
+trim, sort, or normalize it. 1,857 lines, all `MSG` class, transmission types
+1/3/4/5/6/7/8, 22 positional fields per line, 33 distinct aircraft.
+
+Reviewed per `docs/validation-boundaries.md` before landing: every line was
+verified to be a 22-field `MSG` row; SBS carries no receiver-position field
+(no `r_dst`/`r_dir` equivalents), so nothing was redacted. Aircraft positions
+are retained, exactly as in `aircraft-sample.json`.
+
+Replayed by `test/clj/adsb/ingest/capture_replay_test.clj`, which pins the
+boundary's exact behavior against these frozen bytes.
+
+## beast-capture-2026-07-14.bin
+
+A genuine Beast binary capture — ~30 seconds of ultrafeeder's port 30005,
+recorded on **2026-07-14** the same way as `sbs-capture-2026-07-14.txt`
+above (same tunnel, same session, same sky). Real escapes, real 12 MHz MLAT
+timestamps, real radio noise: 5 Mode-A/C frames, 2,809 short and 1,791 long
+Mode-S frames, of which 48 long frames fail CRC-24 or are not DF17/18 —
+kept deliberately, because dropping them at the boundary is the point.
+
+Beast frames carry aircraft Mode-S payloads, MLAT counter values, and signal
+levels — no receiver-position field; nothing was redacted. Replayed by
+`test/clj/adsb/ingest/capture_replay_test.clj`.
+
 ## Beast Source end-to-end frames (no committed file)
 
 **SYNTHETIC-from-published-vectors.** The Beast Source integration test
