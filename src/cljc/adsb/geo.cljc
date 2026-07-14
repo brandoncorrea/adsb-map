@@ -229,7 +229,7 @@
 
 (defn- feature-properties [aircraft now-ms]
   (let [{:aircraft/keys [icao callsign track-deg altitude-ft on-ground?
-                         mlat?]}
+                         category mlat?]}
         aircraft
         stale (stale-property aircraft now-ms)
         age   (age-property aircraft now-ms)]
@@ -240,6 +240,12 @@
              :emergency (aircraft/emergency? aircraft)}
       callsign      (assoc :callsign callsign)
       track-deg     (assoc :track track-deg)
+      ;; What the airframe says it is — the symbology channel
+      ;; (adsb.map.style keys the silhouette on it). Omitted when the
+      ;; aircraft never transmitted one, and the style layer reads that
+      ;; absence as the generic plane; no aircraft goes undrawn for want
+      ;; of a category.
+      category      (assoc :category category)
       on-ground?    (assoc :altitude ground-altitude)
       altitude-ft   (assoc :altitude altitude-ft)
       (some? stale) (assoc :stale stale)

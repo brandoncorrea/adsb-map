@@ -26,6 +26,30 @@
 
 (def longitude [:and number? [:>= -180] [:<= 180]])
 
+(def emitter-category
+  "The ADS-B emitter category the aircraft TRANSMITS about itself: a set
+  letter and a code, \"A3\", \"A7\", \"C2\". Three sets exist in the sky —
+  A (fixed-wing, by weight class, A7 rotorcraft), B (glider, balloon,
+  parachutist, UAV), C (surface vehicles and obstacles) — each with eight
+  codes, of which 0 means the aircraft declined to say. Set D is reserved
+  by the spec and nothing emits it.
+
+  A CLOSED enum, and closed is the whole point: the feeder is
+  unauthenticated radio (docs/validation-boundaries.md), so `category` is
+  an attacker-controlled string. Only the 24 values named here may enter
+  the domain.
+
+  Deliberately NOT a member of `raw-aircraft` below, though it arrives on
+  the same entry. Every field declared there is validate-or-REJECT — a
+  malformed squawk costs the whole aircraft — and that is exactly the
+  wrong trade for this one: a category we failed to enumerate (a spec
+  revision, a feeder's private extension) would drop the aircraft out of
+  the picture entirely rather than merely out of the symbology. So
+  category is checked as a FIELD, the way an absurd altitude is
+  (adsb.ingest.coerce): an unrecognized value costs the FIELD and yields
+  ABSENCE, never a passthrough and never the aircraft."
+  (into [:enum] (for [set ["A" "B" "C"] code (range 8)] (str set code))))
+
 (def raw-aircraft
   "One entry of the feeder's `aircraft` array, as it actually arrives.
 
@@ -73,6 +97,12 @@
    ;; it takes off again (adsb.ingest.sbs, adsb-b0w).
    [:aircraft/on-ground? {:optional true} :boolean]
    [:aircraft/squawk {:optional true} squawk]
+   ;; What the airframe says it is (`emitter-category`) — an OBSERVATION
+   ;; off the wire, not reference data about the type, so it rides the
+   ;; live path like track and squawk. Absent for the aircraft that never
+   ;; transmit one (and for every MLAT target), which the map treats as
+   ;; the generic plane — absence is first-class here, as everywhere.
+   [:aircraft/category {:optional true} emitter-category]
    [:aircraft/ground-speed-kt {:optional true} number?]
    [:aircraft/track-deg {:optional true} number?]
    [:aircraft/baro-rate-fpm {:optional true} number?]

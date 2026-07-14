@@ -11,8 +11,10 @@
 
   WHAT IS DECODED. DF17 (and DF18 CF0-2 — same body, non-transponder
   emitters; CF1's address is non-ICAO and carries the schema's ~ prefix)
-  extended squitter, by type code: TC1-4 identification (callsign),
-  TC19 airborne velocity, TC9-18/20-22 airborne position (altitude +
+  extended squitter, by type code: TC1-4 identification (callsign AND
+  emitter category — the type code names the category set, so the two
+  facts are decoded from the one message together), TC19 airborne
+  velocity, TC9-18/20-22 airborne position (altitude +
   CPR via adsb.ingest.cpr). Any other CRC-valid DF17/18 message still
   yields its bare {:aircraft/icao _} — proof of life refreshes
   freshness even when the message body is out of scope.
@@ -165,11 +167,38 @@
     (when-not (some #{\#} characters)
       (some-> (apply str characters) str/trim not-empty))))
 
+(def ^:private category-set
+  "TC 1-4 do not merely mean 'identification' — each names a DIFFERENT
+  emitter-category set, and the type code is the only thing that says
+  which. Set D (TC 1) is reserved by the spec, nothing emits it, and the
+  domain does not model it (adsb.schema/emitter-category), so it is
+  absent from this map and decodes to no category at all."
+  {4 "A", 3 "B", 2 "C"})
+
+(defn- emitter-category
+  "The emitter category of a TC 1-4 identification ME field: the set named
+  by the type code, and the CA code in the low three bits of ME byte 0 —
+  the same byte the callsign decode already holds. nil when the aircraft
+  declined to say (CA 0 is 'no category information', which is ABSENCE,
+  not a category) or when the set is one the domain does not model.
+
+  Needs no enum re-check: `category-set` is closed and `bit-and 0x07`
+  cannot exceed 7, so this can only ever produce a member of
+  adsb.schema/emitter-category. The poll boundary must validate because
+  it is handed a STRING by the feeder; here the bits are the string."
+  [me type-code]
+  (let [code (bit-and (nth me 0) 0x07)]
+    (when-let [set-letter (category-set type-code)]
+      (when (pos? code)
+        (str set-letter code)))))
+
 (defn- identification-delta
-  [icao me]
-  (if-let [callsign (callsign me)]
-    {:aircraft/icao icao :aircraft/callsign callsign}
-    {:aircraft/icao icao}))
+  [icao me type-code]
+  (let [callsign (callsign me)
+        category (emitter-category me type-code)]
+    (cond-> {:aircraft/icao icao}
+      callsign (assoc :aircraft/callsign callsign)
+      category (assoc :aircraft/category category))))
 
 ;; ---------------------------------------------------------------------
 ;; TC 19 — airborne velocity
@@ -438,7 +467,7 @@
         type-code (bit-shift-right (nth me 0) 3)]
     (cond
       (<= 1 type-code 4)
-      [(identification-delta icao me) cpr-state]
+      [(identification-delta icao me type-code) cpr-state]
 
       (or (<= 9 type-code 18) (<= 20 type-code 22))
       (position-delta+state icao me type-code now-ms cpr-state)

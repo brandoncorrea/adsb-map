@@ -47,15 +47,35 @@
   (or (= "mlat" type)
       (boolean (seq mlat))))
 
+(def ^:private known-category?
+  (m/validator schema/emitter-category))
+
+(defn- emitter-category
+  "The aircraft's self-reported emitter category, or nil when it reported
+  none — and ALSO nil when it reported something we do not recognize.
+
+  This is a validate-here-not-in-the-schema field, and deliberately so
+  (schema/emitter-category says why): the feeder is untrusted, so an
+  attacker-supplied string must never reach the domain, but a category we
+  simply failed to enumerate must not cost the aircraft its place in the
+  picture either. Checking it as a field buys both — anything outside the
+  closed enum, of any type, is ABSENCE, and absence already means the
+  generic plane."
+  [category]
+  (when (known-category? category)
+    category))
+
 (defn- raw->aircraft
   "Rename feeder fields into namespaced domain keys. Absent (or null)
   stays absent — an aircraft with no reported altitude is not at sea
   level, and one with no reported speed is not stationary."
   [{:keys [hex flight alt_baro lat lon squawk gs track baro_rate
-           seen seen_pos rssi] :as raw}]
-  (let [callsign (some-> flight str/trim not-empty)]
+           seen seen_pos rssi category] :as raw}]
+  (let [callsign (some-> flight str/trim not-empty)
+        category (emitter-category category)]
     (cond-> {:aircraft/icao (str/lower-case hex)}
             callsign (assoc :aircraft/callsign callsign)
+            category (assoc :aircraft/category category)
             (and lat lon) (assoc :aircraft/position {:geo/lat lat :geo/lon lon})
             (number? alt_baro) (assoc :aircraft/altitude-ft alt_baro)
             ;; alt_baro is the string "ground" on the tarmac, not a number.

@@ -15,8 +15,24 @@
   computed in JS per feature per frame, the map would crawl. MapLibre
   evaluates these expressions on the GPU against each feature's
   properties (adsb.geo puts them there): `track`, `altitude`,
-  `emergency`, `stale`. We describe the styling once; MapLibre draws it
-  four hundred times a frame for free.
+  `emergency`, `stale`, `category`. We describe the styling once;
+  MapLibre draws it four hundred times a frame for free.
+
+  ## The channels, and what each one is allowed to say
+
+  Every visual channel carries exactly ONE fact, and they compose rather
+  than compete — a rule worth stating because the temptation to reuse a
+  free-looking channel is constant:
+
+    colour      altitude, precisely (emergency red overriding)
+    size        altitude, instinctively — perspective (emergency 1.6x
+                overriding, mlat demoting)
+    rotation    track
+    opacity     age
+    SILHOUETTE  what the aircraft SAYS IT IS — its emitter category
+                (adsb-rnp). A helicopter is not a small airliner, and it
+                must not be drawn as one; but neither may it be drawn
+                small, because small already means high.
 
   ## The three altitude states — the load-bearing subtlety
 
@@ -49,18 +65,68 @@
   (:require [adsb.aircraft :as aircraft]))
 
 ;; ---------------------------------------------------------------------
-;; Icon assets — the two silhouettes the symbol layer chooses between.
-;; Both are registered as SDF images (adsb.map.aircraft-layer draws and
-;; adds them), which is what lets `icon-color` tint them per feature.
+;; Icon assets — the silhouettes the symbol layer chooses between. All are
+;; registered as SDF images (adsb.map.aircraft-layer draws and adds them),
+;; which is what lets `icon-color` tint them per feature.
 
 (def ^:const plane-icon-id
-  "The directional plane silhouette, rotated to the aircraft's track."
+  "The generic airframe, rotated to the aircraft's track. The fallback for
+  an absent or unmodelled category, and so the majority of targets."
   "aircraft-plane")
+
+(def ^:const heavy-icon-id
+  "The wide-body: A4 (high-vortex large) and A5 (heavy). Broader span,
+  fatter fuselage, bigger tailplane than the generic plane."
+  "aircraft-heavy")
+
+(def ^:const light-icon-id
+  "Light GA (A1), and the gliders and ultralights of set B. Straight
+  unswept wings and a thin fuselage — the shape reads GA at a glance,
+  where merely DRAWING IT SMALLER would not: size is the altitude
+  channel (`perspective-size-stops`) and cannot be borrowed to say
+  anything else."
+  "aircraft-light")
+
+(def ^:const rotorcraft-icon-id
+  "The rotorcraft (A7). The one that matters most: a helicopter's flight
+  profile — hovering, low, slow — is unlike anything else on the chart,
+  and drawn as an airliner it is a worse lie than the dot exists to avoid."
+  "aircraft-rotorcraft")
+
+(def ^:const vehicle-icon-id
+  "The surface vehicle: C1 (emergency) and C2 (service) — a fire tender or
+  a pushback tug on the apron, not an aircraft at all. Distinct from
+  `ground-icon-size`, which is about being ON the ground: an airliner at
+  the gate is on the ground and still an airliner, while a tender is a
+  vehicle wherever it is."
+  "aircraft-vehicle")
 
 (def ^:const dot-icon-id
   "The non-directional disc, shown when track is unknown — a plane
-  pointing a direction we cannot vouch for would be a lie."
+  pointing a direction we cannot vouch for would be a lie. It OUTRANKS
+  category: heading absence beats category presence, so a rotorcraft with
+  no track is a dot, not a rotorcraft (see `icon-image-expression`)."
   "aircraft-dot")
+
+(def category->icon-id
+  "The symbology, as DATA: emitter category (adsb.schema/emitter-category,
+  arriving as the `category` feature property) -> the silhouette that
+  tells the truth about it. Re-skin here; a category absent from this map
+  takes `plane-icon-id`, so this need only name what it changes.
+
+  Deliberately SMALL. A symbology nobody can read at a glance is worse
+  than one silhouette, so this maps the distinctions a reader can actually
+  make on a moving chart and leaves the rest generic — A2 (small) and A3
+  (large) are the airliners and regionals the plane already draws
+  honestly, and A6 (high-performance) is too rare here to earn a shape."
+  {"A1" light-icon-id        ; light — GA in the pattern
+   "A4" heavy-icon-id        ; high-vortex large (the 757)
+   "A5" heavy-icon-id        ; heavy
+   "A7" rotorcraft-icon-id   ; rotorcraft
+   "B1" light-icon-id        ; glider / sailplane
+   "B4" light-icon-id        ; ultralight / hang-glider / paraglider
+   "C1" vehicle-icon-id      ; surface vehicle — emergency
+   "C2" vehicle-icon-id})    ; surface vehicle — service
 
 ;; ---------------------------------------------------------------------
 ;; Sizes, opacities — the scalar knobs. Edition-free: both prints share
@@ -302,27 +368,51 @@
    base-opacity])
 
 (defn icon-image-expression
-  "Choose the silhouette per feature: the directional plane when a track
-  is known, the non-directional dot when it is not. `[\"has\" \"track\"]`
-  because absent track means unknown heading, and a rotated plane would
-  imply a heading we do not have."
+  "Choose the silhouette per feature, in strict precedence:
+
+    1. NO TRACK -> the dot, whatever the aircraft claims to be. Heading
+       absence beats category presence: a rotorcraft we cannot point is a
+       dot, because a symbol rotated to a heading we do not have is a lie,
+       and it is the SAME lie regardless of which silhouette tells it.
+    2. NO CATEGORY -> the generic plane. Absent means the property is
+       genuinely missing (the aircraft never transmitted one, or the
+       ingest boundary refused what it did), so `[\"has\" \"category\"]`
+       guards it exactly as `[\"has\" \"altitude\"]` guards the colour ramp —
+       and no aircraft ever goes undrawn for want of a classification.
+    3. Otherwise match `category->icon-id`, generic plane as the fallback
+       for the categories it does not name.
+
+  This is the ONLY channel category drives. Colour still comes from
+  altitude, size from the perspective ramp, the 1.6x from emergency, the
+  demotion from mlat, the fade from age — category COMPOSES with every one
+  of them and replaces none."
   []
-  ["case" ["has" "track"] plane-icon-id dot-icon-id])
+  ["case"
+   ["!" ["has" "track"]]    dot-icon-id
+   ["!" ["has" "category"]] plane-icon-id
+   (into ["match" ["get" "category"]]
+         (concat (mapcat identity category->icon-id)
+                 [plane-icon-id]))])
 
 (defn aircraft-layer-spec
   "The complete MapLibre symbol-layer spec for the aircraft `layer-id`
   over `source-id`, printed in `theme`'s edition and built entirely from
   the palette data and expressions above. A symbol layer, not a circle:
-  the icon is a plane silhouette rotated to `track`, coloured by the
-  altitude ramp (emergency overriding), sized up for emergencies, and
-  faded when stale. The halo is the edition's own paper, so ink survives
-  a busy chart area without a foreign outline colour.
+  the icon is the silhouette its emitter category earns it
+  (`icon-image-expression`), rotated to `track`, coloured by the altitude
+  ramp (emergency overriding), sized up for emergencies, and faded when
+  stale. The halo is the edition's own paper, so ink survives a busy chart
+  area without a foreign outline colour.
 
-  `icon-rotate` is a bare `[\"get\" \"track\"]`: MapLibre defaults a null
-  rotation to 0, and a null track already draws the rotation-agnostic dot
-  (see `icon-image-expression`), so the fallback rotation is a harmless
-  no-op on a symmetric shape. `icon-rotation-alignment \"map\"` pins the
-  heading to the ground, not the screen — the whole point of a track.
+  `icon-rotate` is a bare `[\"get\" \"track\"]` and stays that way even now
+  that a surface vehicle can be drawn: MapLibre defaults a null rotation
+  to 0, and a null track already draws the rotation-agnostic dot (see
+  `icon-image-expression`), so the fallback rotation is a harmless no-op.
+  EVERY directional silhouette is rotated by the same rule — no symbol
+  gets a private exemption, so there is exactly one story about heading on
+  this chart: if we have it, the symbol points; if we do not, it is a dot.
+  `icon-rotation-alignment \"map\"` pins the heading to the ground, not the
+  screen — the whole point of a track.
 
   `icon-allow-overlap` / `icon-ignore-placement` are true so no aircraft
   is ever silently dropped from a dense sky by label collision — every

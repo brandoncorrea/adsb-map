@@ -262,7 +262,30 @@
                     (dissoc cruising :aircraft/callsign :aircraft/track-deg)
                     0))]
       (is (not (contains? props :callsign)))
-      (is (not (contains? props :track))))))
+      (is (not (contains? props :track)))))
+
+  (testing "the emitter category reaches the style layer as a feature
+            property — the channel the silhouette is keyed on (adsb-rnp).
+            Through the CAST, so this is the real ingest boundary's output,
+            not a hand-written map that could drift from it."
+    (is (= "A5" (:category
+                  (:properties
+                    (geo/aircraft->feature fixtures/ups-2717 0)))))
+    (is (= "A7" (:category
+                  (:properties
+                    (geo/aircraft->feature
+                      (assoc fixtures/ups-2717 :aircraft/category "A7")
+                      0))))))
+
+  (testing "an aircraft that never said what it is still gets a feature —
+            the category is simply omitted, and the style layer reads that
+            absence as the generic plane. No aircraft goes undrawn for
+            want of a classification."
+    (let [feature (geo/aircraft->feature
+                    (dissoc fixtures/ups-2717 :aircraft/category) 0)]
+      (is (some? feature))
+      (is (= "abc0e4" (:icao (:properties feature))))
+      (is (not (contains? (:properties feature) :category))))))
 
 (deftest emergency-property
   (testing "the three distress squawks each mark the aircraft as an

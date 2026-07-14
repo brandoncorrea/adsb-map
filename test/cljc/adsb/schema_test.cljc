@@ -76,6 +76,25 @@
                     (assoc cruising :nav_qnh 1013.6 :mlat [] :tisb []
                            :category "A3" :emergency "none")))))
 
+(deftest emitter-category
+  (testing "the three sets the sky actually transmits, eight codes each"
+    (doseq [category ["A0" "A1" "A5" "A7" "B0" "B7" "C0" "C2" "C7"]]
+      (is (m/validate schema/emitter-category category)
+          (str category " is a category the sky really transmits"))))
+
+  (testing "the enum is CLOSED — the feeder is unauthenticated radio, and
+            only these 24 values may enter the domain (adsb-rnp). What is
+            refused here becomes ABSENCE at the boundary, never a reject
+            of the aircraft: see adsb.ingest.coerce."
+    (is (= 24 (count (rest schema/emitter-category))))
+    (doseq [refused ["A8"           ; the codes stop at 7
+                     "D0" "D1"      ; set D is reserved; nothing emits it
+                     "E1" "a3" "A"  ; junk, wrong case, half a category
+                     "" "A3 " "A3; DROP TABLE"
+                     42 nil {:evil true} ["A3"]]]
+      (is (not (m/validate schema/emitter-category refused))
+          (str (pr-str refused) " must never enter the domain")))))
+
 (deftest plausibility
   (testing "cruise altitudes and below-sea-level fields are plausible"
     (is (m/validate schema/plausible-altitude-ft 34775))

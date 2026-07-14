@@ -180,23 +180,96 @@
       (layer/detach! handle))))
 
 ;; ---------------------------------------------------------------------
-;; adsb-2yu.5: at load the layer registers its two SDF icons through the
-;; seam — the plane and the dot — so `icon-color` can tint them. No
-;; sprite, no network; the pixels are drawn and handed across as data.
+;; adsb-2yu.5: at load the layer registers its SDF icons through the seam
+;; — every silhouette the style layer can name — so `icon-color` can tint
+;; them. No sprite, no network; the pixels are drawn and handed across as
+;; data.
 
-(deftest load-registers-the-plane-and-dot-icons-sdf
+(deftest load-registers-every-silhouette-sdf
   (rf-test/run-test-sync
     (let [{:keys [m rec] :as fake} (recording-map)
           handle (layer/attach! m)]
       (fire-load! fake)
       (let [images (:images @rec)]
-        (testing "both icons registered via the seam's add-image!"
-          (is (= #{style/plane-icon-id style/dot-icon-id}
+        (testing "every icon the symbology can choose is registered via the
+                  seam's add-image! — a style naming an image nobody drew
+                  is a MapLibre warning and a blank chart (adsb-rnp)"
+          (is (= #{style/plane-icon-id style/heavy-icon-id
+                   style/light-icon-id style/rotorcraft-icon-id
+                   style/vehicle-icon-id style/dot-icon-id}
                  (into #{} (map :id) images))))
+        (testing "every silhouette the CATEGORY MAP names is among them —
+                  over the map itself, so a category added there without a
+                  drawing fails here rather than on the live chart"
+          (let [registered (into #{} (map :id) images)]
+            (doseq [icon-id (vals style/category->icon-id)]
+              (is (contains? registered icon-id)
+                  (str icon-id " is styled but never drawn")))))
         (testing "registered SDF, so the altitude/emergency colour can tint them"
           (is (seq images))
           (is (every? #(true? (get-in % [:opts :sdf])) images))))
       (layer/detach! handle))))
+
+;; ---------------------------------------------------------------------
+;; adsb-89w / adsb-rnp: THE CENTROID RULE. Every silhouette's AREA
+;; CENTROID must land on the canvas centre, because the MapLibre icon
+;; anchor and the selection ring share one lat/lon — an outline whose ink
+;; sits low makes the ring look like it floats above the plane. An eye
+;; cannot check a centroid and the drift would be silent, so the rule is
+;; asserted here, over the whole outline map: a NEW silhouette is covered
+;; the moment it is listed, with nobody having to remember this test.
+
+(defn- mirrored
+  "The full closed polygon, exactly as the layer traces it: the right half
+  plus its mirror, the axis points not repeated."
+  [half-outline]
+  (concat half-outline
+          (->> (rest (butlast half-outline))
+               reverse
+               (map (fn [[x y]] [(- 1.0 x) y])))))
+
+(defn- area-centroid
+  "The area centroid of a closed polygon — the shoelace formula. NOT the
+  bounding-box centre, which is what a careless outline gives you and what
+  adsb-89w was."
+  [points]
+  (let [closed (concat points [(first points)])
+        edges  (map vector closed (rest closed))
+        cross  (fn [[[x0 y0] [x1 y1]]] (- (* x0 y1) (* x1 y0)))
+        area   (* 0.5 (reduce + (map cross edges)))
+        weight (fn [i [[x0 y0] [x1 y1] :as edge]]
+                 (* (+ (nth [x0 y0] i) (nth [x1 y1] i)) (cross edge)))]
+    [(/ (reduce + (map #(weight 0 %) edges)) (* 6 area))
+     (/ (reduce + (map #(weight 1 %) edges)) (* 6 area))]))
+
+(def ^:private centroid-tolerance
+  "How far off centre an outline may sit. The shipped plane is itself
+  0.004 off — these are hand-drawn shapes rounded to two decimals, not
+  solved ones — so the bar is the precision the chart already holds to,
+  and anything sloppier is a regression rather than rounding."
+  0.005)
+
+(deftest every-silhouette-is-centred-on-the-anchor
+  (doseq [[icon-id half-outline] layer/half-outlines]
+    (let [[cx cy] (area-centroid (mirrored half-outline))]
+      (testing (str icon-id ": the area centroid sits on the icon anchor")
+        (is (< (abs (- 0.5 cx)) centroid-tolerance)
+            (str icon-id " centroid x is " cx ", not 0.5"))
+        (is (< (abs (- 0.5 cy)) centroid-tolerance)
+            (str icon-id " centroid y is " cy ", not 0.5 — the selection
+                 ring shares this anchor (adsb-89w)")))))
+
+  (testing "each outline is a right half: it starts and ends ON the nose
+            axis, which is what makes the drawn symbol symmetric BY
+            CONSTRUCTION rather than by care"
+    (doseq [[icon-id half-outline] layer/half-outlines]
+      (is (= 0.5 (first (first half-outline)))
+          (str icon-id " must start on the axis"))
+      (is (= 0.5 (first (last half-outline)))
+          (str icon-id " must end on the axis"))
+      (is (every? (fn [[x y]] (and (<= 0.0 x 1.0) (<= 0.0 y 1.0)))
+                  half-outline)
+          (str icon-id " must stay inside the canvas")))))
 
 ;; ---------------------------------------------------------------------
 ;; adsb-2yu.5: THE CLICK CONTRACT. This layer owns exactly one intent —

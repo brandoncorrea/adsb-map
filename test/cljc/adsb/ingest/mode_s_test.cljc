@@ -129,6 +129,72 @@
       (is (= {:aircraft/icao "4840d6"} (decode-delta garbled))))))
 
 ;; ---------------------------------------------------------------------
+;; TC 1-4 — the emitter category, which rides the SAME message as the
+;; callsign: the type code names the category set, the low three bits of
+;; ME byte 0 carry the code within it (adsb-rnp).
+
+(defn- identification-frame
+  "A parity-clean DF17 identification frame for icao 4840d6, carrying the
+  book's KLM1023 callsign bytes under whatever type code and category code
+  a test asks for. Crafted rather than published, because the published
+  vector's own CA is 0 — see below."
+  [type-code category-code]
+  (with-parity (into [0x8d 0x48 0x40 0xd6
+                      (bit-or (bit-shift-left type-code 3) category-code)]
+                     [0x2c 0xc3 0x71 0xc3 0x2c 0xe0])))
+
+(deftest emitter-category
+  (testing "the type code names the SET and the CA code names the member:
+            TC4 is set A, TC3 set B, TC2 set C"
+    (doseq [[[type-code code] expected]
+            {[4 7] "A7"    ; rotorcraft
+             [4 5] "A5"    ; heavy
+             [4 1] "A1"    ; light
+             [3 1] "B1"    ; glider
+             [2 2] "C2"}]  ; surface vehicle — service
+      (is (= expected
+             (:aircraft/category
+               (decode-delta (identification-frame type-code code))))
+          (str "TC" type-code " CA" code " must decode to " expected))))
+
+  (testing "the callsign and the category come off the ONE message
+            together"
+    (is (= {:aircraft/icao "4840d6"
+            :aircraft/callsign "KLM1023"
+            :aircraft/category "A7"}
+           (decode-delta (identification-frame 4 7)))))
+
+  (testing "CA 0 is 'no category information' — the aircraft declined to
+            say, which is ABSENCE and not a category. The published
+            KLM1023 vector is itself a CA-0 frame, so the sky really does
+            send these."
+    (is (not (contains? (decode-delta identification-payload)
+                        :aircraft/category)))
+    (doseq [type-code [4 3 2]]
+      (is (not (contains? (decode-delta (identification-frame type-code 0))
+                          :aircraft/category)))))
+
+  (testing "TC1 is set D, which the spec reserves and the domain does not
+            model — no category, and the aircraft still keeps its callsign"
+    (let [delta (decode-delta (identification-frame 1 3))]
+      (is (= "KLM1023" (:aircraft/callsign delta)))
+      (is (not (contains? delta :aircraft/category)))))
+
+  (testing "every category the decoder can possibly emit is a member of
+            the domain's closed enum — over the WHOLE input space, so the
+            beast path cannot smuggle in a value the poll boundary would
+            have refused"
+    (let [valid? (m/validator schema/emitter-category)]
+      (doseq [type-code (range 1 5)
+              code      (range 8)]
+        (let [category (:aircraft/category
+                         (decode-delta (identification-frame type-code
+                                                             code)))]
+          (is (or (nil? category) (valid? category))
+              (str "TC" type-code " CA" code " decoded to "
+                   (pr-str category))))))))
+
+;; ---------------------------------------------------------------------
 ;; TC 19 — velocity
 
 (deftest ground-speed-velocity

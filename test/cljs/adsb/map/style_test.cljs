@@ -11,9 +11,17 @@
   (:require
     [adsb.aircraft :as aircraft]
     [adsb.map.style :as style]
+    [adsb.schema :as schema]
     [cljs.test :refer-macros [deftest is testing]]))
 
 (def ^:private themes [:day :night])
+
+(def ^:private icon-ids
+  "Every silhouette the style layer may name. adsb.map.aircraft-layer
+  registers exactly these (its own test holds it to that), so an icon in
+  this set is an icon that will actually be drawn."
+  #{style/plane-icon-id style/heavy-icon-id style/light-icon-id
+    style/rotorcraft-icon-id style/vehicle-icon-id style/dot-icon-id})
 
 (deftest layer-is-a-symbol-rotated-by-track
   (doseq [theme themes]
@@ -22,14 +30,93 @@
       (testing "the icon rotates with the reported track, pinned to the ground"
         (is (= ["get" "track"] (get-in spec [:layout :icon-rotate])))
         (is (= "map" (get-in spec [:layout :icon-rotation-alignment]))))
-      (testing "track-less aircraft fall back to a non-directional dot"
-        (is (= ["case" ["has" "track"] style/plane-icon-id style/dot-icon-id]
+      (testing "the icon is chosen per feature (the symbology — see
+                icon-image-is-keyed-on-category below)"
+        (is (= (style/icon-image-expression)
                (get-in spec [:layout :icon-image]))))
       (testing "no aircraft is dropped by label collision"
         (is (true? (get-in spec [:layout :icon-allow-overlap]))))
       (testing "the halo is the edition's own paper — ink survives a busy chart"
         (is (= (:halo-color (style/palette theme))
                (get-in spec [:paint :icon-halo-color])))))))
+
+;; ---------------------------------------------------------------------
+;; The symbology (adsb-rnp). Asserting the expression's literal shape
+;; would pin the wrong thing — what matters is which silhouette a FEATURE
+;; ends up with, so we evaluate the expression the way MapLibre would.
+
+(defn- evaluate
+  "The slice of the MapLibre expression language `icon-image-expression`
+  uses — case / match / has / get / ! — over one feature's `props`.
+  Small enough to be obviously right, which is the point: it lets the
+  tests below assert the SYMBOLOGY (this feature draws that silhouette)
+  rather than the vector we happened to build it from."
+  [expr props]
+  (if-not (vector? expr)
+    expr
+    (let [[op & args] expr]
+      (case op
+        "get"  (get props (first args))
+        "has"  (contains? props (first args))
+        "!"    (not (evaluate (first args) props))
+        "case" (loop [args args]
+                 (if (= 1 (count args))
+                   (evaluate (first args) props)   ; the fallback
+                   (let [[test result & more] args]
+                     (if (evaluate test props)
+                       (evaluate result props)
+                       (recur more)))))
+        "match" (let [input    (evaluate (first args) props)
+                      fallback (last args)
+                      pairs    (partition 2 (butlast (rest args)))]
+                  (or (some (fn [[label output]]
+                              (when (= label input) output))
+                            pairs)
+                      fallback))))))
+
+(defn- icon-for
+  "The silhouette MapLibre would draw for a feature with these properties.
+  STRING keys, because that is what a GeoJSON feature's properties are by
+  the time MapLibre evaluates `[\"has\" \"track\"]` against them — clj->js
+  at the seam (adsb.map.maplibre) turns adsb.geo's keywords into exactly
+  these names."
+  [props]
+  (evaluate (style/icon-image-expression) props))
+
+(deftest icon-image-is-keyed-on-category
+  (testing "the category chooses the silhouette — a helicopter is not
+            drawn as a small airliner"
+    (is (= style/rotorcraft-icon-id (icon-for {"track" 90 "category" "A7"})))
+    (is (= style/heavy-icon-id      (icon-for {"track" 90 "category" "A5"})))
+    (is (= style/heavy-icon-id      (icon-for {"track" 90 "category" "A4"})))
+    (is (= style/light-icon-id      (icon-for {"track" 90 "category" "A1"})))
+    (is (= style/vehicle-icon-id    (icon-for {"track" 90 "category" "C2"}))))
+
+  (testing "NO HEADING BEATS EVERY CATEGORY. A rotorcraft we cannot point
+            is a dot, not a rotorcraft: a symbol rotated to a heading we do
+            not have is a lie, and it is the same lie whichever silhouette
+            tells it."
+    (is (= style/dot-icon-id (icon-for {"category" "A7"})))
+    (is (= style/dot-icon-id (icon-for {"category" "C2"})))
+    (is (= style/dot-icon-id (icon-for {}))))
+
+  (testing "an absent category falls back to the generic plane — no
+            aircraft goes undrawn for want of a classification"
+    (is (= style/plane-icon-id (icon-for {"track" 90}))))
+
+  (testing "a category the symbology does not distinguish is the generic
+            plane too — A3 (large) and A2 (small) are what the plane
+            already draws honestly"
+    (is (= style/plane-icon-id (icon-for {"track" 90 "category" "A3"})))
+    (is (= style/plane-icon-id (icon-for {"track" 90 "category" "A2"}))))
+
+  (testing "EVERY category the domain can carry resolves to a silhouette —
+            over the whole closed enum, so no member of it can ever leave a
+            positioned aircraft unrendered"
+    (doseq [category (rest schema/emitter-category)]
+      (let [icon (icon-for {"track" 90 "category" category})]
+        (is (contains? icon-ids icon)
+            (str category " must draw something we registered"))))))
 
 (deftest altitude-colour-handles-its-three-states
   (doseq [theme themes]

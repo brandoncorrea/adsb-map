@@ -93,6 +93,43 @@
     (is (nil? (coerce/->aircraft "garbage")))
     (is (nil? (coerce/->aircraft 42)))))
 
+(deftest ->aircraft-category
+  (testing "a recognized emitter category is normalized onto the domain
+            aircraft — the symbology channel (adsb-rnp)"
+    (doseq [category ["A1" "A3" "A5" "A7" "B1" "C2" "A0"]]
+      (is (= category
+             (:aircraft/category
+               (coerce/->aircraft (assoc cruising-raw :category category))))
+          (str category " is a category the sky really transmits"))))
+
+  (testing "an aircraft that transmits no category carries none — absent,
+            never a default, so the map can read absence as 'unclassified'
+            and draw the generic plane"
+    (is (not (contains? (coerce/->aircraft (dissoc cruising-raw :category))
+                        :aircraft/category)))
+    (is (not (contains? (coerce/->aircraft (assoc cruising-raw :category nil))
+                        :aircraft/category))))
+
+  (testing "a category outside the closed enum is ABSENCE, never a
+            passthrough — but the AIRCRAFT SURVIVES. The feeder is
+            unauthenticated radio: an unrecognized category costs the
+            FIELD, exactly as an absurd altitude does, and never the
+            aircraft. Anything else would let a made-up category erase a
+            real target from the picture."
+    (doseq [hostile ["A8"           ; no such code — the sets stop at 7
+                     "D1"           ; set D is reserved; nothing emits it
+                     "X9" "a3" ""   ; junk, wrong case, empty
+                     "A3; DROP"     ; a string with intent
+                     42 {:evil true} ["A3"]]]  ; not even a string
+      (let [aircraft (coerce/->aircraft (assoc cruising-raw
+                                               :category hostile))]
+        (is (some? aircraft)
+            (str "a hostile category must not cost the aircraft: "
+                 (pr-str hostile)))
+        (is (= "abc0e4" (:aircraft/icao aircraft)))
+        (is (not (contains? aircraft :aircraft/category))
+            (str "must never pass through: " (pr-str hostile)))))))
+
 (deftest ->aircraft-mlat
   (testing "a type \"mlat\" entry is flagged :aircraft/mlat? true"
     (is (true? (:aircraft/mlat?

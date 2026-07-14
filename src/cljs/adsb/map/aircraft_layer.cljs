@@ -69,14 +69,23 @@
 
   The layer is a MapLibre SYMBOL layer whose paint/layout are pure style
   expressions over each feature's properties (icao, callsign, track,
-  altitude, emergency, stale, age-s, mlat — adsb.geo puts them there). All of that
-  data — the colour ramp, the sizes, the expressions — lives in
-  `adsb.map.style`; this namespace only WIRES it. The icon the layer
-  names in `icon-image` is not a sprite fetched over the network: at load
-  we draw two silhouettes (a directional plane, a non-directional dot) on
-  a detached canvas and register their ImageData via the seam's
-  `add-image!` as SDF images, so `icon-color` can tint them by altitude.
-  No asset file, no network round-trip, no sprite sheet.
+  altitude, emergency, stale, age-s, mlat, category — adsb.geo puts them
+  there). All of that data — the colour ramp, the sizes, the expressions —
+  lives in `adsb.map.style`; this namespace only WIRES it. The icons the
+  layer names in `icon-image` are not a sprite fetched over the network:
+  at load we draw the silhouettes on a detached canvas and register their
+  ImageData via the seam's `add-image!` as SDF images, so `icon-color` can
+  tint them by altitude. No asset file, no network round-trip, no sprite
+  sheet.
+
+  There is a silhouette per emitter CATEGORY the chart distinguishes
+  (adsb-rnp) — a rotorcraft is not a small airliner, a fire tender is not
+  an airliner at all — plus the non-directional dot for an aircraft whose
+  heading we do not know. The shapes are DATA and live below; the choice
+  between them is DATA and lives in adsb.map.style. Both halves obey the
+  same rule: what the aircraft claims to be may change its SHAPE and
+  nothing else, because every other channel is already spoken for
+  (altitude owns colour and size, track owns rotation, age owns opacity).
 
   ## The click contract (this layer owns it)
 
@@ -144,18 +153,35 @@
   style scales to; SDF resamples smoothly if a future skin scales past it."
   32)
 
-;; Normalized [x y] silhouette of a plane pointing UP (north, track 0),
-;; y increasing downward — right half only, nose and tail-tip on the
-;; axis. DATA: the shape is visual design and re-skins here. The left
-;; half is mirrored at draw time, so the plane is always symmetric.
+;; ---------------------------------------------------------------------
+;; The silhouettes. DATA: the shapes are visual design and re-skin here.
 ;;
-;; The area centroid sits on the canvas centre (0.5, 0.5), not the
-;; bounding-box centre. An earlier outline put the wings low so most of
-;; the ink sat below the MapLibre icon anchor — the selection ring
-;; (anchored on the same lat/lon) then looked like it sat above the
-;; plane (adsb-89w). Wings near mid-canvas keep the visual mass on the
-;; pin the ring shares.
+;; Each is a normalized [x y] outline of a symbol pointing UP (north,
+;; track 0), y increasing downward — RIGHT HALF ONLY, first and last
+;; points on the axis. `draw-outline!` mirrors the rest at draw time, so
+;; every symbol is symmetric about the nose axis BY CONSTRUCTION and its
+;; heading therefore reads unambiguously through all 360° of icon-rotate.
+;;
+;; Three rules bind every shape here, and they are what make these CHART
+;; SYMBOLS rather than UI icons (which is why they are not the FontAwesome
+;; paths adsb.ui.icon uses — see adsb-rnp):
+;;
+;; 1. THE AREA CENTROID SITS ON (0.5, 0.5), not the bounding-box centre.
+;;    An earlier outline put the wings low so most of the ink sat below
+;;    the MapLibre icon anchor — the selection ring (anchored on the same
+;;    lat/lon) then looked like it sat above the plane (adsb-89w). Every
+;;    outline below is translated so its centroid lands on the pin the
+;;    ring shares; the aircraft-layer-test asserts it, because an eye
+;;    cannot check a centroid and a regression here is silent.
+;; 2. SYMMETRY ABOUT THE NOSE AXIS, by mirroring rather than by care.
+;; 3. INK WEIGHT AT CHART SIZE. These are never seen at the 32px canvas
+;;    size: the perspective ramp bottoms out at 0.55 (FL400) and ground
+;;    traffic sits at 0.5 (adsb.map.style), so ~16px, tinted, SDF-
+;;    resampled, over a basemap, at density. Fat wings and thick booms are
+;;    why they survive that. Thin tailplanes would not.
+
 (def ^:private plane-half-outline
+  "The generic airframe — the fallback, and most of the sky."
   [[0.50 0.04]    ; nose (on axis)
    [0.55 0.33]    ; wing root, leading edge
    [0.88 0.52]    ; wingtip
@@ -166,13 +192,73 @@
    [0.70 0.81]    ; tailplane tip, trailing
    [0.50 0.74]])  ; tail centre (on axis)
 
-(defn- draw-plane!
-  "Trace the mirrored plane silhouette and fill it."
-  [ctx size]
-  (let [mirrored (->> (rest (butlast plane-half-outline))
+(def ^:private heavy-half-outline
+  "A4/A5 — the wide-body. The generic plane's proportions pushed out:
+  broader span, fatter fuselage, bigger tailplane."
+  [[0.50 0.03]    ; nose (on axis)
+   [0.58 0.30]    ; wing root, leading edge
+   [0.96 0.52]    ; wingtip — the span is the tell
+   [0.96 0.60]    ; wingtip, trailing
+   [0.58 0.46]    ; wing root, trailing edge
+   [0.57 0.70]    ; fuselage, before the tail
+   [0.76 0.80]    ; tailplane tip
+   [0.76 0.85]    ; tailplane tip, trailing
+   [0.50 0.77]])  ; tail centre (on axis)
+
+(def ^:private light-half-outline
+  "A1 (and the gliders and ultralights of set B) — GA. STRAIGHT wings,
+  not swept, and a thin fuselage: the shape does the talking, because the
+  obvious move (draw it smaller) is not available. Size is the altitude
+  channel, and a light aircraft in the pattern is LOW, which the ramp
+  already draws large."
+  [[0.50 0.12]    ; nose (on axis)
+   [0.54 0.36]    ; wing root, leading edge
+   [0.82 0.38]    ; wingtip — barely swept, high aspect
+   [0.82 0.46]    ; wingtip, trailing
+   [0.54 0.48]    ; wing root, trailing edge
+   [0.53 0.74]    ; slim fuselage, before the tail
+   [0.66 0.78]    ; tailplane tip
+   [0.66 0.84]    ; tailplane tip, trailing
+   [0.50 0.80]])  ; tail centre (on axis)
+
+(def ^:private rotorcraft-half-outline
+  "A7 — the rotorcraft. Four blades on a hub, notched between, and a long
+  boom running aft. The rotor X is what says NOT A PLANE at a glance; the
+  boom is what says which way it is pointing, since four-fold blade
+  symmetry alone cannot (a rotor turned 90° looks like the same rotor).
+  Wingless was tried first and reads as a wine glass; a single rotor bar
+  reads as a wing — the exact lie this symbol exists to end."
+  [[0.50 0.34]    ; notch between the forward blades (on axis)
+   [0.72 0.12]    ; forward-right blade, leading corner
+   [0.81 0.21]    ; forward-right blade, trailing corner
+   [0.63 0.43]    ; notch, starboard — the hub
+   [0.81 0.65]    ; aft-right blade, leading corner
+   [0.72 0.74]    ; aft-right blade, trailing corner
+   [0.56 0.70]    ; tail boom, right edge
+   [0.56 0.90]    ; tail boom, aft
+   [0.50 0.90]])  ; tail (on axis)
+
+(def ^:private vehicle-half-outline
+  "C1/C2 — a surface vehicle. Blocky and wingless, because a fire tender
+  is not an aircraft and must not look like one; chamfered at the nose, so
+  that even a symbol whose heading rarely means much still tells the truth
+  about the heading it was given."
+  [[0.50 0.16]    ; nose (on axis)
+   [0.64 0.22]    ; chamfer
+   [0.66 0.38]    ; shoulder
+   [0.66 0.74]    ; flank
+   [0.62 0.80]    ; aft chamfer
+   [0.50 0.81]])  ; tail (on axis)
+
+(defn- draw-outline!
+  "Trace a half-outline mirrored about the nose axis, and fill it. The
+  mirror is why symmetry is a property of the CODE and not of the care
+  taken with the numbers: only the right half is ever written down."
+  [half-outline ctx size]
+  (let [mirrored (->> (rest (butlast half-outline))
                       reverse
                       (map (fn [[x y]] [(- 1.0 x) y])))
-        pts      (concat plane-half-outline mirrored)]
+        pts      (concat half-outline mirrored)]
     (.beginPath ctx)
     (doseq [[i [x y]] (map-indexed vector pts)]
       (if (zero? i)
@@ -202,13 +288,38 @@
       (draw! ctx icon-size-px)
       (.getImageData ctx 0 0 icon-size-px icon-size-px))))
 
+(def half-outlines
+  "Every directional silhouette, by the icon id the style layer names it
+  with. Public because it is DATA and because the centroid rule (1, above)
+  is asserted over exactly this map — an eye cannot check a centroid, so a
+  new outline is covered the moment it is listed here, without anyone
+  remembering to write the test."
+  {style/plane-icon-id      plane-half-outline
+   style/heavy-icon-id      heavy-half-outline
+   style/light-icon-id      light-half-outline
+   style/rotorcraft-icon-id rotorcraft-half-outline
+   style/vehicle-icon-id    vehicle-half-outline})
+
+(def icons
+  "The registry: every icon id the style layer can name, paired with the
+  draw fn that makes it — the outlines above, plus the dot, which is the
+  one symbol that is not an outline (it is a disc, and it has no nose).
+  `icon-image-expression` chooses among exactly these and `register-icons!`
+  adds exactly these, so a silhouette cannot be styled without being drawn
+  (MapLibre warns on a layer naming an absent image) nor drawn without
+  being reachable."
+  (conj (mapv (fn [[icon-id outline]]
+                [icon-id (fn [ctx size] (draw-outline! outline ctx size))])
+              half-outlines)
+        [style/dot-icon-id draw-dot!]))
+
 (defn- register-icons!
-  "Register the plane and dot silhouettes as SDF images, so the symbol
-  layer can name them and `icon-color` can tint them. Must run before the
-  layer is added, or MapLibre reports a missing image."
+  "Register every silhouette as an SDF image, so the symbol layer can name
+  them and `icon-color` can tint them. Must run before the layer is added,
+  or MapLibre reports a missing image."
   [m]
-  (maplibre/add-image! m style/plane-icon-id (->icon-image draw-plane!) {:sdf true})
-  (maplibre/add-image! m style/dot-icon-id (->icon-image draw-dot!) {:sdf true}))
+  (doseq [[icon-id draw!] icons]
+    (maplibre/add-image! m icon-id (->icon-image draw!) {:sdf true})))
 
 ;; Re-click on the already-selected plane arms a delayed deselect so a
 ;; double-click (detail 2 / dblclick event) can cancel it and mean follow

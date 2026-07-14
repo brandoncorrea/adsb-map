@@ -18,7 +18,7 @@
 
 (def ^:private wire-keys
   "Every key aircraft->wire may emit — the documented allowlist."
-  #{:icao :callsign :lat :lon :altitude :on-ground :squawk
+  #{:icao :callsign :lat :lon :altitude :on-ground :squawk :category
     :ground-speed :track :baro-rate :seen-at :position-suspect :mlat})
 
 (def ^:private stats-wire-keys
@@ -58,10 +58,28 @@
             :lon          -83.975953
             :altitude     34775
             :squawk       "6040"
+            :category     "A5"
             :ground-speed 450.5
             :track        97.14
             :baro-rate    -960}
            (wire/aircraft->wire fixtures/ups-2717))))
+
+  (testing "the emitter category rides the wire, and round-trips back to
+            the domain — the browser keys its symbology on it (adsb-rnp)"
+    (is (= "A5" (:category (wire/aircraft->wire fixtures/ups-2717))))
+    (is (= "A5" (:aircraft/category
+                  (wire/wire->aircraft
+                    (wire/aircraft->wire fixtures/ups-2717)))))
+    (is (= "A1" (:category (wire/aircraft->wire fixtures/on-the-ground)))))
+
+  (testing "an aircraft that never transmitted a category carries none —
+            omitted, not nulled, so the map reads absence and draws the
+            generic plane"
+    (let [uncategorized (dissoc fixtures/ups-2717 :aircraft/category)]
+      (is (not (contains? (wire/aircraft->wire uncategorized) :category)))
+      (is (not (contains? (wire/wire->aircraft
+                            (wire/aircraft->wire uncategorized))
+                          :aircraft/category)))))
 
   (testing "an on-the-tarmac aircraft gets on-ground, never an altitude"
     (let [wire-aircraft (wire/aircraft->wire fixtures/on-the-ground)]

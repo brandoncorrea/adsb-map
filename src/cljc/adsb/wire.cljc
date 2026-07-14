@@ -90,6 +90,12 @@
       altitude          :aircraft/altitude-ft       feet
       on-ground         :aircraft/on-ground?        true only, else omitted
       squawk            :aircraft/squawk            four octal digits, string
+      category          :aircraft/category          the ADS-B emitter
+                        category the airframe transmits about itself
+                        (\"A3\", \"A7\", \"C2\" — adsb.schema/emitter-category),
+                        already through the ingest boundary's closed enum,
+                        so the browser may key its symbology on it
+                        (adsb.map.style) without re-checking
       ground-speed      :aircraft/ground-speed-kt   knots
       track             :aircraft/track-deg         degrees from true north
       baro-rate         :aircraft/baro-rate-fpm     feet per minute
@@ -138,8 +144,8 @@
   docstring). An allowlist: keys not named here — including any
   receiver-relative field — never reach the wire."
   [{:aircraft/keys [icao callsign position altitude-ft on-ground? squawk
-                    ground-speed-kt track-deg baro-rate-fpm seen-at-ms
-                    position-suspect? mlat?]}]
+                    category ground-speed-kt track-deg baro-rate-fpm
+                    seen-at-ms position-suspect? mlat?]}]
   (cond-> {:icao icao}
           callsign (assoc :callsign callsign)
           position (assoc :lat (:geo/lat position)
@@ -147,6 +153,7 @@
           altitude-ft (assoc :altitude altitude-ft)
           on-ground? (assoc :on-ground true)
           squawk (assoc :squawk squawk)
+          category (assoc :category category)
           ground-speed-kt (assoc :ground-speed ground-speed-kt)
           track-deg (assoc :track track-deg)
           baro-rate-fpm (assoc :baro-rate baro-rate-fpm)
@@ -267,14 +274,15 @@
 (defn wire->aircraft
   "The inverse projection: one decoded wire aircraft (keywordized JSON)
   back into a domain aircraft. For the browser SSE client (adsb-2yu.2)."
-  [{:keys [icao callsign lat lon altitude on-ground squawk ground-speed
-           track baro-rate seen-at position-suspect mlat]}]
+  [{:keys [icao callsign lat lon altitude on-ground squawk category
+           ground-speed track baro-rate seen-at position-suspect mlat]}]
   (cond-> {:aircraft/icao icao}
           callsign (assoc :aircraft/callsign callsign)
           (and lat lon) (assoc :aircraft/position {:geo/lat lat :geo/lon lon})
           altitude (assoc :aircraft/altitude-ft altitude)
           on-ground (assoc :aircraft/on-ground? true)
           squawk (assoc :aircraft/squawk squawk)
+          category (assoc :aircraft/category category)
           ground-speed (assoc :aircraft/ground-speed-kt ground-speed)
           track (assoc :aircraft/track-deg track)
           baro-rate (assoc :aircraft/baro-rate-fpm baro-rate)
