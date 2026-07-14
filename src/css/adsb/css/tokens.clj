@@ -81,6 +81,14 @@
     ;; --roster-w for the bottom drawer (adsb.css.phone).
     :--roster-w "300px"
 
+    ;; Device safe areas (notch, home indicator, rounded corners). Zero on
+    ;; ordinary desktop. Require viewport-fit=cover on the HTML meta.
+    ;; Chrome clears these on every edge; the map itself stays full-bleed.
+    :--safe-top    "env(safe-area-inset-top, 0px)"
+    :--safe-right  "env(safe-area-inset-right, 0px)"
+    :--safe-bottom "env(safe-area-inset-bottom, 0px)"
+    :--safe-left   "env(safe-area-inset-left, 0px)"
+
     :--paper        "#F5EFDF"                   ; map paper (also the pre-tile backdrop)
     :--paper-chrome "#FBF6E8"                   ; panels, header — a lighter leaf
     :--paper-veil   "rgba(251, 246, 232, 0.92)" ; panel over the chart

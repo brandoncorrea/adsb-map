@@ -23,11 +23,16 @@
           :background  "var(--paper)"   ; the paper shows before the first tile
           :color       "var(--ink)")]
 
-   ;; The shell fills the viewport; the map is its full-bleed background.
+   ;; The shell fills the viewport; the map is its full-bleed background
+   ;; (including under the notch — chrome, not the chart, clears safe areas).
+   ;; 100dvh prefers the dynamic viewport on mobile; 100vh is the fallback.
    [:.adsb-shell
     (decl :position "relative"
           :height   "100vh"
           :overflow "hidden")]
+
+   [:.adsb-shell
+    (decl :height "100dvh")]
 
    [:.adsb-map
     (decl :position   "absolute"

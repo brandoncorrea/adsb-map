@@ -20,11 +20,12 @@
      (decl :--roster-w "48px")]
 
     [:.adsb-alerts
-     (decl :right 0)]
+     ;; Full width under the notch; drawer owns the bottom, not the right.
+     (decl :right "var(--safe-right)")]
 
     [:.adsb-panel
-     (decl :left  "var(--s3)"
-           :right "var(--s3)"
+     (decl :left  "calc(var(--s3) + var(--safe-left))"
+           :right "calc(var(--s3) + var(--safe-right))"
            :width "auto"
            ;; Under the roster drawer (adsb-4ca): a full sheet must cover
            ;; the card so find/list stay reachable; the chip is still on

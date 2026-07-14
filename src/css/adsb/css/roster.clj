@@ -19,9 +19,9 @@
   "Desktop default: side dock."
   [[:.adsb-roster
     (decl :position       "absolute"
-          :top            0
-          :right          0
-          :bottom         0
+          :top            "var(--safe-top)"
+          :right          "var(--safe-right)"
+          :bottom         "var(--safe-bottom)"
           :z-index        2
           :display        "flex"
           :flex-direction "column"
@@ -80,27 +80,38 @@
           :overflow      "hidden"
           :text-overflow "ellipsis")]
 
-   ;; Collapsed rail: vertical label
+   ;; Collapsed rail: vertical label. Health sits ABOVE the label in
+   ;; normal flow (not absolute) so the two never share a pixel —
+   ;; absolute top-center used to paint the pin on the vertical text.
    [".adsb-roster:not(.is-open) .adsb-roster-rail"
-    (decl :flex 1 :border-bottom "none" :padding "var(--s3) var(--s1)")]
+    (decl :flex            1
+          :border-bottom   "none"
+          :padding         "var(--s3) var(--s1)"
+          :align-items     "center"
+          :gap             "var(--s2)")]
 
    [".adsb-roster:not(.is-open) .adsb-roster-handle"
     (decl :flex-direction "column"
           :align-items    "center"
           :gap            "var(--s3)"
           :padding        "var(--s2) 0"
-          :height         "auto")]
+          :height         "auto"
+          :flex           1
+          :min-height     0
+          :width          "100%")]
 
+   ;; Grip bar is a phone drag affordance. On desktop collapsed it only
+   ;; steals height from the vertical label — hide it; the label reopens.
    [".adsb-roster:not(.is-open) .adsb-roster-handle-bar"
-    (decl :width "18px" :height "3px")]
+    (decl :display "none")]
 
    [".adsb-roster:not(.is-open) .adsb-roster-handle-label"
     (decl :writing-mode   "vertical-rl"
           :transform      "rotate(180deg)"
           :letter-spacing "0.1em")]
 
-   ;; Health: pin to the rail's top-right on both stances (desktop open
-   ;; dock used to stack it on its own line under the handle).
+   ;; Health: pin to the rail's top-right when the dock is OPEN. Collapsed
+   ;; desktop re-flows it into the column above the label (below).
    [".adsb-roster .adsb-health"
     (decl :position        "absolute"
           :top             "var(--s3)"
@@ -143,12 +154,18 @@
           :padding       "2px")]
 
    [".adsb-roster:not(.is-open) .adsb-health"
-    ;; Thin collapsed rail: centre the pin under the vertical label.
-    (decl :top             "var(--s3)"
-          :right           "50%"
-          :transform       "translateX(50%)"
+    ;; In-flow, first in the column (DOM is handle then health — order
+    ;; pulls the pin above the vertical label).
+    (decl :position        "static"
+          :top             "auto"
+          :right           "auto"
+          :transform       "none"
+          :order           -1
+          :flex            "none"
           :justify-content "center"
-          :padding         0)]
+          :margin          0
+          :padding         0
+          :z-index         "auto")]
 
    [:.adsb-roster-body
     (decl :flex            1
@@ -285,11 +302,12 @@
    ;; chrome so the (i) never paints on top of the sheet; the control still
    ;; shifts clear of the dock so it stays reachable (OSMF terms).
    [:.maplibregl-ctrl-bottom-right
-    (decl :right "var(--roster-w)")]
+    (decl :right  "calc(var(--roster-w) + var(--safe-right))"
+          :bottom "var(--safe-bottom)")]
 
    [".adsb-roster:not(.is-open) ~ .adsb-map .maplibregl-ctrl-bottom-right,
      .adsb-shell:has(.adsb-roster:not(.is-open)) .maplibregl-ctrl-bottom-right"
-    (decl :right "40px")]])
+    (decl :right "calc(40px + var(--safe-right))")]])
 
 (def phone
   "Phone: bottom pull-up with three snaps (closed / half / full).
@@ -306,43 +324,50 @@
 
      [:.adsb-roster
       (decl :top            "auto"
-            :left           0
-            :right          0
+            :left           "var(--safe-left)"
+            :right          "var(--safe-right)"
             :bottom         0
             :width          "auto"
-            :height         "var(--roster-sheet-h)"
-            :max-height     "var(--roster-sheet-h)"
+            :height         "calc(var(--roster-sheet-h) + var(--safe-bottom))"
+            :max-height     "calc(var(--roster-sheet-h) + var(--safe-bottom))"
             :border-left    "none"
             :border-top     "1px solid var(--rule)"
             :border-radius  "10px 10px 0 0"
             :box-shadow     "0 -6px 20px var(--rule-faint)"
-            :transition     "height 200ms ease-out, max-height 200ms ease-out"
+            ;; Tap-to-cycle still uses CSS height transition. Drag settle
+            ;; is rAF-driven (adsb.ui.roster) and opts out via .is-settling
+            ;; — CSS height expand is unreliable in WebKit.
+            :transition     "height 400ms cubic-bezier(0.22, 1, 0.36, 1), max-height 400ms cubic-bezier(0.22, 1, 0.36, 1)"
             :z-index        4
             ;; A sliver of chart shows past a full sheet — it is still a
-            ;; drawer, not a modal page.
-            :padding-bottom "env(safe-area-inset-bottom, 0px)")]
+            ;; drawer, not a modal page. Content clears the home indicator;
+            ;; the paper itself runs under it so the edge is continuous.
+            :padding-bottom "var(--safe-bottom)"
+            :box-sizing     "border-box")]
 
      [".adsb-roster.is-sheet-closed"
-      (decl :height     "var(--roster-rail-h)"
-            :max-height "var(--roster-rail-h)"
+      (decl :height     "calc(var(--roster-rail-h) + var(--safe-bottom))"
+            :max-height "calc(var(--roster-rail-h) + var(--safe-bottom))"
             :width      "auto")]
 
      [".adsb-roster.is-sheet-half"
-      (decl :height     "52vh"
-            :max-height "52vh")]
+      (decl :height     "calc(52vh + var(--safe-bottom))"
+            :max-height "calc(52vh + var(--safe-bottom))")]
 
      [".adsb-roster.is-sheet-full"
       ;; Mostly full: a band of chart remains above so it reads as a drawer.
-      (decl :height     "92vh"
-            :max-height "92vh")]
+      (decl :height     "calc(92vh + var(--safe-bottom))"
+            :max-height "calc(92vh + var(--safe-bottom))")]
 
-     [".adsb-roster.is-dragging"
+     ;; Finger tracking and rAF settle must not fight a CSS transition.
+     [".adsb-roster.is-dragging,
+       .adsb-roster.is-settling"
       (decl :transition "none")]
 
      [".adsb-roster:not(.is-open)"
       (decl :width "auto"
-            :height "var(--roster-rail-h)"
-            :max-height "var(--roster-rail-h)")]
+            :height "calc(var(--roster-rail-h) + var(--safe-bottom))"
+            :max-height "calc(var(--roster-rail-h) + var(--safe-bottom))")]
 
      [:.adsb-roster-rail
       (decl :position        "relative"
@@ -375,6 +400,10 @@
      [:.adsb-roster-handle-bar
       (decl :width "36px" :height "3px")]
 
+     ;; Phone always wants the grip — override the desktop collapsed hide.
+     [".adsb-roster:not(.is-open) .adsb-roster-handle-bar"
+      (decl :display "block" :width "36px" :height "3px")]
+
      [:.adsb-roster-handle-label
       (decl :padding-bottom "1px")]
 
@@ -387,13 +416,16 @@
      [".adsb-roster:not(.is-open) .adsb-roster-handle-label"
       (decl :writing-mode "horizontal-tb" :transform "none")]
 
-     ;; Phone always pins health top-right — clear the desktop-collapsed
-     ;; centering transform from the base dock rules.
+     ;; Phone always pins health top-right (absolute), including when
+     ;; the sheet is closed. Desktop collapsed uses in-flow order:-1;
+     ;; reassert the pin so phone does not inherit that stack.
      [".adsb-roster .adsb-health,
        .adsb-roster:not(.is-open) .adsb-health"
-      (decl :top             "var(--s3)"
+      (decl :position        "absolute"
+            :top             "var(--s3)"
             :right           "var(--s3)"
             :transform       "none"
+            :order           "initial"
             :justify-content "center")]
 
      [".adsb-roster .adsb-conn-reconnecting,
@@ -407,27 +439,28 @@
      ;; drawer at every snap — closed rail, half, full — so the OSMF credit
      ;; remains reachable without painting on top of the sheet.
      [:.maplibregl-ctrl-bottom-right
-      (decl :right  0
-            :bottom "calc(var(--roster-sheet-h) + env(safe-area-inset-bottom, 0px))"
-            :z-index 1)]
+      (decl :right  "var(--safe-right)"
+            :bottom "calc(var(--roster-sheet-h) + var(--safe-bottom))"
+            :z-index 1
+            :transition "bottom 400ms cubic-bezier(0.22, 1, 0.36, 1)")]
 
      ;; Desktop dock clearance sets right:40px when the roster is not
      ;; .is-open. On phone "closed" is also not .is-open, so that rule
-     ;; inset the (i) from the right edge — reassert flush-right for every
+     ;; inset the (i) from the right edge — reassert safe-right for every
      ;; phone snap, closed included (adsb-4ca).
      [".adsb-shell:has(.adsb-roster) .maplibregl-ctrl-bottom-right"
-      (decl :right 0)]
+      (decl :right "var(--safe-right)")]
 
      [".adsb-shell:has(.adsb-roster.is-sheet-closed) .maplibregl-ctrl-bottom-right,
        .adsb-shell:has(.adsb-roster:not(.is-open)) .maplibregl-ctrl-bottom-right"
-      (decl :right  0
-            :bottom "calc(var(--roster-rail-h) + env(safe-area-inset-bottom, 0px))")]
+      (decl :right  "var(--safe-right)"
+            :bottom "calc(var(--roster-rail-h) + var(--safe-bottom))")]
 
      [".adsb-shell:has(.adsb-roster.is-sheet-half) .maplibregl-ctrl-bottom-right"
-      (decl :bottom "calc(52vh + env(safe-area-inset-bottom, 0px))")]
+      (decl :bottom "calc(52vh + var(--safe-bottom))")]
 
      [".adsb-shell:has(.adsb-roster.is-sheet-full) .maplibregl-ctrl-bottom-right"
-      (decl :bottom "calc(92vh + env(safe-area-inset-bottom, 0px))")]]))
+      (decl :bottom "calc(92vh + var(--safe-bottom))")]]))
 
 (def styles
   [dock phone])

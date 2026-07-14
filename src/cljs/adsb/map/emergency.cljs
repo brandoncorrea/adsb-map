@@ -309,17 +309,35 @@
                    (str "Emergency: " name* ", " distance
                         " off screen. Select aircraft."))))
 
+(defn- css-px
+  "Resolved px for a custom property on :root (e.g. --safe-top). 0 when
+  missing or unparseable — desktop and most browsers report 0."
+  [prop]
+  (let [raw (some-> js/document
+                    .-documentElement
+                    js/getComputedStyle
+                    (.getPropertyValue prop)
+                    str
+                    .trim)
+        n   (when (seq raw) (js/parseFloat raw))]
+    (if (js/isFinite n) n 0)))
+
 (defn- chrome-insets-px
   "How far, in px, the arrow's centre must sit from each viewport edge
-  to clear the frame, the chrome on it, and its own extent. The map is
-  full-viewport (adsb.map.view), so the window size IS the canvas size
-  — the one pixel fact this namespace allows itself to read."
+  to clear the frame, the chrome on it, the device safe area, and its
+  own extent. The map is full-viewport (adsb.map.view), so the window
+  size IS the canvas size — the one pixel fact this namespace allows
+  itself to read."
   []
-  (let [phone? (<= (.-innerWidth js/window) phone-max-width-px)]
-    {:top    (+ notam-strip-px arrow-half-height-px edge-air-px)
-     :right  (+ (if phone? 0 roster-px) arrow-half-width-px edge-air-px)
-     :bottom (+ (if phone? roster-phone-rail-px 0) arrow-half-height-px edge-air-px)
-     :left   (+ arrow-half-width-px edge-air-px)}))
+  (let [phone? (<= (.-innerWidth js/window) phone-max-width-px)
+        safe-t (css-px "--safe-top")
+        safe-r (css-px "--safe-right")
+        safe-b (css-px "--safe-bottom")
+        safe-l (css-px "--safe-left")]
+    {:top    (+ safe-t notam-strip-px arrow-half-height-px edge-air-px)
+     :right  (+ safe-r (if phone? 0 roster-px) arrow-half-width-px edge-air-px)
+     :bottom (+ safe-b (if phone? roster-phone-rail-px 0) arrow-half-height-px edge-air-px)
+     :left   (+ safe-l arrow-half-width-px edge-air-px)}))
 
 (defn- edge->lng-lat
   "The arrow's pin: the pure edge fractions as a marker [lng lat] pulled

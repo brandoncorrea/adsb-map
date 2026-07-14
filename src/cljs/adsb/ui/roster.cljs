@@ -96,10 +96,45 @@
   the phone stance and the attribution's closed clearance (adsb-rsm)."
   48)
 
+(defn- css-px
+  "Resolved px for a :root custom property. 0 when missing."
+  [prop]
+  (let [raw (some-> js/document
+                    .-documentElement
+                    js/getComputedStyle
+                    (.getPropertyValue prop)
+                    str
+                    .trim)
+        n   (when (seq raw) (js/parseFloat raw))]
+    (if (js/isFinite n) n 0)))
+
+(defn- closed-sheet-min-px
+  "Minimum phone sheet height while dragging — rail plus home-indicator."
+  []
+  (+ closed-rail-px (css-px "--safe-bottom")))
+
 (def ^:const drag-velocity-threshold
   "px/ms. Faster than this commits to the next snap in the swipe
   direction instead of nearest-by-distance — the keyboard-drawer feel."
   0.45)
+
+(def ^:const settle-ms
+  "Snap settle duration after a drag release. Driven by rAF (not CSS
+  height transitions — those expand poorly in WebKit)."
+  420)
+
+(defn- prefers-reduced-motion?
+  []
+  (boolean
+    (and (exists? js/window)
+         (.-matchMedia js/window)
+         (.-matches (.matchMedia js/window "(prefers-reduced-motion: reduce)")))))
+
+(defn ease-out-cubic
+  "t in 0..1 → eased progress. Soft landing; matches the keyboard-drawer feel."
+  [t]
+  (let [u (- 1.0 (max 0.0 (min 1.0 t)))]
+    (- 1.0 (* u u u))))
 
 (defn sheet-open?
   "True when the sheet shows its body (half or full). Desktop open/closed
@@ -304,16 +339,64 @@
   []
   (or (some-> js/window .-innerHeight) 1))
 
+(defn sheet-height-px
+  "Rendered height of a snap in CSS pixels. Mirrors adsb.css.roster's
+  phone sheet rules (fraction of viewport + safe-bottom, border-box)."
+  [sheet]
+  (let [vh   (viewport-height)
+        safe (css-px "--safe-bottom")
+        frac (get sheet-heights sheet 0.52)]
+    (if (= :closed sheet)
+      (+ closed-rail-px safe)
+      (+ (* frac vh) safe))))
+
 (defn- pointer-y
   [^js e]
   (or (.-clientY e)
       (some-> (.-touches e) (aget 0) .-clientY)
       0))
 
+(defn- roster-el
+  "The live roster root, if mounted."
+  []
+  (.querySelector js/document "[data-testid=\"roster\"]"))
+
+(defn- set-sheet-height-px!
+  "Write height on the live element. Used during rAF settle so we do not
+  re-render Reagent sixty times a second (that alone made expand feel hard)."
+  [el h]
+  (when el
+    (let [px (str h "px")]
+      (set! (.. el -style -height) px)
+      (set! (.. el -style -maxHeight) px))))
+
+(defn- clear-sheet-height!
+  "Hand geometry back to the snap class."
+  [el]
+  (when el
+    (set! (.. el -style -height) "")
+    (set! (.. el -style -maxHeight) "")))
+
+(defn- cancel-settle!
+  "Abort an in-flight rAF settle (new drag, unmount).
+  `!raf` / `!settle-h` are plain atoms so the animation never rides the
+  reactive path; live aircraft re-renders re-apply `!settle-h` in
+  component-did-update instead of wiping it."
+  [!drag !raf !settle-h]
+  (when-let [id @!raf]
+    (js/cancelAnimationFrame id)
+    (reset! !raf nil))
+  (when (or @!settle-h (:settling? @!drag))
+    (clear-sheet-height! (roster-el))
+    (reset! !settle-h nil)
+    (when (:settling? @!drag)
+      (reset! !drag nil))))
+
 (defn- on-handle-pointer-down!
   "Start a drag session. Only the primary button / first touch counts."
-  [!drag ^js e]
+  [!drag !raf !settle-h ^js e]
   (when (or (nil? (.-button e)) (zero? (.-button e)))
+    (cancel-settle! !drag !raf !settle-h)
     (let [y0  (pointer-y e)
           el  (.-currentTarget e)
           root (.closest el ".adsb-roster")
@@ -337,7 +420,7 @@
             t   (js/performance.now)
             dy  (- start-y y)                 ; up = grow the sheet
             vh  (viewport-height)
-            h   (max closed-rail-px (min vh (+ start-h dy)))
+            h   (max (closed-sheet-min-px) (min vh (+ start-h dy)))
             dt  (max 1 (- t last-t))
             vy  (/ (- last-y y) dt)]          ; positive = opening
         (swap! !drag assoc
@@ -347,22 +430,71 @@
                :height h)
         (.preventDefault e)))))
 
+(defn- settle-sheet-after-drag!
+  "rAF height settle after a drag release — same path for expand and
+  collapse.
+
+  CSS `height` transitions are asymmetric in practice (WebKit especially).
+  Driving every frame in pixels with ease-out-cubic makes both directions
+  identical.
+
+  Heights live in a plain atom + direct DOM writes. Live traffic still
+  re-renders the roster; component-did-update re-stamps `!settle-h` so
+  those paints cannot snap the sheet back to the class height."
+  [!drag !raf !settle-h release-h target-sheet]
+  (cancel-settle! !drag !raf !settle-h)
+  (let [from (double (or release-h (sheet-height-px target-sheet)))
+        to   (double (sheet-height-px target-sheet))
+        dist (js/Math.abs (- to from))
+        el   (roster-el)]
+    (cond
+      (or (prefers-reduced-motion?) (< dist 0.5) (nil? el))
+      (do (clear-sheet-height! el)
+          (reset! !settle-h nil)
+          (reset! !drag nil))
+
+      :else
+      (let [t0 (js/performance.now)]
+        (reset! !settle-h from)
+        (reset! !drag {:settling? true})
+        (set-sheet-height-px! el from)
+        (letfn [(frame [now]
+                  (if-not (:settling? @!drag)
+                    (reset! !raf nil)
+                    (let [elapsed (- now t0)
+                          p       (min 1.0 (/ elapsed settle-ms))
+                          e       (ease-out-cubic p)
+                          h       (+ from (* e (- to from)))]
+                      (reset! !settle-h h)
+                      (set-sheet-height-px! el h)
+                      (if (< p 1.0)
+                        (reset! !raf (js/requestAnimationFrame frame))
+                        (do
+                          (clear-sheet-height! el)
+                          (reset! !settle-h nil)
+                          (reset! !raf nil)
+                          (reset! !drag nil))))))]
+          (reset! !raf (js/requestAnimationFrame frame)))))))
+
 (defn- on-handle-pointer-up!
   "End a drag. A real swipe snaps; a tap leaves the sheet alone so the
   trailing click can cycle. `!suppress-click` blocks the double-fire that
   would otherwise follow a snap."
-  [!drag !suppress-click sheet ^js e]
+  [!drag !raf !settle-h !suppress-click sheet ^js e]
   (when (:active? @!drag)
     (let [{:keys [height velocity start-y last-y]} @!drag
           vh     (viewport-height)
           moved? (> (js/Math.abs (- (or start-y 0) (or last-y 0))) 6)
           frac   (if (and height (pos? vh))
                    (/ height vh)
-                   (get sheet-heights sheet 0.52))]
+                   (get sheet-heights sheet 0.52))
+          target (height-fraction->sheet frac velocity)]
       (when moved?
         (reset! !suppress-click true)
-        (rf/dispatch [:roster/set-sheet (height-fraction->sheet frac velocity)]))
-      (reset! !drag nil)
+        (rf/dispatch [:roster/set-sheet target])
+        (settle-sheet-after-drag! !drag !raf !settle-h height target))
+      (when-not moved?
+        (reset! !drag nil))
       (when (.-releasePointerCapture (.-currentTarget e))
         (try
           (.releasePointerCapture (.-currentTarget e) (.-pointerId e))
@@ -442,6 +574,10 @@
         selected        (rf/subscribe [:aircraft/selected-icao])
         hovered         (rf/subscribe [:aircraft/hovered-icao])
         !drag           (r/atom nil)
+        ;; Settle bookkeeping — plain atoms so rAF never re-renders, and
+        ;; live picture updates re-stamp height in did-update.
+        !raf            (atom nil)
+        !settle-h       (atom nil)
         !suppress-click (atom false)
         !prev-selected  (atom nil)
         !scroll-track   (atom nil)]
@@ -459,10 +595,17 @@
                          ;; before we ask the browser to scroll to it.
                          (r/after-render #(scroll-row-into-view! icao)))
                        (reset! !prev-selected icao))))))
+       :component-did-update
+       (fn [_]
+         ;; Picture/SSE re-renders wipe inline styles; re-apply the live
+         ;; settle height so expand does not jump back to the snap class.
+         (when-let [h @!settle-h]
+           (set-sheet-height-px! (roster-el) h)))
        :component-will-unmount
        (fn [_]
          (some-> @!scroll-track r/dispose!)
-         (reset! !scroll-track nil))
+         (reset! !scroll-track nil)
+         (cancel-settle! !drag !raf !settle-h))
        :reagent-render
        (fn []
          (let [sheet*  @sheet
@@ -473,15 +616,26 @@
                n       (count rows*)
                sel*    @selected
                drag    @!drag
-               drag-h  (when (:active? drag) (:height drag))
-               style   (when drag-h
-                         {:height (str drag-h "px") :max-height "none"})]
+               ;; Live drag: Reagent style. Settle: also declare height here
+               ;; so a mid-settle re-render (SSE picture) does not clear the
+               ;; inline style for a frame before did-update re-stamps it —
+               ;; that one-frame flash was the hard expand snap.
+               style   (cond
+                         (:active? drag)
+                         {:height (str (:height drag) "px") :max-height "none"}
+
+                         (:settling? drag)
+                         (when-let [h @!settle-h]
+                           {:height (str h "px") :max-height (str h "px")})
+
+                         :else nil)]
            [:div.adsb-roster
             (cond-> {:data-testid "roster"
                      :data-open   (if open?* "true" "false")
                      :data-sheet  (name sheet*)
                      :class       [(when open?* "is-open")
                                    (when (:active? drag) "is-dragging")
+                                   (when (:settling? drag) "is-settling")
                                    (str "is-sheet-" (name sheet*))]}
               style (assoc :style style))
             [:div.adsb-roster-rail
@@ -491,10 +645,11 @@
                :aria-label      (handle-aria-label sheet*)
                :data-testid     "roster-toggle"
                :data-sheet      (name sheet*)
-               :on-pointer-down #(on-handle-pointer-down! !drag %)
+               :on-pointer-down #(on-handle-pointer-down! !drag !raf !settle-h %)
                :on-pointer-move #(on-handle-pointer-move! !drag %)
-               :on-pointer-up   #(on-handle-pointer-up! !drag !suppress-click sheet* %)
-               :on-pointer-cancel #(reset! !drag nil)
+               :on-pointer-up   #(on-handle-pointer-up! !drag !raf !settle-h !suppress-click sheet* %)
+               :on-pointer-cancel #(when (:active? @!drag)
+                                     (reset! !drag nil))
                :on-click        #(on-handle-click! !suppress-click)}
               [:span.adsb-roster-handle-bar {:aria-hidden true}]
               [:span.adsb-roster-handle-label

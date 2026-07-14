@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- viewport-fit=cover is what makes env(safe-area-inset-*) non-zero
+         on notched phones; without it the UA letterboxes and chrome
+         cannot clear the home indicator / notch. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <!-- The chart ships in two printed editions (docs/design-direction.md):
          declaring both lets the UA match form controls and scrollbars to
          the edition prefers-color-scheme selects. -->

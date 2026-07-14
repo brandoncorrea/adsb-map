@@ -10,10 +10,10 @@
 (def styles
   [[:.adsb-alerts
     (decl :position      "absolute"
-          :top           0                 ; the top edge is the map's; there is no header
-          :left          0
-          :right         "var(--roster-w)" ; clear of the roster dock on the right edge
-          :z-index       3                 ; above the map, the panel, the Stack
+          :top           "var(--safe-top)"
+          :left          "var(--safe-left)"
+          :right         "calc(var(--roster-w) + var(--safe-right))"
+          :z-index       3                 ; above the map, the panel, the roster
           :display       "flex"
           :align-items   "stretch"
           :background    "var(--emergency)"

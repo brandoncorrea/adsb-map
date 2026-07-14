@@ -63,7 +63,18 @@
   (testing "open? is half or full"
     (is (false? (roster/sheet-open? :closed)))
     (is (true?  (roster/sheet-open? :half)))
-    (is (true?  (roster/sheet-open? :full)))))
+    (is (true?  (roster/sheet-open? :full))))
+  (testing "snap heights are ordered closed < half < full"
+    (let [c (roster/sheet-height-px :closed)
+          h (roster/sheet-height-px :half)
+          f (roster/sheet-height-px :full)]
+      (is (< c h f))
+      (is (pos? c))))
+  (testing "ease-out-cubic is identity at ends and soft in the middle"
+    (is (= 0.0 (roster/ease-out-cubic 0)))
+    (is (= 1.0 (roster/ease-out-cubic 1)))
+    (is (< 0.5 (roster/ease-out-cubic 0.5) 1.0)
+        "front-loaded progress so the settle decelerates into the snap")))
 
 (deftest handle-label-matches-stance-actions
   (testing "desktop is binary: open says hide, closed says show"

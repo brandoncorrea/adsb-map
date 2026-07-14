@@ -141,3 +141,22 @@
         night (set (keys tokens/night-tokens))]
     (is (empty? (set/difference night day))
         "every night token must also be defined on :root for the day edition")))
+
+(deftest safe-area-tokens-clear-every-edge
+  ;; Chrome must clear notch / home indicator / landscape rounded corners.
+  ;; Tokens exist on :root; floating chrome references them (not raw env()).
+  (let [day (set (keys tokens/day-tokens))
+        css @css]
+    (doseq [tok [:--safe-top :--safe-right :--safe-bottom :--safe-left]]
+      (is (contains? day tok) (str tok " is a day token")))
+    (doseq [name ["--safe-top" "--safe-right" "--safe-bottom" "--safe-left"]]
+      (is (str/includes? css name)
+          (str name " is emitted into the stylesheet")))
+    (is (str/includes? css "var(--safe-top)")
+        "the NOTAM / panel top path uses the token")
+    (is (str/includes? css "var(--safe-bottom)")
+        "the drawer / attribution bottom path uses the token")
+    (is (str/includes? css "var(--safe-left)")
+        "the panel / strip left path uses the token")
+    (is (str/includes? css "var(--safe-right)")
+        "the dock / strip right path uses the token")))

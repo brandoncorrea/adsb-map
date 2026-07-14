@@ -17,8 +17,9 @@
   [[:.adsb-panel
     card/face
     (decl :position "absolute"
-          :top      "var(--s3)"        ; no header to clear
-          :left     "var(--s3)"        ; map-left; roster owns the right edge
+          ;; Clear the device safe area, then the usual chrome air.
+          :top      "calc(var(--s3) + var(--safe-top))"
+          :left     "calc(var(--s3) + var(--safe-left))"
           :z-index  2
           :width    "288px")]
 
