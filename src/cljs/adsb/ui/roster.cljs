@@ -254,16 +254,46 @@
 ;; ---------------------------------------------------------------------
 ;; Handle label
 
-(defn- handle-label
+(defn phone-stance?
+  "True under the phone media query that owns the bottom drawer. Pure
+  enough for the handle click and label: desktop binary-toggles, phone
+  cycles snaps. Public so tests can redef the media query."
+  []
+  (boolean
+    (and (exists? js/window)
+         (.-matchMedia js/window)
+         (.-matches (.matchMedia js/window "(max-width: 640px)")))))
+
+(defn handle-label
+  "Visible rail copy for the current sheet. Desktop is binary open/closed
+  (hide / show). Phone walks three snaps (show → expand → hide)."
   [sheet n total q]
   (let [count-label (if (str/blank? q)
                       (str n " aircraft")
                       (str n " of " total))]
+    (if (phone-stance?)
+      (case sheet
+        :closed (str count-label " · show")
+        :half   (str count-label " · expand")
+        :full   (str count-label " · hide")
+        (str count-label " · show"))
+      ;; Desktop: open is always "hide" — toggle closes in one step, so
+      ;; "expand" would lie about the next action.
+      (if (sheet-open? sheet)
+        (str count-label " · hide")
+        (str count-label " · show")))))
+
+(defn- handle-aria-label
+  [sheet]
+  (if (phone-stance?)
     (case sheet
-      :closed (str count-label " · show")
-      :half   (str count-label " · expand")
-      :full   (str count-label " · hide")
-      (str count-label " · show"))))
+      :closed "Show aircraft roster"
+      :half   "Expand aircraft roster"
+      :full   "Hide aircraft roster"
+      "Toggle aircraft roster")
+    (if (sheet-open? sheet)
+      "Hide aircraft roster"
+      "Show aircraft roster")))
 
 ;; ---------------------------------------------------------------------
 ;; Drag — pointer events on the phone handle. Local ratom for the live
@@ -337,15 +367,6 @@
         (try
           (.releasePointerCapture (.-currentTarget e) (.-pointerId e))
           (catch :default _ nil))))))
-
-(defn- phone-stance?
-  "True under the phone media query that owns the bottom drawer. Pure
-  enough for the handle click: desktop binary-toggles, phone cycles snaps."
-  []
-  (boolean
-    (and (exists? js/window)
-         (.-matchMedia js/window)
-         (.-matches (.matchMedia js/window "(max-width: 640px)")))))
 
 (defn- on-handle-click!
   "Tap without a meaningful drag. Phone cycles closed → half → full →
@@ -467,11 +488,7 @@
              [:button.adsb-roster-handle
               {:type            "button"
                :aria-expanded   (boolean open?*)
-               :aria-label      (case sheet*
-                                  :closed "Show aircraft roster"
-                                  :half   "Expand aircraft roster"
-                                  :full   "Hide aircraft roster"
-                                  "Toggle aircraft roster")
+               :aria-label      (handle-aria-label sheet*)
                :data-testid     "roster-toggle"
                :data-sheet      (name sheet*)
                :on-pointer-down #(on-handle-pointer-down! !drag %)

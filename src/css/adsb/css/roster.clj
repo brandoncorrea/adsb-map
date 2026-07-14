@@ -37,13 +37,15 @@
     (decl :width "40px")]
 
    [:.adsb-roster-rail
-    (decl :display         "flex"
+    (decl :position        "relative"
+          :display         "flex"
           :flex-direction  "column"
           :align-items     "stretch"
-          :gap             "var(--s2)"
           :flex            "none"
           :border-bottom   "1px solid var(--rule-faint)"
-          :padding         "var(--s3) var(--s2)")]
+          ;; Right padding leaves room for the health pin (top-right).
+          :padding         "var(--s3) 36px var(--s3) var(--s2)"
+          :box-sizing      "border-box")]
 
    [:.adsb-roster-handle
     (decl :display         "flex"
@@ -97,12 +99,56 @@
           :transform      "rotate(180deg)"
           :letter-spacing "0.1em")]
 
-   ;; Health sits under the handle in the open dock; collapses with the rail.
+   ;; Health: pin to the rail's top-right on both stances (desktop open
+   ;; dock used to stack it on its own line under the handle).
    [".adsb-roster .adsb-health"
-    (decl :padding "0 var(--s2)" :justify-content "flex-start")]
+    (decl :position        "absolute"
+          :top             "var(--s3)"
+          :right           "var(--s3)"
+          :margin          0
+          :padding         0
+          :justify-content "center"
+          :align-items     "center"
+          :gap             "var(--s2)"
+          :z-index         1)]
+
+   ;; Printed labels stay in the a11y tree; the pin is dots only.
+   [".adsb-roster .adsb-conn-label,
+     .adsb-roster .adsb-feeder-label"
+    (decl :position    "absolute"
+          :width       "1px"
+          :height      "1px"
+          :margin      "-1px"
+          :padding     0
+          :overflow    "hidden"
+          :clip-path   "inset(50%)"
+          :white-space "nowrap"
+          :border      0)]
+
+   [".adsb-roster .adsb-conn,
+     .adsb-roster .adsb-feeder"
+    (decl :padding      0
+          :border-color "transparent"
+          :background   "transparent")]
+
+   [".adsb-roster .adsb-conn-dot,
+     .adsb-roster .adsb-feeder-dot"
+    (decl :width  "9px"
+          :height "9px")]
+
+   [".adsb-roster .adsb-conn-down,
+     .adsb-roster .adsb-feeder-down"
+    (decl :background    "var(--emergency)"
+          :border-radius "50%"
+          :padding       "2px")]
 
    [".adsb-roster:not(.is-open) .adsb-health"
-    (decl :justify-content "center" :padding 0)]
+    ;; Thin collapsed rail: centre the pin under the vertical label.
+    (decl :top             "var(--s3)"
+          :right           "50%"
+          :transform       "translateX(50%)"
+          :justify-content "center"
+          :padding         0)]
 
    [:.adsb-roster-body
     (decl :flex            1
@@ -341,48 +387,14 @@
      [".adsb-roster:not(.is-open) .adsb-roster-handle-label"
       (decl :writing-mode "horizontal-tb" :transform "none")]
 
-     ;; Health: pin to the rail's top-right, equal inset from top and right
-     ;; (adsb-rsm). Dots only — labels stay in the a11y tree.
-     [".adsb-roster .adsb-health"
-      (decl :position        "absolute"
-            :top             "var(--s3)"
+     ;; Phone always pins health top-right — clear the desktop-collapsed
+     ;; centering transform from the base dock rules.
+     [".adsb-roster .adsb-health,
+       .adsb-roster:not(.is-open) .adsb-health"
+      (decl :top             "var(--s3)"
             :right           "var(--s3)"
-            :margin          0
-            :padding         0
-            :justify-content "center"
-            :align-items     "center"
-            :gap             "var(--s2)")]
-
-     [".adsb-roster .adsb-conn-label,
-       .adsb-roster .adsb-feeder-label"
-      (decl :position    "absolute"
-            :width       "1px"
-            :height      "1px"
-            :margin      "-1px"
-            :padding     0
-            :overflow    "hidden"
-            :clip-path   "inset(50%)"
-            :white-space "nowrap"
-            :border      0)]
-
-     [".adsb-roster .adsb-conn,
-       .adsb-roster .adsb-feeder"
-      (decl :padding      0
-            :border-color "transparent"
-            :background   "transparent")]
-
-     [".adsb-roster .adsb-conn-dot,
-       .adsb-roster .adsb-feeder-dot"
-      (decl :width  "9px"
-            :height "9px")]
-
-     [".adsb-roster .adsb-conn-down,
-       .adsb-roster .adsb-feeder-down"
-      ;; Problem states keep a tinted disc so colour-blind readers still
-      ;; get a shape/colour change even without the printed words.
-      (decl :background   "var(--emergency)"
-            :border-radius "50%"
-            :padding      "2px")]
+            :transform       "none"
+            :justify-content "center")]
 
      [".adsb-roster .adsb-conn-reconnecting,
        .adsb-roster .adsb-feeder-silent,

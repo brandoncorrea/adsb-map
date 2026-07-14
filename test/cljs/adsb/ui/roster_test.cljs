@@ -65,6 +65,19 @@
     (is (true?  (roster/sheet-open? :half)))
     (is (true?  (roster/sheet-open? :full)))))
 
+(deftest handle-label-matches-stance-actions
+  (testing "desktop is binary: open says hide, closed says show"
+    (with-redefs [roster/phone-stance? (constantly false)]
+      (is (= "3 aircraft · hide" (roster/handle-label :half 3 3 "")))
+      (is (= "3 aircraft · hide" (roster/handle-label :full 3 3 "")))
+      (is (= "3 aircraft · show" (roster/handle-label :closed 3 3 "")))
+      (is (= "1 of 3 · hide" (roster/handle-label :half 1 3 "UPS")))))
+  (testing "phone keeps the three-snap ladder"
+    (with-redefs [roster/phone-stance? (constantly true)]
+      (is (= "3 aircraft · show" (roster/handle-label :closed 3 3 "")))
+      (is (= "3 aircraft · expand" (roster/handle-label :half 3 3 "")))
+      (is (= "3 aircraft · hide" (roster/handle-label :full 3 3 ""))))))
+
 (deftest the-roster-renders-the-picture
   (rf-test/run-test-sync
     (rf/dispatch [:test/set-picture (picture)])
