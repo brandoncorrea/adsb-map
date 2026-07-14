@@ -5,23 +5,22 @@
   Chart marginalia for one selected aircraft: a paper card under the header,
   clear of the Stack — ink rule under the title, caption-voice fact labels,
   mono data, em-dashes for facts the sky never reported. It settles in (§6);
-  it never crowds the plot."
-  (:require [adsb.css.decl :refer [decl]]))
+  it never crowds the plot.
+
+  The card's FACE lives in adsb.css.card, shared with the drawer (adsb-l4m):
+  two surfaces floating over one chart must read as two of the same thing.
+  Only the geometry here is the panel's own."
+  (:require [adsb.css.card :as card]
+            [adsb.css.decl :refer [decl]]))
 
 (def card
   [[:.adsb-panel
-    (decl :position      "absolute"
-          :top           "var(--s3)"        ; no header to clear
-          :right         "calc(var(--stack-w) + var(--s3))"
-          :z-index       2
-          :width         "288px"
-          :background    "var(--paper-veil)"
-          :border        "1px solid var(--rule-strong)"
-          :border-radius "2px"
-          :box-shadow    "2px 2px 0 var(--rule-faint)"
-          :color         "var(--ink)"
-          :box-sizing    "border-box"
-          :animation     "adsb-settle 180ms ease-out")]
+    card/face
+    (decl :position "absolute"
+          :top      "var(--s3)"        ; no header to clear
+          :right    "calc(var(--stack-w) + var(--s3))"
+          :z-index  2
+          :width    "288px")]
 
    [:.adsb-panel-header
     (decl :display         "flex"
@@ -38,17 +37,10 @@
           ;; a hostile callsign must not shear the card
           :overflow-wrap  "anywhere")]
 
-   ;; ORDER: `font: inherit` resets font-size; the font-size below it is the
-   ;; one that must survive. See adsb.css.decl.
+   ;; The shared close voice (adsb.css.card), plus this card's own geometry.
    [:.adsb-panel-close
-    (decl :background  "none"
-          :border      "none"
-          :padding     "0 var(--s1)"
-          :color       "var(--faded-ink)"
-          :font        "inherit"
-          :font-size   "var(--t1)"
-          :line-height 1
-          :cursor      "pointer")]
+    card/close
+    (decl :padding "0 var(--s1)")]
 
    [:.adsb-panel-close:hover
     {:color "var(--ink)"}]

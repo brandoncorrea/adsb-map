@@ -559,7 +559,10 @@
         (is (= "1" (.getAttribute el "data-positioned"))
             "but only one of them can be placed")
         (is (some? (.getByText rtl/screen "1/2"))
-            "and the fraction says so without asking anyone to subtract"))))
+            "and the fraction says so without asking anyone to subtract")
+        (is (nil? (.queryByTestId rtl/screen "swatch:traffic"))
+            "and it wears no swatch: a fraction is not a colour, and it keys
+            nothing on the chart"))))
 
   (testing "the census counts the WHOLE picture, not the ruler's roster — an
             aircraft the Stack cannot place is exactly the one the fraction
@@ -849,6 +852,40 @@
       (is (nil? @(rf/subscribe [:aircraft/hovered-icao]))
           "moving without pressing names nothing"))))
 
+(deftest a-released-scrub-puts-the-crosshair-down
+  (testing "release selects what the scrub named AND ends the naming: the
+            hover was the gesture's own annotation, and it usually names a
+            tick the pointer never physically touched — left standing, no
+            mouseout would ever come to clear it (adsb-o7n). The chosen tick
+            stays named through its selection"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups fixtures/squawking-7700])])
+      (render-stack!)
+      (lay-the-ruler-down!)
+      (.pointerDown rtl/fireEvent (ruler) #js {:clientX 160 :clientY 10})
+      (is (= ups-icao @(rf/subscribe [:aircraft/hovered-icao]))
+          "named while the finger is down")
+      (.pointerUp rtl/fireEvent (ruler) #js {:clientX 160 :clientY 10})
+      (is (= ups-icao @(rf/subscribe [:aircraft/selected-icao])) "chosen")
+      (is (nil? @(rf/subscribe [:aircraft/hovered-icao]))
+          "and the crosshair is down"))))
+
+(deftest leaving-the-stack-clears-any-hover-unconditionally
+  (testing "the backstop (adsb-o7n): a hover can outlive the mouseout that was
+            supposed to clear it — the scrub names the NEAREST tick, not the
+            touched one; a hovered tick's node can unmount when its aircraft
+            ages out; a wheel-zoom slides the track out from under a cursor
+            that never moved. Wherever the hover came from, the pointer
+            leaving the Stack ends it"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups])])
+      (render-stack!)
+      (rf/dispatch [:aircraft/hover ups-icao])   ; set behind the mouse's back
+      (is (= ups-icao @(rf/subscribe [:aircraft/hovered-icao])))
+      (.pointerLeave rtl/fireEvent (.querySelector js/document ".adsb-stack"))
+      (is (nil? @(rf/subscribe [:aircraft/hovered-icao]))
+          "no mouseout ever came, and none was needed"))))
+
 (deftest a-cancelled-scrub-chooses-nothing
   (testing "the gesture taken away (a system swipe, a call) selects nobody"
     (rf-test/run-test-sync
@@ -860,6 +897,44 @@
       (.pointerUp rtl/fireEvent (ruler) #js {:clientX 160 :clientY 10})
       (is (nil? @(rf/subscribe [:aircraft/selected-icao]))
           "an interrupted scrub is not a choice"))))
+
+;; ---------------------------------------------------------------------
+;; The zoom, stated (adsb-4w4).
+
+(deftest the-zoom-readout-prints-the-ratio
+  (testing "whole ratios print whole, the rest to one decimal — the reader
+            needs the order of the magnification, not the float behind it"
+    (is (= "×1.5" (stack/zoom-label 1.5)))
+    (is (= "×2" (stack/zoom-label 2)))
+    (is (= "×2.3" (stack/zoom-label 2.2999997)))
+    (is (= "×90" (stack/zoom-label 90)))))
+
+(deftest a-zoomed-ruler-states-it-and-offers-the-way-back
+  (testing "wheel and pinch zoom are otherwise invisible affordances: nothing
+            says the ruler is framing a slice of the sky except the overflow
+            counts, and the only way home was an unadvertised double-click.
+            While zoom > 1 the census row states the view fact; pressing it
+            is the way back"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups])])
+      (rf/dispatch [:stack/set-zoom 4])
+      (render-stack!)
+      (is (some? (.getByText rtl/screen "×4")) "the ratio is stated")
+      (click-and-commit! (.getByTestId rtl/screen "zoom-reset"))
+      (is (= 1 @(rf/subscribe [:stack/zoom])) "back to the whole sky")
+      (is (= stack/full-window @(rf/subscribe [:stack/window]))
+          "the window is the whole sky again, not a stale snapshot of the
+          slice it was framing")
+      (is (nil? (.queryByTestId rtl/screen "zoom-reset"))
+          "and the note goes with the view state it described")))
+
+  (testing "at zoom 1 there is no chip: the whole sky needs no note that you
+            are looking at all of it, and a reset that resets nothing is a
+            door to nowhere — the same rule the count-zero captions keep"
+    (rf-test/run-test-sync
+      (rf/dispatch [:test/set-picture (by-icao [ups])])
+      (render-stack!)
+      (is (nil? (.queryByTestId rtl/screen "zoom-reset"))))))
 
 (deftest the-emergency-tick-screams-in-ink
   (testing "a distress squawk's tick is marked and permanently named —

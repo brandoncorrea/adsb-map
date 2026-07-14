@@ -71,6 +71,60 @@
               (is (< own-block caption)
                   (str sel " must be styled before the caption rule overrides it")))))))))
 
+(defn- blocks-for
+  "Every declaration block for exactly `selector` (grouped selectors don't
+  match — the selector must sit immediately before its own brace)."
+  [css selector]
+  (loop [from 0 acc []]
+    (if-let [start (str/index-of css (str selector " {") from)]
+      (let [end (str/index-of css "}" start)]
+        (recur (inc end) (conj acc (subs css start end))))
+      acc)))
+
+(deftest reduced-motion-wins-every-tie
+  ;; Media queries add no specificity, so the reduce block beats the rules
+  ;; that SET motion only by coming after them. Emitted early it was dead:
+  ;; the panel settled, the dots breathed and the ticks drifted for exactly
+  ;; the readers who asked them not to (adsb-b1j).
+  (let [reduce-at (str/index-of @css "prefers-reduced-motion")]
+    (is (some? reduce-at) "the reduce block is in the stylesheet")
+    (doseq [motion ["animation: adsb-settle"
+                    "animation: adsb-breathe"
+                    "animation: adsb-ring-draw"
+                    "transition: bottom"]]
+      (is (< (str/last-index-of @css motion) reduce-at)
+          (str "every `" motion "` must be emitted before the block that
+               disables it, or the block loses the tie and the motion plays")))))
+
+(deftest the-census-count-prints-in-both-stances
+  ;; EMG never draws a dot cluster and PLOTTED's whole fact is its fraction:
+  ;; a display:none outside the phone block rendered both as bare words on a
+  ;; desktop, and EMG's stated zero was stated invisibly (adsb-be2). A stance
+  ;; may re-justify the count; none may hide it.
+  (let [blocks (blocks-for @css ".adsb-stack-shelf-count")]
+    (is (seq blocks) "the count is styled at all")
+    (doseq [b blocks]
+      (is (not (str/includes? b "display"))
+          "no stance hides (or needs to un-hide) the count"))))
+
+(deftest the-drawer-is-a-card-on-desktop-and-a-sheet-on-phone
+  ;; adsb-l4m: two surfaces floating over one chart must read as two of the
+  ;; same thing. The drawer's base stance is the index card's own face; the
+  ;; phone block re-pins it flush into the corner it slides from.
+  (let [[base phone & extra] (blocks-for @css ".adsb-stack-drawer")]
+    (is (some? base) "the drawer has a base rule")
+    (is (str/includes? base "top: var(--s3)") "the card floats clear of the corner")
+    (is (str/includes? base "border-radius: 2px") "with the card's corners")
+    (is (str/includes? base "background: var(--paper-veil)") "on the card's paper")
+    (is (str/includes? base "animation: adsb-settle") "settling in like one")
+    (is (some? phone) "and the phone stance re-pins it")
+    (is (str/includes? phone "top: 0") "flush into the corner")
+    (is (str/includes? phone "border-radius: 0") "square again")
+    (is (str/includes? phone "var(--stack-w)")
+        "stopping short of the recumbent Stack — the inset that is a phone
+        fact, not a drawer fact")
+    (is (empty? extra) "two stances, two rules, nothing else claiming it")))
+
 (deftest the-night-edition-only-repoints-the-day
   ;; The two editions are one mechanism (adsb-dgb.7). A variable that exists
   ;; only under prefers-color-scheme: dark resolves to NOTHING in the day

@@ -48,8 +48,16 @@
     ["from" (decl :stroke-dashoffset 100)]))
 
 (def reduced-motion
+  "ORDER-CRITICAL: this block must be emitted LAST — after every namespace
+  that sets an animation or transition it disables. Media queries add no
+  specificity, so these ties are broken by source order alone; emitted early
+  (as it once was, riding along in `styles`) every rule here except the
+  !important one was silently dead, and the panel settled, the dots breathed
+  and the ticks drifted for exactly the readers who asked them not to
+  (adsb-b1j). adsb.css.app holds the order; adsb.css-test pins it."
   (at-media {:prefers-reduced-motion :reduce}
     [:.adsb-panel
+     :.adsb-stack-drawer
      ".adsb-selection-ring circle"
      ".adsb-conn-live .adsb-conn-dot"
      ".adsb-feeder-ok .adsb-feeder-dot"
@@ -65,4 +73,6 @@
      (decl :transition "none")]))
 
 (def styles
-  [settle breathe ring-draw mayday-draw reduced-motion])
+  "The keyframes only. `reduced-motion` is NOT here — it is emitted at the
+  END of the cascade by adsb.css.app, where it can actually win."
+  [settle breathe ring-draw mayday-draw])

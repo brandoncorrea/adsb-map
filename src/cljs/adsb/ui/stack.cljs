@@ -308,6 +308,13 @@
      (for [feet (range 0 (inc ceiling-ft) step)]
        [feet (graduation-label feet)]))))
 
+(defn zoom-label
+  "The zoom readout as the chip prints it: ×2 when the ratio lands whole,
+  ×2.3 when it does not. One decimal — the reader needs the order of the
+  magnification, not the float that produced it."
+  [zoom]
+  (str "×" (/ (js/Math.round (* 10 zoom)) 10)))
+
 ;; ---------------------------------------------------------------------
 ;; What the window is hiding. NOTHING MAY VANISH SILENTLY.
 ;;
@@ -465,7 +472,14 @@
   :stack/scrub-end
   (fn [{:keys [db]} _]
     (when-let [icao (:aircraft/hovered-icao db)]
-      {:fx [[:dispatch [:aircraft/select icao]]]})))
+      ;; Select what the scrub left named, then put the crosshair down. The
+      ;; hover was the GESTURE'S annotation, and the gesture is over; left
+      ;; standing, it named a tick the pointer was never actually on, and no
+      ;; mouseout would ever come to clear it (adsb-o7n). The chosen tick
+      ;; stays named — through its selection, which is the channel that
+      ;; owns that fact now.
+      {:fx [[:dispatch [:aircraft/select icao]]
+            [:dispatch [:aircraft/clear-hover]]]})))
 
 ;; ---------------------------------------------------------------------
 ;; Interaction — delegated handlers on the whole Stack, so N ticks cost a
@@ -528,6 +542,31 @@
   [event]
   (when (and (not @!scrubbing?) (event-icao event))
     (rf/dispatch [:aircraft/clear-hover])))
+
+(defn- on-stack-leave!
+  "The pointer has left the Stack entirely, so nothing on it is hovered —
+  said UNCONDITIONALLY, which is what the per-tick mouseout above can never
+  be. mouseout only fires for the tick the pointer is physically ON, and a
+  hover can outlive that: the scrub names the NEAREST tick, not the touched
+  one; a hovered tick's node can unmount when its aircraft ages out or
+  changes band; a wheel-zoom slides the whole track out from under a
+  stationary cursor. Each of those left a label wedged onto the ruler with
+  nothing coming to clear it (adsb-o7n). Wherever the hover came from,
+  leaving the Stack ends it.
+
+  A NATIVE listener (see the :ref below), not a Reagent prop: React
+  synthesizes leave events out of pointerout pairs, and this one fact —
+  the pointer is gone — should not depend on that reconstruction."
+  [_event]
+  (rf/dispatch [:aircraft/clear-hover]))
+
+(defn- watch-stack-leave!
+  "Reagent :ref — hang the native pointerleave listener on the Stack for the
+  element's lifetime. Stable handler + same element makes re-registration on
+  re-render a no-op, and the listener dies with the node."
+  [el]
+  (when el
+    (.addEventListener el "pointerleave" on-stack-leave!)))
 
 ;; ---------------------------------------------------------------------
 ;; ZOOM — the only part of this the platform does not already do.
@@ -643,6 +682,17 @@
   first was becoming is abandoned, and the pinch takes over."
   [event]
   (let [view (.-currentTarget event)]
+    ;; CAPTURE THE POINTER, or lose the gesture's ending. Without capture, a
+    ;; press that releases OFF the ruler delivers its pointerup to whatever
+    ;; is under it there — never to us — and !scrubbing? wedges true, which
+    ;; the guard in on-stack-out! then reads as `mid-scrub` for the rest of
+    ;; the session: every hover-clear swallowed, one label welded to the
+    ;; ruler (adsb-o7n). Captured, up and cancel always come home, and the
+    ;; scrub keeps reading a finger that drifts off the strip — the gesture
+    ;; got MORE forgiving, not just safer. Synthetic pointers (the browser
+    ;; suite's fireEvent) have no active pointer to capture; hence the quiet
+    ;; catch.
+    (try (.setPointerCapture view (.-pointerId event)) (catch :default _))
     (swap! !pointers assoc (.-pointerId event)
            {:x (.-clientX event) :y (.-clientY event)})
     (if (>= (count @!pointers) 2)
@@ -718,17 +768,26 @@
     (apply-zoom! view (* zoom ratio)
                  (pointer-offset view horizontal? (.-clientX event) (.-clientY event)))))
 
+(defn- reset-ruler!
+  "Back to the whole sky — and to the whole colour ramp, which is the ruler's
+  other job. Reached from two doors: the double-click, and the ZOOM chip.
+
+  ONE DISPATCH, NO DOM. The reset is the one zoom whose window needs no
+  arithmetic — it is `full-window`, and :stack/reset-zoom writes it — and
+  whose scroll needs no correcting hand: at zoom 1 the track IS the viewport,
+  so the browser clamps the offset to the head on its own the moment the
+  track shrinks. The old version reached into the DOM anyway, and lost the
+  race apply-zoom! documents: its after-the-render callback ran before the
+  React-owned click commit as often as after, zeroed the scroll against the
+  OLD track, and read back a window that was about to be false — a ruler
+  showing the whole sky wearing a zoomed slice's overflow counts. Computed,
+  not read back; and here there is nothing left to compute."
+  []
+  (rf/dispatch [:stack/reset-zoom]))
+
 (defn- on-ruler-double!
-  "Back to the whole sky — and to the whole colour ramp, which is the ruler's other
-  job."
-  [event]
-  (let [view (.-currentTarget event)]
-    (rf/dispatch [:stack/reset-zoom])
-    (js/requestAnimationFrame
-      (fn []
-        (set! (.-scrollLeft view) 0)
-        (set! (.-scrollTop view) 0)
-        (read-window! view)))))
+  [_event]
+  (reset-ruler!))
 
 (defn- on-ruler-scroll!
   "The reader scrolled — natively, on the compositor, with the platform's own
@@ -882,11 +941,18 @@
   printed on it: PLOTTED shows a fraction and opens onto the gap, so it counts
   the unplotted (`count-text` overrides what is shown). Every other caption
   prints and opens the same set. `expansion`, when given, makes the label an
-  <abbr> carrying the long form."
-  [{:keys [band label expansion color n count-text data interactive? open?]}]
+  <abbr> carrying the long form.
+
+  `swatch?` (default true) — PLOTTED opts out: it is a fraction, not a colour,
+  so it keys nothing and wears no swatch, not even the faded placeholder
+  (which only ever said `nothing of my colour is on the chart` for captions
+  that HAVE a colour to be out of)."
+  [{:keys [band label expansion color n count-text data interactive? open?
+           swatch?]
+    :or   {swatch? true}}]
   (let [testid  (str "shelf:" (name band))
         swatch* (str "swatch:" (name band))
-        body    [[swatch color swatch*]
+        body    [(when swatch? [swatch color swatch*])
                  (if expansion
                    [:abbr.adsb-stack-shelf-label {:title expansion} label]
                    [:span.adsb-stack-shelf-label label])
@@ -979,6 +1045,29 @@
                    :color        (when squawk? color)
                    :interactive? false}]]))
 
+(defn- zoom-chip
+  "The ruler's zoom, STATED — and the way back out of it.
+
+  Wheel and pinch zoom are invisible affordances: nothing on a zoomed ruler
+  says it is framing a twentieth of the sky except the overflow counts at
+  its ends, and the only way home was a double-click nothing advertised
+  (adsb-4w4). So while zoom > 1 this census-row chip states the view fact
+  the way the row states every other fact — `ZOOM ×4.5` — and pressing it
+  is the door back to the whole sky. At zoom 1 it renders nothing at all:
+  the whole sky needs no note that you are looking at all of it, and a
+  reset that resets nothing would be a door to nowhere (the same rule the
+  count-zero captions keep)."
+  [zoom]
+  (when (> zoom 1)
+    [:div.adsb-stack-shelf.adsb-stack-zoom {:role "group" :aria-label "Ruler zoom"}
+     [:button.adsb-stack-shelf-chip
+      {:type        "button"
+       :data-testid "zoom-reset"
+       :title       "Back to the whole sky"
+       :on-click    (fn [_] (reset-ruler!))}
+      [:span.adsb-stack-shelf-label "ZOOM"]
+      [:span.adsb-stack-shelf-count (zoom-label zoom)]]]))
+
 (defn- traffic-caption
   "`PLOTTED 53/63` — how many aircraft the chart can DRAW, over how many the
   feeder can HEAR.
@@ -1018,6 +1107,7 @@
      [census-chip
       {:band          :traffic
        :label         "PLOTTED"
+       :swatch?       false            ; a fraction keys nothing — see census-chip
        :expansion     (str placed " of " total " aircraft plotted; the rest are"
                           " heard but cannot be placed")
        :count-text    (str placed "/" total)
@@ -1154,6 +1244,7 @@
         [:aside.adsb-stack
          {:role          "listbox"
           :aria-label    "Aircraft by altitude"
+          :ref           watch-stack-leave!   ; the hover's backstop (adsb-o7n)
           :on-click      on-stack-click!
           :on-mouse-over on-stack-over!
           :on-mouse-out  on-stack-out!}
@@ -1193,6 +1284,10 @@
                          :hovered-icao  hovered-icao}]
           [overflow-marker {:edge :below :n below :emergency? below-emergency?}]
           [overflow-marker {:edge :above :n above :emergency? above-emergency?}]]
+         ;; The view-state note: only exists while the ruler is framing a
+         ;; slice rather than the sky. First under the ruler, because it is
+         ;; a fact about the ruler and not about the sky's census.
+         [zoom-chip zoom]
          [shelf {:band          :ground
                  :class         "adsb-stack-ground"
                  :label         "GND"

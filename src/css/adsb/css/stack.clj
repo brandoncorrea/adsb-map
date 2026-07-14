@@ -16,6 +16,7 @@
   Its phone geometry lives at the bottom of this file rather than in
   adsb.css.phone, for the same reason."
   (:require
+    [adsb.css.card :as card]
     [adsb.css.decl :refer [decl]]
     [garden.stylesheet :refer [at-media]]))
 
@@ -77,6 +78,9 @@
           :overflow-y        "auto"
           :overscroll-behavior "contain"   ; the sky's ends are not the page's
           :touch-action      "pan-y"
+          ;; an instrument, not a picture — the gaps between ticks say so
+          ;; (the ticks themselves keep their pointer)
+          :cursor            "crosshair"
           :scrollbar-width   "none")]      ; the scale IS the scrollbar
 
    [".adsb-stack-ruler-view::-webkit-scrollbar"
@@ -326,9 +330,17 @@
    ;; thing on the phone's Stack that a finger is asked to press deliberately.
    ;; The caption is its non-interactive twin (the emergency count, which opens
    ;; nothing — the NOTAM ribbon is where you go to act on a distress squawk).
+   ;; The chip fills the shelf's width and is allowed to WRAP: `PLOTTED 53/63`
+   ;; is wider than the column, and before the wrap it simply ran off the
+   ;; screen's edge (adsb-be2). Inline, the count sits justified against the
+   ;; right edge — the index card's own label/value line; wrapped, it takes the
+   ;; next line and keeps that right edge. The phone re-flows the chip into a
+   ;; caption and undoes both (see `phone`).
    [:.adsb-stack-shelf-chip :.adsb-stack-shelf-caption
     (decl :position    "relative"        ; the phone stance hangs hit-slop on it
           :display     "flex"
+          :flex-wrap   "wrap"
+          :width       "100%"
           :align-items "center"
           :gap         "var(--s1)"
           :margin      0
@@ -381,11 +393,15 @@
     (decl :color        "var(--faded-ink)"
           :margin-right "var(--s1)")]
 
-   ;; The count. On the desktop the dots ARE the count, drawn one per
-   ;; aircraft, so the numeral would only say it twice; the phone drops the
-   ;; dots and this is what remains (adsb-hsk).
+   ;; The count PRINTS IN BOTH STANCES (adsb-be2). It hid behind the dot
+   ;; clusters on desktop once — "the dots ARE the count" — but two captions
+   ;; never had dots to stand in for them: EMG draws no cluster, and PLOTTED's
+   ;; entire fact is the fraction. Both rendered as bare words on a desktop,
+   ;; and EMG's stated zero — the whole reason it is permanent — was stated
+   ;; invisibly. A numeral is also simply a better count than thirty identical
+   ;; dots; the dots stay for what they alone can do (cluster, light, select).
    [:.adsb-stack-shelf-count
-    (decl :display              "none"
+    (decl :margin-left          "auto"   ; justified against the shelf's edge
           :font-family          "var(--mono)"
           :font-size            "var(--t-1)"
           :font-variant-numeric "tabular-nums"
@@ -440,23 +456,29 @@
   with the dot rules in `shelves` above (both 0,2,0). They win on SOURCE ORDER
   alone, so this block must stay after that one."
   [[:.adsb-stack-drawer
-    ;; IT IS A DRAWER, NOT A PANEL. Three things follow from that, and all three
-    ;; were wrong when it was first built:
+    ;; IT IS AN INDEX CARD ON THE DESKTOP AND A DRAWER ON THE PHONE (adsb-l4m).
     ;;
-    ;;   * IT BUTTS INTO THE CORNER. No margin, no rounded corners, no border on
-    ;;     the two edges that are off-screen anyway. A gutter between a drawer
-    ;;     and the corner it slides out of is a strip of map you cannot see and
-    ;;     cannot use.
+    ;; The flush corner was right for exactly one stance. On a phone an
+    ;; edge-anchored sheet is the native idiom and a gutter between a drawer
+    ;; and the corner it slides from is a strip of map you cannot use. On a
+    ;; 1440px desktop the same geometry read as a strip stuck in the corner,
+    ;; styled by a different app than the selection card across the screen.
+    ;; So the base stance is the CARD — the same face the panel wears
+    ;; (adsb.css.card), floated clear of the edge — and the phone block below
+    ;; re-pins it into the corner and strips the face back to a sheet.
+    ;;
+    ;; What is true in BOTH stances:
     ;;   * IT IS THE SIZE OF WHAT IS IN IT. `max-content` on both axes: as wide
     ;;     as the longest callsign, as tall as its rows — and a ceiling on each,
     ;;     so a busy band scrolls instead of eating the chart. It held six
-    ;;     callsigns in a 260x752 slab before, which is a panel wearing a
+    ;;     callsigns in a 260x752 slab once, which is a panel wearing a
     ;;     drawer's name.
     ;;   * A QUARTER OF THE SCREEN IS THE MOST IT MAY EVER TAKE. The map is the
     ;;     product (§10); this is a footnote to it.
+    card/face
     (decl :position       "fixed"
-          :top            0
-          :left           0
+          :top            "var(--s3)"
+          :left           "var(--s3)"
           :z-index        4
           :display        "flex"
           :flex-direction "column"
@@ -466,13 +488,11 @@
           ;; onto two lines — which is what a bare 25vw did, and what made the
           ;; drawer look broken rather than small.
           :max-width      "max(25vw, 120px)"
-          :max-height     "calc(100vh - var(--stack-w) - env(safe-area-inset-bottom, 0px))"
-          :background     "var(--paper-chrome)"
-          :border-right   "1px solid var(--rule-strong)"
-          :border-bottom  "1px solid var(--rule-strong)"
-          :box-shadow     "2px 2px 0 var(--rule-faint)"
-          :color          "var(--ink)"
-          :box-sizing     "border-box")]
+          ;; The desktop Stack lives on the RIGHT edge, so the card only has to
+          ;; clear its own inset. (The old 100vh - --stack-w here was the phone
+          ;; stance leaking: it reserved room for a bottom bar that is not
+          ;; there on a desktop. The phone block restores it.)
+          :max-height     "calc(100vh - 2 * var(--s3))")]
 
    [:.adsb-stack-drawer-head
     (decl :display       "flex"
@@ -487,21 +507,15 @@
    [:.adsb-stack-drawer-title
     (decl :color "var(--faded-ink)")]
 
+   ;; The shared close voice (adsb.css.card), in a finger-sized box.
    [:.adsb-stack-drawer-close
+    card/close
     (decl :margin-left "auto"        ; the label leads; the way out sits at the end
           :display     "flex"
           :align-items "center"
           :justify-content "center"
           :width       "24px"
-          :height      "24px"
-          :padding     0
-          :background  "none"
-          :border      "none"
-          :font        "inherit"
-          :font-size   "var(--t1)"
-          :line-height 1
-          :color       "var(--faded-ink)"
-          :cursor      "pointer")]
+          :height      "24px")]
 
    [:.adsb-stack-drawer-close:hover
     (decl :color "var(--ink)")]
@@ -565,8 +579,10 @@
           :border      "none"
           :white-space "nowrap")]
 
+   ;; An ink wash, not a paper swap: the card's own background IS the veil
+   ;; now, so a veil-on-veil hover would be invisible.
    [".adsb-stack-drawer .adsb-stack-tick:hover"
-    (decl :background "var(--paper-veil)")]])
+    (decl :background "var(--rule-faint)")]])
 
 (def phone
   "Phone: the ruler lies down along the bottom edge — identical semantics,
@@ -749,8 +765,32 @@
     [".adsb-stack-shelf > .adsb-stack-tick"
      (decl :display "none")]
 
+    ;; A caption is one breath — `GND 3` — so the desktop's justified,
+    ;; wrappable chip re-flows to its content: no width to justify across,
+    ;; no wrap, the count right beside its label.
+    [:.adsb-stack-shelf-chip :.adsb-stack-shelf-caption
+     (decl :width     "auto"
+           :flex-wrap "nowrap")]
+
     [:.adsb-stack-shelf-count
-     (decl :display "block")]
+     (decl :margin-left 0)]
+
+    ;; THE DRAWER GOES BACK INTO THE CORNER. The card face is the desktop's
+    ;; stance; here an edge sheet is the native idiom, and a gutter between a
+    ;; drawer and the corner it slides from is a strip of map you cannot see
+    ;; and cannot use. Opaque leaf (the veil is for cards the chart shows
+    ;; through around every edge), borders only on the two edges that are
+    ;; on-screen, square corners — and the bottom inset returns: the phone's
+    ;; Stack lies along the bottom edge, and the sheet must stop short of it.
+    [:.adsb-stack-drawer
+     (decl :top           0
+           :left          0
+           :max-height    "calc(100vh - var(--stack-w) - env(safe-area-inset-bottom, 0px))"
+           :background    "var(--paper-chrome)"
+           :border        "none"
+           :border-right  "1px solid var(--rule-strong)"
+           :border-bottom "1px solid var(--rule-strong)"
+           :border-radius 0)]
 
     ;; HIT-SLOP, the ticks' trick again (adsb-4et): the caption prints at
     ;; --t-2, which is nowhere near a finger's 44px, and it now has no box to
