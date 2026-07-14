@@ -50,6 +50,23 @@
     (decl :opacity        0
           :pointer-events "none")]
 
+   ;; Terminal state: the style fetch is out of retries (adsb.ui.splash), so
+   ;; the sheet stays — but now it is a button. The whole sheet is the tap
+   ;; target (adsb.ui.splash sets the onclick), so it reads as one, cursor and
+   ;; all. It NEVER fades: unlike .is-gone this class carries no opacity, so the
+   ;; error stays put until the reader taps to reload.
+   ;;
+   ;; The nested vector is a DESCENDANT selector, not a group: the note stops
+   ;; breathing when the load has failed — a pulse says 'still working', and
+   ;; nothing is. `#adsb-splash.is-error .adsb-splash-note` outranks the bare
+   ;; note rule below, so it wins wherever both apply; the reduced-motion
+   ;; off-switch in adsb.css.motion is a separate concern, untouched here.
+   [:#adsb-splash.is-error
+    (decl :cursor "pointer")
+    [:.adsb-splash-note
+     (decl :animation "none"
+           :color     "var(--ink)")]]
+
    [:.adsb-splash-note
     (decl :font-family    "var(--mono)"
           :font-size      "var(--t0)"

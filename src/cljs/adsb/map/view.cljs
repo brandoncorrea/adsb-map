@@ -72,16 +72,92 @@
 (def ^:const default-center [-82.0 28.0])
 (def ^:const default-zoom 7)
 
+(def ^:const style-fetch-timeout-ms
+  "The ceiling on a SINGLE style fetch before it is abandoned as hung. A style
+  JSON is a few hundred kB; ten seconds is generous for it on a phone that has
+  just woken its radio. Without a ceiling a stalled socket is indistinguishable
+  from a slow one, and the reader waits on the splash forever — the exact bug
+  this bounds (adsb-4oh). An AbortController turns the ceiling into a rejection
+  the retry can act on, not an infinite wait."
+  10000)
+
+(def ^:const style-fetch-retries
+  "How many times a failed style fetch is retried after the first shot — so
+  `style-fetch-retries` + 1 attempts in all. Mobile radios drop and stall the
+  FIRST request far more often than a warmed connection, and a single flake is
+  what leaves the map uncreated and the splash stuck. A handful of backed-off
+  retries turns 'refresh a couple times' into the app doing the refreshing."
+  3)
+
+(defn retry-delay-ms
+  "How long to wait before retry number `n` (0-based), in ms — exponential
+  backoff off an 800 ms base, so successive retries wait 800, 1600, 3200… and
+  a burst of failures does not become a tight refetch loop hammering a provider
+  that is already struggling. A plain fn (not a `^:const`) so tests can redef it
+  to fire retries instantly."
+  [n]
+  (* 800 (js/Math.pow 2 n)))
+
+(defn- fetch-style-once!
+  "One style fetch attempt, bounded by `style-fetch-timeout-ms` via an
+  AbortController. Returns a promise resolving to the style as keywordized
+  Clojure data, and REJECTING on a network error, a non-2xx status, or the
+  timeout firing the abort — the three ways a mobile fetch fails that must all
+  become a retryable rejection, never a silent hang."
+  [url]
+  (let [controller (js/AbortController.)
+        timer      (js/setTimeout #(.abort controller) style-fetch-timeout-ms)]
+    (-> (js/fetch url #js {:signal (.-signal controller)})
+        (.then (fn [res]
+                 (if (.-ok res)
+                   (.json res)
+                   (throw (js/Error. (str "basemap style HTTP " (.-status res)))))))
+        (.then (fn [json] (js->clj json :keywordize-keys true)))
+        (.finally (fn [] (js/clearTimeout timer))))))
+
+(defn retry-fetch!
+  "Drive `attempt!` — a thunk returning a promise — to a result, retrying a
+  rejection up to `retries` times and waiting `(delay-ms n)` before retry `n`
+  (0-based). Calls `on-ok` with the first fulfilment, or `on-fail` with the last
+  error once the retries are spent. The retry ENGINE behind load-style!, factored
+  out so it can be exercised with an injected thunk — no network, and no
+  var-redef straddling the async retry boundary.
+
+  `on-ok` rides the promise's fulfilment branch, so a throw inside it (a mount
+  error downstream) is NOT mistaken for a fetch failure and never triggers a
+  refetch."
+  [attempt! retries delay-ms on-ok on-fail]
+  (letfn [(go [n]
+            (.then (attempt!)
+                   on-ok
+                   (fn [err]
+                     (if (< n retries)
+                       (js/setTimeout #(go (inc n)) (delay-ms n))
+                       (do (js/console.error "basemap style fetch failed" err)
+                           (on-fail err))))))]
+    (go 0)))
+
 (defn load-style!
-  "Fetch the basemap style JSON at `url` and call `cb` with it as Clojure
-  data (keywordized). A seam: tests redef this to hand back a fixture
-  style synchronously — no network, no flake. Errors are left to the
-  browser console; a map that cannot fetch its style has no fallback
-  worth pretending to."
-  [url cb]
-  (-> (js/fetch url)
-      (.then (fn [res] (.json res)))
-      (.then (fn [json] (cb (js->clj json :keywordize-keys true))))))
+  "Fetch the basemap style JSON at `url` and call `on-ok` with it as Clojure
+  data (keywordized). Each attempt is bounded by `style-fetch-timeout-ms` and a
+  rejection is retried `style-fetch-retries` times with growing backoff
+  (`retry-delay-ms`, via `retry-fetch!`); only when the LAST attempt fails does
+  `on-fail` run with the error — the caller's cue to raise the splash's terminal
+  state.
+
+  Why any of this: mobile networks drop and stall the first request often
+  enough that a single shot left the reader on a splash that never cleared, with
+  no recourse but to refresh (adsb-4oh). Now the app does the retrying, and a
+  genuinely dead fetch fails LOUDLY into a tap-to-reload instead of hanging.
+
+  A seam: tests redef this to hand back a fixture style synchronously — no
+  network, no flake."
+  [url on-ok on-fail]
+  (retry-fetch! #(fetch-style-once! url)
+                style-fetch-retries
+                retry-delay-ms
+                on-ok
+                on-fail))
 
 (defn default-map-opts
   "The MapLibre map options the shell boots with, printing `style` (an
@@ -290,7 +366,15 @@
                         (fn [raw]
                           (when-not @!disposed
                             (reset! !raw-style raw)
-                            (mount-map! (theme/sync!))))))
+                            (mount-map! (theme/sync!))))
+                        ;; Every retry is spent and the style never came: the map
+                        ;; cannot be built, so hand the splash its terminal state
+                        ;; (adsb.ui.splash) instead of leaving it breathing over a
+                        ;; map that will never paint. Guarded, like the success
+                        ;; path — a reader who navigated away owns no splash.
+                        (fn [_err]
+                          (when-not @!disposed
+                            (rf/dispatch [:map/load-failed])))))
 
          :component-will-unmount
          (fn [_this]

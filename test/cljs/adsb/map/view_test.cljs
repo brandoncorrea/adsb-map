@@ -14,7 +14,7 @@
     [adsb.map.view :as view]
     [adsb.test-dom :as test-dom]
     [adsb.views :as views]
-    [cljs.test :refer-macros [deftest is testing use-fixtures]]))
+    [cljs.test :refer-macros [deftest is testing use-fixtures async]]))
 
 ;; A throwaway DOM node per mounting test, cleaned up after each — and the
 ;; theme ratom restored, since the mount path syncs it. The root is held
@@ -51,7 +51,9 @@
    :layers  [{:id "background" :type "background"
               :paint {:background-color "#dddddd"}}]})
 
-(defn- stub-load-style! [_url cb] (cb raw-style))
+;; The seam a mounting test wants: hand the style straight to on-ok, no network,
+;; no retries, and never the failure path.
+(defn- stub-load-style! [_url on-ok _on-fail] (on-ok raw-style))
 
 ;; What a reader who has gone somewhere looks like: panned off the boot
 ;; centre and zoomed in to inspect distance. A theme flip must leave this
@@ -94,6 +96,64 @@
      (ease-to! [_ _lng-lat] nil)
      (on-move! [_ _f] nil)
      (on-drag-start! [_ _f] nil))))
+
+;; ---------------------------------------------------------------------
+;; The style fetch is bounded and retried, and fails LOUDLY, not forever — the
+;; mobile bug where one flaked request left the map uncreated and the splash
+;; stuck (adsb-4oh). retry-fetch! is the engine, driven here with an INJECTED
+;; thunk (no network, no wire), and a zero delay so the async proofs are fast.
+;; The engine is tested directly rather than through load-style! so nothing
+;; needs to redef the fetch across the async retry boundary — a with-redefs
+;; would unwind before the retry fires and leak onto the real network.
+
+(deftest retry-backoff-grows
+  (testing "each retry waits strictly longer than the last — backoff, never a
+            tight refetch loop against a struggling provider"
+    (is (< (view/retry-delay-ms 0)
+           (view/retry-delay-ms 1)
+           (view/retry-delay-ms 2)))
+    (is (pos? (view/retry-delay-ms 0)) "and the first wait is real, not zero")))
+
+(deftest retry-fetch-recovers-from-a-flake
+  (testing "a first rejection is retried, and the eventual success reaches
+            on-ok while on-fail never fires"
+    (async done
+      (let [attempts (atom 0)]
+        (view/retry-fetch!
+          (fn []
+            (let [n (swap! attempts inc)]
+              (if (= n 1)
+                (js/Promise.reject (js/Error. "cold radio flake"))
+                (js/Promise.resolve raw-style))))
+          view/style-fetch-retries
+          (constantly 0)
+          (fn [style]
+            (is (= raw-style style) "on-ok gets the style the retry fetched")
+            (is (= 2 @attempts) "one flake, one success — exactly one retry")
+            (done))
+          (fn [_err]
+            (is false "on-fail must not run when a retry recovers")
+            (done)))))))
+
+(deftest retry-fetch-gives-up-after-exhausting-retries
+  (testing "when every attempt rejects, on-fail runs once with the error and
+            on-ok never does — the splash's terminal cue"
+    (async done
+      (let [attempts (atom 0)]
+        (view/retry-fetch!
+          (fn []
+            (swap! attempts inc)
+            (js/Promise.reject (js/Error. "provider down")))
+          view/style-fetch-retries
+          (constantly 0)
+          (fn [_style]
+            (is false "on-ok must never run when the style never arrives")
+            (done))
+          (fn [err]
+            (is (= (inc view/style-fetch-retries) @attempts)
+                "the first shot plus every retry were all tried, then it gave up")
+            (is (some? err) "on-fail carries the failure, not nil")
+            (done)))))))
 
 (deftest default-map-opts-privacy
   (testing "default center is a fixed, whole-degree regional point — never a receiver"
