@@ -75,3 +75,29 @@ capture** off the feeder — tracked as bead **adsb-c75**. Beast carries no
 receiver-position field, so there is nothing to redact here today; a real
 capture must be reviewed against `docs/validation-boundaries.md` before it
 lands.
+
+## sbs-sample.txt
+
+**SYNTHETIC.** An SBS BaseStation capture (ultrafeeder's port 30003 wire
+format) **constructed from the documented CSV format, not recorded** —
+dietpi.local does not resolve from the build machine and the feeder is never
+contacted (see `docs/CLAUDE.md`: never test against a live feeder). Each line
+is one Mode-S message: comma-separated, 22 positional fields, most empty.
+
+It is built to exercise `adsb.ingest.sbs/line->delta` and the SBS Source
+adversarially. Two aircraft accumulate across several messages each
+(`a1b2c3`: a padded callsign, then an airborne position + altitude, a
+velocity, and an emergency squawk; `abcdef`: an on-ground flag, then a
+position), proving fields from separate lines fold into one track. The rest
+are hostile or degenerate and must all be dropped or partially coerced at the
+boundary: a MSG,1 space-padded callsign, empty positional fields throughout, a
+pure garbage line, a non-MSG class line (`STA`, ignored), a truncated line
+carrying only a valid ICAO, a line with an empty ICAO (dropped — the
+accumulator keys on identity), and an out-of-range latitude (the position is
+dropped, the altitude kept — a bad field costs the field, never the aircraft;
+`docs/validation-boundaries.md`).
+
+SBS carries no receiver-position field (no `r_dst`/`r_dir`), so there is
+nothing to redact here. To be **superseded or augmented by a real capture**
+off the feeder — tracked as bead **adsb-c75** — which must be reviewed
+against `docs/validation-boundaries.md` before it lands.
