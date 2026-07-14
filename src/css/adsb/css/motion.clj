@@ -70,6 +70,7 @@
      ".adsb-selection-ring circle"
      ".adsb-conn-live .adsb-conn-dot"
      ".adsb-feeder-ok .adsb-feeder-dot"
+     :.adsb-splash-note
      (decl :animation "none")]
 
     ;; !important because the draw-in rides inline longhands (see above);

@@ -29,12 +29,14 @@
             [adsb.css.phone :as phone]
             [adsb.css.roster :as roster]
             [adsb.css.shell :as shell]
+            [adsb.css.splash :as splash]
             [adsb.css.tokens :as tokens]))
 
 (def stylesheet
   [tokens/styles                                            ; the faces and the two editions
    motion/styles                                            ; §6 — and §7's zero-motion rule
    shell/styles                                             ; the shell, the map, the header
+   splash/styles                                            ; the cold-load splash over the paper
    icon/styles                                              ; the icons — 1em, currentColor
    alerts/styles                                            ; §7 — the NOTAM strip
    panel/styles                                             ; §4 — the index card and its ring

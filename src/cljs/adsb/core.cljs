@@ -9,6 +9,7 @@
     [adsb.stream :as stream]
     [adsb.subs]
     [adsb.ui.aircraft-panel :as aircraft-panel]
+    [adsb.ui.splash]
     [adsb.views :as views]
     [re-frame.core :as rf]
     [reagent.dom.client :as rdom]))

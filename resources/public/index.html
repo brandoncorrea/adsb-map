@@ -23,6 +23,15 @@
   <body>
     <!-- Mount point. adsb.core/init! renders the shell here. -->
     <div id="app"></div>
+    <!-- Cold-load splash. Static, and a SIBLING of #app so React never wipes
+         it: a first-time reader waits on the JS bundle, the basemap style, and
+         the first tile, and a Reagent component cannot cover its own download.
+         So this paints from first frame (app.css is render-blocking in <head>,
+         which dresses #adsb-splash before it is seen) and adsb.ui.splash tears
+         it out once the map's first frame lands. -->
+    <div id="adsb-splash" role="status" aria-live="polite">
+      <div class="adsb-splash-note">Tuning in&hellip;</div>
+    </div>
     <script src="/js/main.js"></script>
   </body>
 </html>

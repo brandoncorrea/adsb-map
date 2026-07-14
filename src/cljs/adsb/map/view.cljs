@@ -203,6 +203,11 @@
                                                     camera))]
                  (reset! !map m)
                  (reset! !live-map m)          ; the camera effect's handle
+                 ;; The chart's first frame is on the table — tear the cold-load
+                 ;; splash out (adsb.ui.splash). Fires on every mount, including a
+                 ;; theme re-print; the dismiss is idempotent, and the splash is
+                 ;; long gone by the first flip anyway.
+                 (maplibre/on-load! m #(rf/dispatch [:map/ready]))
                  ;; The credit shows, and folds five seconds later — the timeout
                  ;; the OSMF guidelines name (see attribution-fold-ms). MapLibre
                  ;; folds it on the first pan or zoom too, which is the other
