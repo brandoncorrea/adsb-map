@@ -52,6 +52,7 @@
   never block; production hands off through a bounded queue and drops
   under pressure rather than stall the radio."
   (:require [adsb.accumulator :as accumulator]
+            [adsb.ingest.plausibility :as plausibility]
             [clojure.tools.logging :as log])
   (:import (java.net InetSocketAddress Socket)))
 
@@ -120,14 +121,24 @@
 ;; The accumulate step the format pumps share
 
 (defn accumulate!
-  "Fold one coerced delta, heard at now-ms, into the Source's picture,
-  then hand the aircraft's FULL MERGED post-accumulate state to the
-  optional :on-delta hook (ns docstring). Runs on the reader thread —
-  the try is load-bearing: a hook that throws must cost that one
-  notification, never the connection, or a broken subscriber would turn
-  every message into a reconnect."
+  "Fold one coerced delta, heard at now-ms, into the Source's picture —
+  FLAGGING IMPOSSIBLE POSITION JUMPS against the aircraft's previous
+  entry as it goes (adsb.ingest.plausibility/accumulate-flagging-jumps,
+  adsb-b36) — then hand the aircraft's FULL MERGED post-accumulate state
+  to the optional :on-delta hook (ns docstring).
+
+  The flagging belongs to this fold and not to the hook's far end: the
+  hook receives an aircraft already merged, its previous position gone,
+  and it feeds a fast lane (offer-delta!) that never consults the state
+  store. Flag here and the mark rides every upsert the aircraft's stream
+  produces, and every snapshot fetch! takes.
+
+  Runs on the reader thread — the try is load-bearing: a hook that throws
+  must cost that one notification, never the connection, or a broken
+  subscriber would turn every message into a reconnect."
   [{:keys [picture on-delta]} delta now-ms]
-  (let [merged (-> (swap! picture accumulator/accumulate delta now-ms)
+  (let [merged (-> (swap! picture plausibility/accumulate-flagging-jumps
+                          delta now-ms)
                    (get (:aircraft/icao delta)))]
     (when on-delta
       (try

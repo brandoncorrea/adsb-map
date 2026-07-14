@@ -145,6 +145,14 @@
   survives goes to the broadcaster's bounded queue
   (broadcast/offer-delta!), which never blocks and drops under pressure.
 
+  Jump flagging needs no wiring here either, and for the same reason it
+  needs none in ingest-batch!: it is composed into the fold each path
+  already runs — adsb.ingest.tcp/accumulate! for a stream, as
+  adsb.state/apply-batch! for a poll (adsb-b36). The aircraft reaching
+  this hook is therefore already marked if it teleported, and it stays
+  marked on every later upsert, which a client applies as a full-state
+  replacement.
+
   The aircraft arrives MERGED, which is what makes the crop's
   drop-the-position-less rule safe here: an altitude-only or
   velocity-only message from an in-crop aircraft carries the position it

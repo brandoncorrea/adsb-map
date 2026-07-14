@@ -1,5 +1,6 @@
 (ns adsb.ingest.plausibility-test
   (:require
+    [adsb.accumulator :as accumulator]
     [adsb.fixtures :as fixtures]
     [adsb.geo :as geo]
     [adsb.ingest.coerce :as coerce]
@@ -252,6 +253,88 @@
                          (+ heard-at gap-ms 1000))
                        (get ups-icao))]
         (is (true? (:aircraft/position-suspect? jumped)))))))
+
+;; ---------------------------------------------------------------------
+;; The streaming fold: flagging per MESSAGE, not per snapshot (adsb-b36)
+;;
+;; The streaming Sources hand each merged delta straight to the
+;; broadcaster, so an unflagged delta is a teleport broadcast as a clean
+;; aircraft — and because a client upsert is a full-state replacement, an
+;; unflagged delta also ERASES a flag the connect-time snapshot delivered.
+;; accumulate-flagging-jumps is the fold that closes both halves.
+
+(def ^:private tampa {:geo/lat 28.0 :geo/lon -82.4})
+
+(defn- delta
+  "A streaming delta: only what the message said, never a stamp of its
+  own (the accumulator stamps it at arrival)."
+  [& {:as fields}]
+  (assoc fields :aircraft/icao ups-icao))
+
+(deftest accumulate-flagging-jumps-flags-the-delta-path
+  (let [heard-at 1000
+        origin   (plausibility/accumulate-flagging-jumps
+                   {} (delta :aircraft/position tampa) heard-at)
+        ;; Tampa to mid-Atlantic in one second: ~2,000 kt-per-second short
+        ;; of physics, and the fingerprint of a spoof.
+        jumped   (plausibility/accumulate-flagging-jumps
+                   origin (delta :aircraft/position mid-atlantic)
+                   (+ heard-at 1000))]
+
+    (testing "a first-heard position has nothing to jump from"
+      (is (not (contains? (get origin ups-icao)
+                          :aircraft/position-suspect?))))
+
+    (testing "a teleporting delta is flagged as it folds in — the merged
+              aircraft the broadcaster upserts carries the mark"
+      (is (true? (:aircraft/position-suspect? (get jumped ups-icao)))))
+
+    (testing "the flag STICKS across every later message: a delta says
+              only what changed and never says 'no longer suspect', so a
+              spoofed track cannot launder its flag away by sending a
+              velocity — the upsert that follows would have erased it"
+      (let [velocity (plausibility/accumulate-flagging-jumps
+                       jumped (delta :aircraft/ground-speed-kt 430.0)
+                       (+ heard-at 2000))
+            settled  (plausibility/accumulate-flagging-jumps
+                       velocity
+                       (delta :aircraft/position
+                              (update mid-atlantic :geo/lat + 0.002))
+                       (+ heard-at 3000))]
+        (is (true? (:aircraft/position-suspect? (get velocity ups-icao))))
+        (is (true? (:aircraft/position-suspect? (get settled ups-icao)))
+            "not even a position consistent with the spoofed one clears it")))
+
+    (testing "a legitimate reception gap — a hill, a banked turn, an
+              antenna null — is ordinary flight, not a jump: the previous
+              entry's stamp is when it was HEARD (adsb-0g0)"
+      (let [moved-on (plausibility/accumulate-flagging-jumps
+                       origin
+                       (delta :aircraft/position
+                              (update tampa :geo/lat + 0.2)) ; ~12 nm
+                       (+ heard-at 100000))                  ; over 100 s
+            aircraft (get moved-on ups-icao)]
+        (is (= (+ heard-at 100000) (:aircraft/seen-at-ms aircraft)))
+        (is (not (contains? aircraft :aircraft/position-suspect?)))))
+
+    (testing "the flagged aircraft still validates — the flag is a domain
+              field, not a smuggled one"
+      (is (m/validate schema/aircraft (get jumped ups-icao))))
+
+    (testing "the flag the deltas earned rides the snapshot the poll loop
+              takes, and the state merge honours it rather than
+              recomputing it away"
+      (let [aircraft (-> {}
+                         (plausibility/merge-batch-flagging-jumps
+                           (accumulator/snapshot jumped (+ heard-at 1000))
+                           (+ heard-at 1000))
+                         ;; ...and the next snapshot, consistent with the
+                         ;; spoofed position, must not clear it either.
+                         (plausibility/merge-batch-flagging-jumps
+                           (accumulator/snapshot jumped (+ heard-at 2000))
+                           (+ heard-at 2000))
+                         (get ups-icao))]
+        (is (true? (:aircraft/position-suspect? aircraft)))))))
 
 ;; ---------------------------------------------------------------------
 ;; Privacy: the receiver's location must never reach a domain aircraft

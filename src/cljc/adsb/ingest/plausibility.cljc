@@ -19,8 +19,17 @@
 
   Pure: the receiver position, the previous picture, and time are all
   arguments. Fetching the receiver position is I/O and lives at the
-  clj edge."
-  (:require [adsb.aircraft :as aircraft]
+  clj edge.
+
+  Both fold seams live here, one per ingest shape, because both are the
+  one place an aircraft's PREVIOUS observation is still in hand:
+  merge-batch-flagging-jumps for the poll path's snapshots
+  (adsb.state/apply-batch!) and accumulate-flagging-jumps for the
+  streaming path's per-message deltas (adsb.ingest.tcp/accumulate!).
+  A flag set on one path is honoured by the other — the streaming
+  snapshot the poll loop takes carries the flag its deltas earned."
+  (:require [adsb.accumulator :as accumulator]
+            [adsb.aircraft :as aircraft]
             [adsb.geo :as geo]))
 
 ;; ---------------------------------------------------------------------
@@ -130,3 +139,31 @@
                                              captured-at-ms
                                              default-max-implied-speed-kt)
                         captured-at-ms))
+
+(defn accumulate-flagging-jumps
+  "adsb.accumulator/accumulate with jump flagging composed in front:
+  flag the delta against the aircraft's previous entry in `picture`,
+  then fold it in. The streaming Sources' fold
+  (adsb.ingest.tcp/accumulate!) — the poll path's
+  merge-batch-flagging-jumps, on the shape a stream delivers.
+
+  It has to be HERE and not further downstream: the streaming fast lane
+  hands each merged aircraft straight to the broadcaster, so a delta
+  flagged nowhere is a teleport broadcast as a clean aircraft (adsb-b36).
+  The delta carries no stamp of its own — heard-at-ms IS when it was
+  heard — so the implied speed is measured from the previous entry's
+  :aircraft/seen-at-ms, which the accumulator stamps honestly at arrival
+  (adsb-0g0): a reception gap reads as a gap, not as a teleport.
+
+  The flag STICKS, where merge-batch recomputes it every snapshot. A
+  delta says only what changed and never carries
+  :aircraft/position-suspect?, so the accumulator's plain merge keeps the
+  flag on the aircraft for the rest of its life in the picture. That is
+  the point of flagging per message: an upsert is a full-state
+  replacement at the client, so a track caught teleporting must not
+  launder the flag away with its very next message."
+  [picture delta heard-at-ms]
+  (accumulator/accumulate picture
+                          (flag-position-jump picture delta heard-at-ms
+                                              default-max-implied-speed-kt)
+                          heard-at-ms))
