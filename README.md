@@ -197,9 +197,9 @@ exactly why the app stamps its own security headers rather than delegating them 
 an edge (see [TLS and the internet edge](#tls-and-the-internet-edge)).
 
 The spec documents every environment variable inline — **read it before the first
-deploy**, in particular the note on `ADSB_TRUSTED_PROXY_HOPS`, which must be
-verified against the running app rather than assumed (see
-[The client address](#the-client-address)).
+deploy**. Note that the per-IP cap does not rest on `ADSB_TRUSTED_PROXY_HOPS`: the
+app reads `CF-Connecting-IP`, and the hop count survives only as a fallback for an
+edge that someday isn't Cloudflare (see [The client address](#the-client-address)).
 
 ```bash
 doctl apps create --spec .do/app.yaml        # first deploy
@@ -210,6 +210,51 @@ Secrets (`ADSB_FEEDER_AUTH_*`, `ADSB_RECEIVER_*`) are `REPLACE_ME` placeholders 
 the committed spec — set the real values as encrypted app-level secrets. Setting
 `ADSB_SOURCE=replay` proves the deployment, and that SSE survives the platform's
 router, with no feeder in the loop at all.
+
+### Redeploy and rollback
+
+The spec sets `deploy_on_push: true` on `master`, so **a push to `master` is a
+deploy**. There is no separate release step, and no staging environment: the branch
+is production. A deploy is a full container build on App Platform's builders —
+shadow-cljs release plus an uberjar — so budget minutes, not seconds. That build
+time is the whole reason the two paths below are not the same path.
+
+**A bad deploy is stopped by the platform, and fixed by git.** Those are different
+moves, and reaching for the second one first means running broken for as long as
+the build takes.
+
+1. **Stop the bleeding — roll back the image.** In the App Platform dashboard, open
+   the app's *Activity* tab, find the last deployment that was good, and use its
+   **Rollback** action. This re-runs an image that has *already been built*, so it
+   is as fast as a container restart. Nothing in git changes, and the app goes back
+   to serving the previous commit's code.
+2. **Fix it forward — revert in git.** Once the site is up again on the old image,
+   land the correction on `master` and push. `deploy_on_push` builds it, and the
+   rollback state resolves on its own.
+
+   ```bash
+   git revert <bad-sha>    # a NEW commit that undoes the old one
+   git push                # deploy_on_push rebuilds and ships it
+   ```
+
+**Prefer `git revert` to `reset --hard` + `git push --force`.** Both get the code
+back, and the force-push *will* deploy — the reverted tree is a new push event, and
+the platform builds it. What the force-push also does is rewrite the history that
+every deployment record points at, so afterwards the deploy log names commits that
+no longer exist, and nobody can reconstruct what was actually running during the
+incident. A revert is one extra commit and costs you nothing you wanted to keep.
+
+Two things a redeploy does *not* do, and which are their own operations:
+
+- **Changing an environment variable or a secret** is a spec change, not a code
+  change: edit `.do/app.yaml` (or the dashboard, for secret *values*) and
+  `doctl apps update <app-id> --spec .do/app.yaml`. It restarts the container; it
+  does not rebuild the image.
+- **Rotating the feeder service token** happens in Cloudflare first and the app
+  second. A token revoked in Cloudflare while the old `ADSB_FEEDER_AUTH_*` secrets
+  are still set means every feeder poll 403s, and the map goes empty while the app
+  stays "healthy" — `/healthz` reports `feeder-status`, so watch it, not the HTTP
+  status.
 
 ### Run the container locally
 
