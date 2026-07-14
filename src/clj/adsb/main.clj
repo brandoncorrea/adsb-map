@@ -216,6 +216,8 @@
                               (config/parse-feed-url feed-url) env on-delta)
              nil nil]))
 
+(declare stop!)
+
 (defn start!
   "Boot the backend from config and return the running system:
 
@@ -272,100 +274,133 @@
                    "WebSockets (hot reload), style-src-attr allows "
                    "'unsafe-inline' (the dev HUD). This is for `bb dev` only — "
                    "it must NEVER be set in a deployed environment.")))
-  (let [;; The delta hook is handed to the Source CONSTRUCTOR, but it
-        ;; targets the broadcaster and the receiver position, which do
-        ;; not exist yet — so it reads them through this late-bound atom
-        ;; (delta->stream! no-ops until it is filled in below). The
-        ;; reader thread must never block, so a promise is out.
-        !fan-out          (atom nil)
-        on-delta          (fn [aircraft now-ms]
-                            (delta->stream! @!fan-out aircraft now-ms))
-        [source feeder-url feeder-auth] (build-source! config on-delta)
-        streaming?        (contains? #{:sbs :beast}
-                                     (config/source-kind (:source config)))
-        receiver-position (receiver/resolve-position! {:env      env
-                                                       :base-url feeder-url
-                                                       :headers  feeder-auth})
-        ;; Throws on a partial or unparseable crop — a privacy control
-        ;; that looks on and is off is worse than one nobody configured
-        ;; (adsb.ingest.crop/env-crop).
-        crop              (crop/env-crop env)
-        accumulator       (stats/create)
-        poller            (poll/start!
-                            {:source    source
-                             :on-batch! #(ingest-batch! receiver-position
-                                                        crop %)})
-        broadcaster       (broadcast/start!
-                            {:picture state/age-out!
-                             ;; The declared boundary, for the connect-time
-                             ;; `config` event: the map draws the edge of
-                             ;; what we publish. Safe on the wire precisely
-                             ;; BECAUSE it is the decoy centre and not the
-                             ;; antenna (adsb.wire/crop->wire). nil crop =
-                             ;; no boundary drawn, never a fallback to the
-                             ;; receiver position.
-                             :crop crop
-                             ;; nil DISABLES the update tick: a streaming
-                             ;; deployment's aircraft flow per delta
-                             ;; (adsb.stream.broadcast, adsb-jpf).
-                             :interval-ms (when-not streaming?
-                                            broadcast/default-interval-ms)
-                             :stats   (fn [picture now-ms]
-                                        (stats/compute!
-                                          accumulator
-                                          {:picture           picture
-                                           :receiver-position receiver-position
-                                           :now-ms            now-ms
-                                           :messages          (:messages
-                                                                (source/metadata
-                                                                  source))}))
-                             :feeder  #(poll/status poller)})
-        http-server       (server/start-server!
-                            {:port           port
-                             :dev-csp?       dev-csp?
-                             :origin-token   origin-token
-                             :feeder-status  #(poll/status poller)
-                             :stream-connect #(broadcast/connect!
-                                                broadcaster %)})]
-    ;; Arm the delta hook (see !fan-out above). From here every message a
-    ;; streaming Source accumulates goes through both gates (admit) and is
-    ;; pushed to the SSE clients the instant it lands.
-    (reset! !fan-out {:receiver-position receiver-position
-                      :crop              crop
-                      :broadcaster       broadcaster})
-    (when-not crop
-      ;; The third of the silent-failure warnings, and the one with the
-      ;; longest fuse. Nothing errors, nothing degrades, the map looks
-      ;; perfect — we simply publish every aircraft the antenna can hear,
-      ;; and the union of those positions is a disc centred on the roof.
-      ;; Whoever wants the antenna does not need to attack anything; they
-      ;; need to collect the feed for an afternoon and take a centroid
-      ;; (adsb.ingest.crop, adsb-au5). Expected under `bb dev` against a
-      ;; fixture; in a public deployment this line is the incident.
-      (log/warn (str "PRIVACY CROP DISABLED (" crop/crop-lat-env "/"
-                     crop/crop-lon-env "/" crop/crop-radius-km-env
-                     " unset): this process publishes EVERY aircraft it "
-                     "receives, so the boundary of the published set is the "
-                     "antenna's own horizon and its centroid is the antenna. "
-                     "Fine on a laptop against a fixture; if this is a "
-                     "public deployment, the receiver's location is "
-                     "recoverable from the feed.")))
-    (when-not (broadcast/trusts-forwarded-for? broadcaster)
-      ;; Same silent-failure family as the two warnings above. A per-IP cap
-      ;; keyed on the socket peer does not error or degrade visibly — it just
-      ;; counts the wrong address forever. This exact gap (ADSB_TRUST_FORWARDED_FOR
-      ;; unset on the deployed app) hid for days behind Cloudflare because
-      ;; nothing said so; adsb-nnk. Correct for a direct `bb dev`; behind a
-      ;; proxy it means the cap is off.
-      (log/warn (str "PER-IP SSE CAP KEYS ON THE SOCKET PEER "
-                     "(ADSB_TRUST_FORWARDED_FOR not \"true\"): behind a proxy "
-                     "the socket peer IS the proxy, so every visitor buckets "
-                     "under one address and the per-IP cap does not bind. "
-                     "Correct for a direct `bb dev`; in a deployment behind "
-                     "Cloudflare / App Platform this is the incident — set it.")))
-    {:system/poller      poller
-     :system/broadcaster broadcaster
-     :system/server      http-server}))
+  (let [;; What has actually come up, for the failure path below. A boot
+        ;; that dies HALFWAY used to leave the layers it had already
+        ;; started running with nobody holding a handle to them
+        ;; (adsb-8lz): the poller is a daemon thread, so a start! that
+        ;; threw at the bind — a second boot while `bb dev` still holds
+        ;; the port, which is how you meet this — went on polling the
+        ;; feeder and writing adsb.state forever, and the next boot's
+        ;; poller raced it over the global picture. Nothing that fails to
+        ;; start may leave anything running.
+        !started          (atom {})]
+    (try
+      (let [;; The delta hook is handed to the Source CONSTRUCTOR, but it
+            ;; targets the broadcaster and the receiver position, which do
+            ;; not exist yet — so it reads them through this late-bound atom
+            ;; (delta->stream! no-ops until it is filled in below). The
+            ;; reader thread must never block, so a promise is out.
+            !fan-out          (atom nil)
+            on-delta          (fn [aircraft now-ms]
+                                (delta->stream! @!fan-out aircraft now-ms))
+            [source feeder-url feeder-auth] (build-source! config on-delta)
+            streaming?        (contains? #{:sbs :beast}
+                                         (config/source-kind (:source config)))
+            receiver-position (receiver/resolve-position!
+                                {:env      env
+                                 :base-url feeder-url
+                                 :headers  feeder-auth})
+            ;; Throws on a partial or unparseable crop — a privacy control
+            ;; that looks on and is off is worse than one nobody configured
+            ;; (adsb.ingest.crop/env-crop).
+            crop              (crop/env-crop env)
+            accumulator       (stats/create)
+            ;; Each layer is recorded in !started AS IT COMES UP, so the
+            ;; catch below can stop exactly what is running and nothing
+            ;; else (adsb-8lz). Everything above this line is inert — a
+            ;; throw there has nothing to clean up.
+            poller            (poll/start!
+                                {:source    source
+                                 :on-batch! #(ingest-batch! receiver-position
+                                                            crop %)})
+            _                 (swap! !started assoc :system/poller poller)
+            broadcaster       (broadcast/start!
+                                {:picture state/age-out!
+                                 ;; The declared boundary, for the connect-time
+                                 ;; `config` event: the map draws the edge of
+                                 ;; what we publish. Safe on the wire precisely
+                                 ;; BECAUSE it is the decoy centre and not the
+                                 ;; antenna (adsb.wire/crop->wire). nil crop =
+                                 ;; no boundary drawn, never a fallback to the
+                                 ;; receiver position.
+                                 :crop crop
+                                 ;; nil DISABLES the update tick: a streaming
+                                 ;; deployment's aircraft flow per delta
+                                 ;; (adsb.stream.broadcast, adsb-jpf).
+                                 :interval-ms (when-not streaming?
+                                                broadcast/default-interval-ms)
+                                 :stats   (fn [picture now-ms]
+                                            (stats/compute!
+                                              accumulator
+                                              {:picture           picture
+                                               :receiver-position receiver-position
+                                               :now-ms            now-ms
+                                               :messages          (:messages
+                                                                    (source/metadata
+                                                                      source))}))
+                                 :feeder  #(poll/status poller)})
+            _                 (swap! !started assoc :system/broadcaster
+                                     broadcaster)
+            http-server       (server/start-server!
+                                {:port           port
+                                 :dev-csp?       dev-csp?
+                                 :origin-token   origin-token
+                                 :feeder-status  #(poll/status poller)
+                                 :stream-connect #(broadcast/connect!
+                                                    broadcaster %)})]
+        ;; Arm the delta hook (see !fan-out above). From here every message a
+        ;; streaming Source accumulates goes through both gates (admit) and is
+        ;; pushed to the SSE clients the instant it lands.
+        (reset! !fan-out {:receiver-position receiver-position
+                          :crop              crop
+                          :broadcaster       broadcaster})
+        (when-not crop
+          ;; The third of the silent-failure warnings, and the one with the
+          ;; longest fuse. Nothing errors, nothing degrades, the map looks
+          ;; perfect — we simply publish every aircraft the antenna can hear,
+          ;; and the union of those positions is a disc centred on the roof.
+          ;; Whoever wants the antenna does not need to attack anything; they
+          ;; need to collect the feed for an afternoon and take a centroid
+          ;; (adsb.ingest.crop, adsb-au5). Expected under `bb dev` against a
+          ;; fixture; in a public deployment this line is the incident.
+          (log/warn (str "PRIVACY CROP DISABLED (" crop/crop-lat-env "/"
+                         crop/crop-lon-env "/" crop/crop-radius-km-env
+                         " unset): this process publishes EVERY aircraft it "
+                         "receives, so the boundary of the published set is the "
+                         "antenna's own horizon and its centroid is the antenna. "
+                         "Fine on a laptop against a fixture; if this is a "
+                         "public deployment, the receiver's location is "
+                         "recoverable from the feed.")))
+        (when-not (broadcast/trusts-forwarded-for? broadcaster)
+          ;; Same silent-failure family as the two warnings above. A per-IP cap
+          ;; keyed on the socket peer does not error or degrade visibly — it just
+          ;; counts the wrong address forever. This exact gap (ADSB_TRUST_FORWARDED_FOR
+          ;; unset on the deployed app) hid for days behind Cloudflare because
+          ;; nothing said so; adsb-nnk. Correct for a direct `bb dev`; behind a
+          ;; proxy it means the cap is off.
+          (log/warn (str "PER-IP SSE CAP KEYS ON THE SOCKET PEER "
+                         "(ADSB_TRUST_FORWARDED_FOR not \"true\"): behind a proxy "
+                         "the socket peer IS the proxy, so every visitor buckets "
+                         "under one address and the per-IP cap does not bind. "
+                         "Correct for a direct `bb dev`; in a deployment behind "
+                         "Cloudflare / App Platform this is the incident — set it.")))
+        {:system/poller      poller
+         :system/broadcaster broadcaster
+         :system/server      http-server})
+      (catch Throwable e
+        ;; A boot that fails leaves NOTHING running (adsb-8lz). stop! takes
+        ;; the partial system, so it stops the layers that made it up and
+        ;; skips the ones that never did. Then the failure carries on out —
+        ;; a misconfigured or unbindable boot must still die loudly.
+        ;;
+        ;; Silent when nothing had started: a bad ADSB_SOURCE or feeder URL
+        ;; throws before the first thread exists (Boundary 3), and that
+        ;; failure is already loud on its own. Only a boot that leaves
+        ;; wreckage reports having cleaned it up.
+        (when (seq @!started)
+          (log/error e "adsb boot failed; stopping what had already started")
+          (stop! @!started))
+        (throw e)))))
 
 (defn stop!
   "Stop a running system, edge first, and block until each layer is down.
@@ -374,11 +409,18 @@
   Stops the server THIS system started, not whatever a global happens to
   hold: the system owns its handle (adsb-a07). By the time this returns,
   the socket is closed and the poll thread has ended, so nothing the
-  system started can still be writing to adsb.state."
+  system started can still be writing to adsb.state.
+
+  Takes a PARTIAL system too — a map missing any layer, which is what a
+  failed boot hands it (start!, adsb-8lz). Each layer is stopped only if
+  it is there: the point of this fn is to stop what is running, and a
+  half-built system has the most need of it."
   [{:system/keys [poller broadcaster server]}]
   (server/stop-server! server)
-  (broadcast/stop! broadcaster)
-  (poll/stop! poller)
+  (when broadcaster
+    (broadcast/stop! broadcaster))
+  (when poller
+    (poll/stop! poller))
   nil)
 
 (defn -main

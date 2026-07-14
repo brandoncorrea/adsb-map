@@ -83,6 +83,45 @@
                           (main/start! {:port            0
                                         :ultrafeeder-url "ftp://feeder"})))))
 
+(deftest a-boot-that-fails-leaves-nothing-running
+  (testing "when the bind fails, the poller start! had ALREADY started is
+            stopped rather than abandoned. It is a daemon thread and start!
+            threw before returning a system, so nobody held a handle to it:
+            it went on polling and writing adsb.state forever, and the next
+            boot's poller raced it over the global picture (adsb-8lz). A
+            second boot while `bb dev` holds the port is exactly how you
+            meet this.
+
+            The failing boot replays the fixture, so an orphaned poller
+            WOULD write to the picture within a poll or two; the incumbent
+            holds the port and points at an unreachable feeder, so it never
+            writes and cannot mask the orphan."
+    (let [incumbent (main/start! {:port            0
+                                  :ultrafeeder-url unreachable-feeder
+                                  :env             {}})
+          taken     (http-kit/server-port (:system/server incumbent))]
+      (try
+        (is (thrown? java.net.BindException
+                     (main/start! {:port   taken
+                                   :source "replay"
+                                   :env    {}}))
+            "the boot dies loudly — cleaning up is not swallowing")
+        (state/clear!)
+        (Thread/sleep 1500)          ; several poll intervals
+        (is (empty? (state/snapshot))
+            "nothing repopulates the picture: the failed boot's poller is
+             stopped, not orphaned")
+        (finally
+          (main/stop! incumbent)
+          (state/clear!))))))
+
+(deftest stop!-takes-a-partial-system
+  (testing "the failure path hands stop! a system missing the layers that
+            never came up, so every layer is stopped only if it is there
+            (adsb-8lz). An empty system is the degenerate case: nothing
+            started, nothing to stop, no NPE."
+    (is (nil? (main/stop! {})))))
+
 (defn- get-json [port path]
   (let [response @(http/request
                     {:url     (str "http://localhost:" port path)
