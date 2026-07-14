@@ -57,13 +57,19 @@
   ## Connection state, honestly (the adsb-2yu.2 mandate)
 
   EventSource already reconnects itself after a transient drop: on such an
-  error `readyState` is CONNECTING, and we simply reflect :reconnecting and
-  let the browser retry. But once an EventSource reaches CLOSED it is dead
-  and stays dead — the browser will not revive it. That is the case that
-  needs us: we open a FRESH EventSource on an exponential backoff (1s, 2s,
-  4s … capped at 30s), reset on the next successful open. Past a few failed
-  attempts we surface :down while still retrying, so a server restart heals
-  on its own with no page reload.
+  error `readyState` is CONNECTING, and we let the browser retry rather than
+  opening a competing connection. But once an EventSource reaches CLOSED it
+  is dead and stays dead — the browser will not revive it. That is the case
+  that needs us: we open a FRESH EventSource on an exponential backoff (1s,
+  2s, 4s … capped at 30s).
+
+  Who retries differs; the COUNT does not. Errors of both kinds increment
+  :stream/attempts, so past a few failed attempts we surface :down — while
+  still retrying — no matter which way the backend died. (A backend that is
+  simply absent never leaves CONNECTING, and that is the most common outage
+  there is; counting only CLOSED left it reading :reconnecting forever —
+  adsb-xgc.) A successful open resets the count, so a server restart heals on
+  its own with no page reload.
 
   The live connection is a stateful JS object, not data, so it lives in a
   private atom here rather than in app-db; app-db holds only the picture and
@@ -328,20 +334,32 @@
   (fn [db [_ data]]
     (assoc db :crop/declared (data->crop data))))
 
-;; An EventSource error. If the browser is still CONNECTING it owns the
-;; retry — we just reflect :reconnecting. If it is CLOSED the source is dead:
-;; we count the failure, surface :reconnecting/:down, and schedule our own
-;; fresh connect on the backoff.
+;; An EventSource error, in either of the two shapes a dead backend takes.
+;;
+;; Every error COUNTS, whatever the readyState. A backend that is simply not
+;; there (connection refused) keeps its EventSource in CONNECTING and fires one
+;; error per failed retry, forever; if those did not count, the most common
+;; outage of all would sit at :reconnecting for the rest of the session, while
+;; the same dead backend killed at the HTTP level said :down. One counter, one
+;; threshold, one story (adsb-xgc).
+;;
+;; What differs is WHO RETRIES. On CONNECTING the browser owns the retry and
+;; will reopen this same source on its own cadence — scheduling ours alongside
+;; it would double-connect, which is the failure this split exists to prevent,
+;; so we schedule nothing and only count. On CLOSED the source is dead and the
+;; browser will not revive it: that retry is ours, on the backoff.
+;;
+;; :down is a status, not a stop. Retries continue on both paths, and a
+;; successful :stream/opened resets the count and snaps back to :live.
 (rf/reg-event-fx
   :stream/error
   (fn [{:keys [db]} [_ ready-state]]
-    (if (= ready-state :closed)
-      (let [attempts (inc (:stream/attempts db 0))]
-        {:db                         (assoc db
-                                       :stream/attempts attempts
-                                       :stream/connection (status-for-attempts attempts))
-         :stream/schedule-reconnect! (backoff-ms attempts)})
-      {:db (assoc db :stream/connection :reconnecting)})))
+    (let [attempts (inc (:stream/attempts db 0))]
+      (cond-> {:db (assoc db
+                     :stream/attempts attempts
+                     :stream/connection (status-for-attempts attempts))}
+        (= ready-state :closed)
+        (assoc :stream/schedule-reconnect! (backoff-ms attempts))))))
 
 ;; The backoff timer fired: open a fresh EventSource.
 (rf/reg-event-fx

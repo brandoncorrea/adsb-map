@@ -213,11 +213,6 @@
           ((:on-open @!cbs))
           (is (= :live @(rf/subscribe [:stream/connection])))
 
-          ;; A transient drop: the EventSource is CONNECTING — its own
-          ;; auto-reconnect owns this. We only reflect it.
-          ((:on-error @!cbs) :connecting)
-          (is (= :reconnecting @(rf/subscribe [:stream/connection])))
-
           ;; The source is CLOSED and will not revive itself — ours now.
           ;; Hopeful at first, honest as failures pile up.
           ((:on-error @!cbs) :closed)
@@ -238,6 +233,46 @@
           ((:on-error @!cbs) :closed)
           (is (= :reconnecting @(rf/subscribe [:stream/connection]))
               "attempts reset on recovery"))))))
+
+(deftest a-backend-that-is-simply-down-says-so
+  (testing "connection refused never leaves CONNECTING — the browser retries that
+            source itself, firing one error per failed attempt. Those errors are
+            failures and they count: the status must escalate to :down on the same
+            threshold as a CLOSED source, or the most common outage of all reads
+            :reconnecting forever (adsb-xgc)"
+    (rf-test/run-test-sync
+      (let [!cbs     (atom nil)
+            !opens   (atom 0)
+            !delays  (atom [])]
+        (with-redefs [source/connect! (fn [_url cbs]
+                                        (reset! !cbs cbs)
+                                        (swap! !opens inc)
+                                        (fake-connection))
+                      stream/schedule-reconnect! (fn [ms] (swap! !delays conj ms))]
+          (rf/dispatch [:stream/start])
+          (is (= 1 @!opens) "boot opened once")
+
+          ;; The backend was never there. Every retry the browser makes fails
+          ;; the same way, and we hear about each one.
+          ((:on-error @!cbs) :connecting)
+          (is (= :reconnecting @(rf/subscribe [:stream/connection]))
+              "hopeful while the browser is still early in its retries")
+          (dotimes [_ 3] ((:on-error @!cbs) :connecting))
+          (is (= :down @(rf/subscribe [:stream/connection]))
+              "past the threshold, the reader is told the truth")
+
+          ;; But we did NOT compete with the browser's own retry — no backoff
+          ;; armed, no second EventSource opened. That double-connect is the
+          ;; failure the CONNECTING/CLOSED split exists to prevent.
+          (is (= [] @!delays) "no reconnect scheduled from the CONNECTING branch")
+          (is (= 1 @!opens) "and no competing connection opened")
+
+          ;; The backend came back and the browser's own retry landed.
+          ((:on-open @!cbs))
+          (is (= :live @(rf/subscribe [:stream/connection])))
+          ((:on-error @!cbs) :connecting)
+          (is (= :reconnecting @(rf/subscribe [:stream/connection]))
+              "attempts reset on recovery — one fresh failure is not :down"))))))
 
 (deftest silence-is-counted-in-frames-not-clocked
   (testing "a positive rate is life: the count resets"
