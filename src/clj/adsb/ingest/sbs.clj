@@ -243,8 +243,8 @@
 
 (defrecord SbsSource [host port transport connect-timeout-ms idle-timeout-ms
                       reconnect-ms clock on-delta consume! thread-name
-                      picture running? connected? last-error connection
-                      reader-thread]
+                      picture swept-at-ms running? connected? last-error
+                      connection reader-thread]
   source/Source
   (open! [this] (tcp/open! this))
   (fetch! [this] (tcp/snapshot-or-throw! this))

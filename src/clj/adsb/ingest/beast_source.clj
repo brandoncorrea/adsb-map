@@ -82,22 +82,41 @@
           cpr-state
           (filter long-frame? frames)))
 
+(defn- sweep-cpr-state-if-due
+  "The read loop's CPR sweep step, run on tcp's sweep interval: drop the
+  entries whose halves and reference have all aged out, and stamp the
+  sweep. Returns [cpr-state swept-at-ms] to thread back into the loop.
+
+  decode prunes an aircraft's entry only when that SAME aircraft is heard
+  again, so an airframe that lands or flies out of range leaves its state
+  behind for the life of the connection — thousands of entries on a busy
+  site (adsb-gq3). The rule for what is too old is mode-s's; the interval
+  is the picture's (adsb.ingest.tcp/sweep-picture!)."
+  [cpr-state swept-at-ms now-ms]
+  (if (tcp/sweep-due? swept-at-ms now-ms)
+    [(mode-s/sweep-cpr-state cpr-state now-ms) now-ms]
+    [cpr-state swept-at-ms]))
+
 (defn- read-frames!
   "Read byte chunks until EOF, the socket closes, or the Source stops,
   threading Beast :carry across reads and CPR state across frames, folding
   each trustworthy long-frame delta into the picture at its arrival
-  instant. Returns on any stop; tcp reconnects if still running."
-  [^InputStream in {:keys [running?] :as state}]
+  instant and sweeping the CPR state on the interval. Returns on any stop;
+  tcp reconnects if still running."
+  [^InputStream in {:keys [running? clock] :as state}]
   (let [buffer (byte-array read-buffer-size)]
-    (loop [carry     nil
-           cpr-state nil]
+    (loop [carry       nil
+           cpr-state   nil
+           swept-at-ms nil]
       (when @running?
         (let [n (.read in buffer)]
           (when (pos? n)
             (let [chunk (Arrays/copyOfRange buffer 0 (int n))
-                  {:keys [frames carry]} (beast/frames chunk carry)]
-              (recur carry
-                     (fold-frames! state frames cpr-state)))))))))
+                  {:keys [frames carry]} (beast/frames chunk carry)
+                  cpr-state (fold-frames! state frames cpr-state)
+                  [cpr-state swept-at-ms] (sweep-cpr-state-if-due
+                                            cpr-state swept-at-ms (clock))]
+              (recur carry cpr-state swept-at-ms))))))))
 
 (defn- consume!
   "The tcp reader seam: pump the connection's Beast byte stream into the
@@ -112,8 +131,8 @@
 
 (defrecord BeastSource [host port transport connect-timeout-ms idle-timeout-ms
                         reconnect-ms clock on-delta consume! thread-name
-                        picture running? connected? last-error connection
-                        reader-thread]
+                        picture swept-at-ms running? connected? last-error
+                        connection reader-thread]
   source/Source
   (open! [this] (tcp/open! this))
   (fetch! [this] (tcp/snapshot-or-throw! this))

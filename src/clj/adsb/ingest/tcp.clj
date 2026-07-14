@@ -72,6 +72,22 @@
   socket — the stall this timeout exists to surface."
   60000)
 
+(def ^:const default-sweep-interval-ms
+  "How often the reader drops what has aged out of the state it carries —
+  the picture atom here, and cpr-state in the Beast reader. Both retire
+  an aircraft at the age-out threshold, so sweeping a minute at a time
+  keeps the eviction close behind it without putting a scan of the whole
+  picture in the path of every message."
+  60000)
+
+(defn sweep-due?
+  "true when a sweep stamped `swept-at-ms` (nil = never swept) is due at
+  now-ms. Pure: the caller stamps and keeps the new time, whether in an
+  atom (the picture) or threaded through its read loop (cpr-state)."
+  [swept-at-ms now-ms]
+  (or (nil? swept-at-ms)
+      (<= default-sweep-interval-ms (- now-ms swept-at-ms))))
+
 ;; ---------------------------------------------------------------------
 ;; The default transport: a plain TCP socket
 
@@ -120,6 +136,21 @@
 ;; ---------------------------------------------------------------------
 ;; The accumulate step the format pumps share
 
+(defn- sweep-picture!
+  "Evict the aged-out aircraft from the picture, at most once every
+  default-sweep-interval-ms.
+
+  accumulator/snapshot hides an aged-out aircraft from every fetch!, but
+  the atom behind it kept every ICAO the process had ever heard — a busy
+  site hears thousands of airframes a day, and the reader runs for weeks
+  (adsb-gq3). Swept BEFORE the fold, so a returning aircraft merges into
+  nothing rather than into its own stale entry. Only the reader thread
+  calls this, so the read-then-stamp of :swept-at-ms needs no CAS."
+  [{:keys [picture swept-at-ms]} now-ms]
+  (when (sweep-due? @swept-at-ms now-ms)
+    (reset! swept-at-ms now-ms)
+    (swap! picture accumulator/sweep now-ms)))
+
 (defn accumulate!
   "Fold one coerced delta, heard at now-ms, into the Source's picture —
   FLAGGING IMPOSSIBLE POSITION JUMPS against the aircraft's previous
@@ -135,8 +166,11 @@
 
   Runs on the reader thread — the try is load-bearing: a hook that throws
   must cost that one notification, never the connection, or a broken
-  subscriber would turn every message into a reconnect."
-  [{:keys [picture on-delta]} delta now-ms]
+  subscriber would turn every message into a reconnect. The reader also
+  sweeps the picture here (sweep-picture!), on the interval, since this
+  is the one step every format pump shares."
+  [{:keys [picture on-delta] :as state} delta now-ms]
+  (sweep-picture! state now-ms)
   (let [merged (-> (swap! picture plausibility/accumulate-flagging-jumps
                           delta now-ms)
                    (get (:aircraft/icao delta)))]
@@ -263,6 +297,7 @@
    :consume!           consume!
    :thread-name        thread-name
    :picture            (atom {})
+   :swept-at-ms        (atom nil)
    :running?           (atom false)
    :connected?         (atom false)
    :last-error         (atom nil)

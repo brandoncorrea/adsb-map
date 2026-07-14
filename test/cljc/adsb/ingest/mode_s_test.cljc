@@ -215,6 +215,41 @@
                                              at-window cpr-state)]
       (is (= book-position (:aircraft/position delta))))))
 
+(deftest sweep-cpr-state
+  (testing "an aircraft never heard again is dropped outright — decode
+            prunes an entry only when that same aircraft speaks, so
+            without the sweep cpr-state grows for the life of the
+            connection (adsb-gq3)"
+    (let [{:keys [cpr-state]} (mode-s/decode odd-position-payload 1000 nil)
+          a-day               (+ 1000 (* 24 60 60 1000))]
+      (is (contains? cpr-state "40621d") "heard once, so it is in there")
+      (is (= {} (mode-s/sweep-cpr-state cpr-state a-day))
+          "a day later its half and reference are long stale: no entry")))
+
+  (testing "an aircraft still talking keeps its entry — the sweep drops
+            what has aged out, not what is merely older than a frame"
+    (let [{:keys [cpr-state]} (mode-s/decode odd-position-payload 1000 nil)
+          swept (mode-s/sweep-cpr-state cpr-state 1500)]
+      (is (= cpr-state swept) "inside the pair window, nothing is dropped")))
+
+  (testing "an entry keeps a live reference after its halves go stale —
+            a half can no longer pair long before a position is untrusted"
+    (let [{:keys [cpr-state]} (mode-s/decode odd-position-payload 1000 nil)
+          {:keys [cpr-state]} (mode-s/decode even-position-payload
+                                             1500 cpr-state)
+          past-pair-window    (+ 1501 mode-s/cpr-pair-max-gap-ms)
+          entry (get (mode-s/sweep-cpr-state cpr-state past-pair-window)
+                     "40621d")]
+      (is (= book-position (get-in entry [:cpr/reference :cpr/position]))
+          "the reference survives to the age-out line, so a local decode
+           still works when the aircraft is next heard")
+      (is (not (contains? entry :cpr/even)) "the stale halves are gone")
+      (is (not (contains? entry :cpr/odd)))))
+
+  (testing "the empty and never-started states sweep to nothing"
+    (is (= {} (mode-s/sweep-cpr-state {} 1000)))
+    (is (empty? (mode-s/sweep-cpr-state nil 1000)))))
+
 (deftest local-position-decode
   (testing "the book's local example: one even frame against the
             aircraft's known reference (52.258, 3.918)"

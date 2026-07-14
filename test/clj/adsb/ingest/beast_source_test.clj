@@ -18,6 +18,7 @@
     [adsb.ingest.beast-source :as beast-source]
     [adsb.ingest.mode-s :as mode-s]
     [adsb.ingest.source :as source]
+    [adsb.ingest.tcp :as tcp]
     [clojure.test :refer [deftest testing is]])
   (:import
     (clojure.lang ExceptionInfo)
@@ -191,6 +192,37 @@
                 (is (not (contains? planes "abcdef"))
                     "the corrupted-CRC frame decoded to nothing")))
             (finally (source/close! src))))))))
+
+(deftest read-loop-sweeps-the-cpr-state
+  (testing "the read loop's sweep step drops the aircraft that have gone
+            quiet and stamps the sweep, so cpr-state does not grow for
+            the life of the connection (adsb-gq3)"
+    (let [sweep-if-due #'beast-source/sweep-cpr-state-if-due
+          ;; The book pair, so the entry carries a decoded reference and
+          ;; not just an unpairable half.
+          {:keys [cpr-state]} (mode-s/decode odd-position-payload 1000 nil)
+          {:keys [cpr-state]} (mode-s/decode even-position-payload
+                                             1500 cpr-state)
+          a-day               (+ 1500 (* 24 60 60 1000))]
+      (testing "never swept: the sweep runs, and its instant is stamped"
+        (is (= [{} a-day] (sweep-if-due cpr-state nil a-day))
+            "an aircraft last heard a day ago leaves nothing behind"))
+
+      (testing "inside the interval nothing is scanned — the sweep does
+                not ride every socket read"
+        (let [just-swept (- a-day 1)]
+          (is (= [cpr-state just-swept]
+                 (sweep-if-due cpr-state just-swept a-day))
+              "the state comes back untouched, the stamp unchanged")))
+
+      (testing "an aircraft still inside the age-out line keeps its
+                reference through a sweep it is due for"
+        (let [soon (+ 1500 tcp/default-sweep-interval-ms)
+              [swept swept-at-ms] (sweep-if-due cpr-state nil soon)]
+          (is (= soon swept-at-ms))
+          (is (= book-position
+                 (get-in swept ["40621d" :cpr/reference :cpr/position]))
+              "so the next frame heard can still decode locally"))))))
 
 (deftest quiet-feed-returns-a-snapshot-not-a-throw
   (testing "a connected feed that has said nothing yet is not unreachable —

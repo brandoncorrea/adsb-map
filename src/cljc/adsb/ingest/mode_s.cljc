@@ -369,6 +369,25 @@
       (stale-half? (:cpr/odd entry))       (dissoc :cpr/odd)
       (stale-reference? (:cpr/reference entry)) (dissoc :cpr/reference))))
 
+(defn sweep-cpr-state
+  "cpr-state with the aircraft that have gone quiet dropped: every entry
+  pruned of its stale halves and stale reference (prune-cpr-entry), and
+  the entries that prune away to nothing removed outright.
+
+  decode prunes an entry only when that SAME aircraft is heard again, so
+  an airframe that flies out of range leaves its last halves and
+  reference behind for the life of the connection — thousands of them, on
+  a busy site. The reader that threads cpr-state sweeps it periodically
+  (adsb.ingest.beast-source); the rule for what is too old to keep stays
+  here, with the rest of the CPR state (adsb-gq3)."
+  [cpr-state now-ms]
+  (into (empty cpr-state)
+        (keep (fn [[icao entry]]
+                (let [pruned (prune-cpr-entry entry now-ms)]
+                  (when (seq pruned)
+                    [icao pruned]))))
+        cpr-state))
+
 (defn- global-pair-position
   "The global decode of this entry's even/odd pair, when both halves
   are present within the pair window. Pruning already dropped anything

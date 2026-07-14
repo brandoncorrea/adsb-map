@@ -27,9 +27,17 @@
   "One aircraft's step: the delta's fields overwrite the previous
   aircraft's, every other field persists, and the receiving instant
   becomes the freshness stamp age-out reads. previous is nil for a
-  first-heard aircraft — merge treats that as the empty map."
+  first-heard aircraft — merge treats that as the empty map.
+
+  An AGED-OUT previous is nil too: an aircraft that fell silent past the
+  age-out threshold and comes back is a new arrival, not a continuation.
+  Inheriting its fields would let a returning airframe's first
+  position-less messages resurrect an hours-old position, stamped as
+  heard now — a lie the whole downstream stack would believe (adsb-gq3)."
   [previous delta now-ms]
-  (-> (merge previous delta)
+  (-> (when-not (and previous (aircraft/aged-out? previous now-ms))
+        previous)
+      (merge delta)
       (assoc :aircraft/seen-at-ms now-ms)))
 
 (defn accumulate
@@ -52,4 +60,18 @@
   (into []
         (comp (map val)
               (remove #(aircraft/aged-out? % now-ms)))
+        picture))
+
+(defn sweep
+  "The picture with the aged-out aircraft removed — snapshot's filter,
+  applied to the picture itself.
+
+  snapshot hides an aged-out aircraft from every batch, but the picture
+  it reads from keeps it forever: a Source folding into an atom across
+  weeks of uptime accumulates every ICAO it has ever heard. The owner of
+  that atom sweeps it periodically (adsb.ingest.tcp) — the retiring rule
+  belongs here, beside the one snapshot and the poller share."
+  [picture now-ms]
+  (into (empty picture)
+        (remove #(aircraft/aged-out? (val %) now-ms))
         picture))
