@@ -36,6 +36,13 @@
    [".adsb-roster:not(.is-open)"
     (decl :width "40px")]
 
+   ;; THE RAIL IS THE GRAB TARGET, NOT THE BUTTON INSIDE IT. The drag
+   ;; listeners sit on the shell (adsb.ui.roster) and the rail is the lip
+   ;; the finger actually lands on — its padding and the health pin
+   ;; included. touch-action must be none across the whole of it, or the
+   ;; browser claims the gesture in the padding and pans the page while the
+   ;; drawer sits still. Ancestor `none` also covers the pin, which sets no
+   ;; touch-action of its own.
    [:.adsb-roster-rail
     (decl :position        "relative"
           :display         "flex"
@@ -45,7 +52,14 @@
           :border-bottom   "1px solid var(--rule-faint)"
           ;; Right padding leaves room for the health pin (top-right).
           :padding         "var(--s3) 36px var(--s3) var(--s2)"
-          :box-sizing      "border-box")]
+          :box-sizing      "border-box"
+          :touch-action    "none"
+          :user-select     "none")]
+
+   ;; Closed, the shell IS the lip: rail plus the safe-bottom band beneath
+   ;; it, and no body to scroll. Claim every pixel of it for the drag.
+   [".adsb-roster:not(.is-open)"
+    (decl :touch-action "none")]
 
    [:.adsb-roster-handle
     (decl :display         "flex"
@@ -370,6 +384,18 @@
        .adsb-roster.is-settling"
       (decl :transition "none")]
 
+     ;; Home-indicator clearance moves INTO the body once there is a body.
+     ;; Closed, the shell keeps it (there is no body, and the whole lip is
+     ;; touch-action:none anyway). Open, a shell-owned band under the list
+     ;; would be a strip of drawer that scrolls nothing, drags nothing and
+     ;; hands the gesture to the page — the exact dead edge this section is
+     ;; about. The body absorbs it, and the paper still runs to the edge.
+     [".adsb-roster.is-open"
+      (decl :padding-bottom 0)]
+
+     [".adsb-roster.is-open .adsb-roster-body"
+      (decl :padding-bottom "var(--safe-bottom)")]
+
      [".adsb-roster:not(.is-open)"
       (decl :width "auto"
             :height "calc(var(--roster-rail-h) + var(--safe-bottom))"
@@ -387,7 +413,8 @@
             :padding         "var(--s2) 36px var(--s3) var(--s3)"
             :flex            "none"
             :min-height      "var(--roster-rail-h)"
-            :box-sizing      "border-box")]
+            :box-sizing      "border-box"
+            :cursor          "grab")]
 
      [:.adsb-roster-handle
       (decl :flex-direction  "column"
@@ -400,7 +427,8 @@
             :min-height      0
             :cursor          "grab")]
 
-     [".adsb-roster.is-dragging .adsb-roster-handle"
+     [".adsb-roster.is-dragging .adsb-roster-rail,
+       .adsb-roster.is-dragging .adsb-roster-handle"
       (decl :cursor "grabbing")]
 
      [:.adsb-roster-handle-bar
@@ -413,14 +441,60 @@
      [:.adsb-roster-handle-label
       (decl :padding-bottom "1px")]
 
+     ;; SIXTEEN PIXELS, AND IT IS NOT A DESIGN CHOICE. Mobile Safari zooms
+     ;; the page in whenever a focused form control's text is smaller than
+     ;; 16px, and it does NOT zoom back out on blur — the reader is left
+     ;; pinching their way back to the map they came for. Our scale tops out
+     ;; at 13px (--t0), so the find field tripped it every single time.
+     ;;
+     ;; The other cure is maximum-scale=1 in the viewport meta, and it is
+     ;; poison: it does not stop the zoom so much as abolish zooming, for
+     ;; every reader and every part of the chart (WCAG 1.4.4). One field
+     ;; carrying an off-scale size is the cheap half of that trade.
+     ;;
+     ;; 16px LITERAL, not a token: this number belongs to WebKit, not to our
+     ;; type scale, and a token would invite someone to "fix the outlier"
+     ;; back down to 13px and quietly restore the bug.
+     [:.adsb-roster-search-input
+      (decl :font-size "16px")]
+
+     ;; ONE HANDLE, IN EVERY STATE. The rail and its handle are the same
+     ;; furniture whether the drawer is shut, being dragged or wide open —
+     ;; the label says a different WORD, and nothing else about it may move.
+     ;;
+     ;; They used to. The desktop collapsed rules (.adsb-roster:not(.is-open)
+     ;; …, specificity 0,3,0) outrank the phone's own .adsb-roster-rail /
+     ;; .adsb-roster-handle (0,1,0), so on a phone the SHUT drawer was quietly
+     ;; wearing desktop padding, gap and width — a different handle from the
+     ;; open one. Any state change that added or removed .is-open therefore
+     ;; twitched the text and the grip. Restating the open values here, at
+     ;; matching specificity, is what makes the two states one.
      [".adsb-roster:not(.is-open) .adsb-roster-rail"
-      (decl :flex "none")]
+      (decl :flex            "none"
+            :align-items     "center"
+            :justify-content "center"
+            :gap             0
+            :border-bottom   "none"
+            :padding         "var(--s2) 36px var(--s3) var(--s3)")]
 
      [".adsb-roster:not(.is-open) .adsb-roster-handle"
-      (decl :flex-direction "column" :height "auto")]
+      (decl :flex-direction  "column"
+            :align-items     "center"
+            :justify-content "center"
+            :gap             "var(--s1)"
+            :width           "auto"
+            :flex            1
+            :min-height      0
+            :height          "auto"
+            :padding         "var(--s2) var(--s2) var(--s1)")]
 
+     ;; Same for the label: the desktop collapsed rule turns it on its side
+     ;; and widens its tracking. Phone undoes ALL of it — the letter-spacing
+     ;; included, which was the last thing still shifting between states.
      [".adsb-roster:not(.is-open) .adsb-roster-handle-label"
-      (decl :writing-mode "horizontal-tb" :transform "none")]
+      (decl :writing-mode    "horizontal-tb"
+            :transform       "none"
+            :letter-spacing  "inherit")]
 
      ;; Phone always pins health top-right (absolute), including when
      ;; the sheet is closed. Desktop collapsed uses in-flow order:-1;

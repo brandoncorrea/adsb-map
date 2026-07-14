@@ -4,7 +4,7 @@
 
   Find and browse are one surface:
     * Empty query → full ranked list (urgency → altitude → name).
-    * Typed query → the same list, filtered by callsign or hex.
+    * Typed query → the same list, filtered by callsign or ICAO address.
   Desktop: a side dock. Phone: a bottom pull-up with three snap points
   (closed / half / full) and a drag-to-snap handle (adsb-xgg). Same
   markup, stance-native chrome (adsb.css.roster).
@@ -26,6 +26,7 @@
     [adsb.map.style :as style]
     [adsb.map.theme :as theme]
     [adsb.ui.health :as health]
+    [adsb.ui.units :as units]
     [clojure.string :as str]
     [re-frame.core :as rf]
     [reagent.core :as r]))
@@ -71,7 +72,9 @@
     (some? altitude-ft) (str altitude-ft " ft")
     :else               "—"))
 
-(defn fmt-spd [v] (if (some? v) (str v) "—"))
+;; Whole knots — adsb.ui.units owns the rounding, so the Kt column and the
+;; panel's Ground speed can never print the same aircraft two ways.
+(defn fmt-spd [v] (or (units/knots v) "—"))
 (defn fmt-sq  [v] (if (some? v) (str v) "—"))
 
 ;; ---------------------------------------------------------------------
@@ -117,6 +120,12 @@
   "px/ms. Faster than this commits to the next snap in the swipe
   direction instead of nearest-by-distance — the keyboard-drawer feel."
   0.45)
+
+(def ^:const tap-slop-px
+  "How far the finger may wander and still be a TAP. Under this the gesture
+  has not begun: nothing moves, nothing mounts, nothing restyles, and the
+  trailing click cycles the sheet. A press is not a drag."
+  6)
 
 (def ^:const settle-ms
   "Snap settle duration after a drag release. Driven by rAF (not CSS
@@ -348,9 +357,18 @@
       "Show aircraft roster")))
 
 ;; ---------------------------------------------------------------------
-;; Drag — pointer events on the phone handle. Local ratom for the live
-;; height while dragging; commit snaps on pointerup. Pure snap math is
-;; height-fraction->sheet above.
+;; Drag — pointer events on the SHEET, not on the handle button. Local
+;; ratom for the live height while dragging; commit snaps on pointerup.
+;; Pure snap math is height-fraction->sheet above.
+;;
+;; THE DRAG SURFACE IS THE WHOLE LIP. It used to be the handle <button>,
+;; which is a strictly smaller thing than the drawer edge the reader can
+;; see: the rail reserves 36px on the right for the health pin and pads
+;; itself all round, and the shell pads a safe-bottom band under that. A
+;; finger landing on any of it hit no listener and no touch-action, so the
+;; browser took the gesture and panned the PAGE instead of the DRAWER.
+;; Listeners now sit on the shell and everything outside the scrolling body
+;; drags (adsb.css.roster pins touch-action to match).
 
 (defn- viewport-height
   []
@@ -396,42 +414,81 @@
 
 (defn- cancel-settle!
   "Abort an in-flight rAF settle (new drag, unmount).
-  `!raf` / `!settle-h` are plain atoms so the animation never rides the
-  reactive path; live aircraft re-renders re-apply `!settle-h` in
+  `!raf` / `!live-h` are plain atoms so the animation never rides the
+  reactive path; live aircraft re-renders re-apply `!live-h` in
   component-did-update instead of wiping it."
-  [!drag !raf !settle-h]
+  [!drag !raf !live-h]
   (when-let [id @!raf]
     (js/cancelAnimationFrame id)
     (reset! !raf nil))
-  (when (or @!settle-h (:settling? @!drag))
+  (when (or @!live-h (:settling? @!drag))
     (clear-sheet-height! (roster-el))
-    (reset! !settle-h nil)
+    (reset! !live-h nil)
     (when (:settling? @!drag)
       (reset! !drag nil))))
 
-(defn- on-handle-pointer-down!
-  "Start a drag session. Only the primary button / first touch counts."
-  [!drag !raf !settle-h ^js e]
-  (when (or (nil? (.-button e)) (zero? (.-button e)))
-    (cancel-settle! !drag !raf !settle-h)
-    (let [y0  (pointer-y e)
-          el  (.-currentTarget e)
-          root (.closest el ".adsb-roster")
-          h0  (if root (.-offsetHeight root) closed-rail-px)]
-      (reset! !drag {:active? true
-                     :start-y y0
-                     :start-h h0
-                     :last-y  y0
-                     :last-t  (js/performance.now)
-                     :velocity 0
-                     :height  h0})
+(defn- abandon-gesture!
+  "End a gesture WITHOUT settling — a tap, or a pointercancel. Drops the
+  live height and hands geometry back to the snap class, so nothing is left
+  for component-did-update to re-stamp on the next paint."
+  [!drag !gesture !live-h]
+  (reset! !gesture nil)
+  (reset! !live-h nil)
+  (clear-sheet-height! (roster-el))
+  (reset! !drag nil))
+
+(defn- drag-surface?
+  "True when a pointer landed on the drawer's DRAG surface — the shell and
+  everything in it except the scrolling body. The rail's padding, the health
+  pin and the safe-bottom band are all lip the reader can see and will grab;
+  the list, the search field and the rows are not, and must keep scrolling
+  and clicking."
+  [^js e]
+  (let [t (.-target e)]
+    (not (and t (.-closest t) (.closest t ".adsb-roster-body")))))
+
+(defn- on-sheet-pointer-down!
+  "Start a drag session. Only the primary button / first touch counts, and
+  only on the lip — a finger in the list is scrolling it, not dragging.
+
+  NOTHING REACTIVE HAPPENS HERE. Being touched is not a state of the drawer,
+  so pointerdown writes only plain atoms and the component does not render at
+  all: no body mounts, no class flips, no rule stops matching. The handle the
+  reader is pressing looks exactly like the handle they were about to press.
+  `!drag` — the one ratom — flips later, on the first move past the slop.
+
+  PHONE ONLY. The snap ladder is the drawer's, and only the phone has a
+  drawer: the desktop dock is full height and binary, so dragging it has no
+  height to change and no rung to land on. It still taps."
+  [!drag !gesture !live-h !raf ^js e]
+  (when (and (phone-stance?)
+             (drag-surface? e)
+             (or (nil? (.-button e)) (zero? (.-button e))))
+    (cancel-settle! !drag !raf !live-h)
+    (let [y0 (pointer-y e)
+          el (.-currentTarget e)                 ; the .adsb-roster shell
+          h0 (or (.-offsetHeight el) closed-rail-px)]
+      ;; :active? rides the PLAIN atom — a press must not re-render. And no
+      ;; live height yet: a press writes no geometry either. The first move
+      ;; past the slop sets both (on-sheet-pointer-move!).
+      (reset! !gesture {:active?  true
+                        :start-y  y0
+                        :start-h  h0
+                        :last-y   y0
+                        :last-t   (js/performance.now)
+                        :velocity 0
+                        :height   h0})
       (when (.-setPointerCapture el)
         (.setPointerCapture el (.-pointerId e)))
       (.preventDefault e))))
 
-(defn- on-handle-pointer-move!
-  [!drag ^js e]
-  (when-let [{:keys [active? start-y start-h last-y last-t]} @!drag]
+(defn- on-sheet-pointer-move!
+  "Track the finger. Height goes straight to the DOM — the same path the
+  rAF settle uses — never through a ratom: the sheet being dragged open now
+  CONTAINS the roster, and re-rendering every row sixty times a second is
+  how a drawer starts to feel like it is dragging the reader back."
+  [!drag !gesture !live-h ^js e]
+  (when-let [{:keys [active? start-y start-h last-y last-t]} @!gesture]
     (when active?
       (let [y   (pointer-y e)
             t   (js/performance.now)
@@ -440,12 +497,22 @@
             h   (max (closed-sheet-min-px) (min vh (+ start-h dy)))
             dt  (max 1 (- t last-t))
             vy  (/ (- last-y y) dt)]          ; positive = opening
-        (swap! !drag assoc
+        (swap! !gesture assoc
                :last-y y
                :last-t t
                :velocity vy
                :height h)
-        (.preventDefault e)))))
+        ;; The gesture BEGINS the first time the finger clears the slop — not
+        ;; at pointerdown, and not for a hand that merely trembles on the
+        ;; handle. That crossing flips the one ratom, which is the render that
+        ;; mounts the body; everything after it is a plain DOM write.
+        (when (and (not (:moved? @!drag))
+                   (> (js/Math.abs (- start-y y)) tap-slop-px))
+          (swap! !drag assoc :moved? true))
+        (when (:moved? @!drag)
+          (reset! !live-h h)
+          (set-sheet-height-px! (roster-el) h)
+          (.preventDefault e))))))
 
 (defn- settle-sheet-after-drag!
   "rAF height settle after a drag release — same path for expand and
@@ -456,10 +523,10 @@
   identical.
 
   Heights live in a plain atom + direct DOM writes. Live traffic still
-  re-renders the roster; component-did-update re-stamps `!settle-h` so
+  re-renders the roster; component-did-update re-stamps `!live-h` so
   those paints cannot snap the sheet back to the class height."
-  [!drag !raf !settle-h release-h target-sheet]
-  (cancel-settle! !drag !raf !settle-h)
+  [!drag !raf !live-h release-h target-sheet]
+  (cancel-settle! !drag !raf !live-h)
   (let [from (double (or release-h (sheet-height-px target-sheet)))
         to   (double (sheet-height-px target-sheet))
         dist (js/Math.abs (- to from))
@@ -467,12 +534,12 @@
     (cond
       (or (prefers-reduced-motion?) (< dist 0.5) (nil? el))
       (do (clear-sheet-height! el)
-          (reset! !settle-h nil)
+          (reset! !live-h nil)
           (reset! !drag nil))
 
       :else
       (let [t0 (js/performance.now)]
-        (reset! !settle-h from)
+        (reset! !live-h from)
         (reset! !drag {:settling? true})
         (set-sheet-height-px! el from)
         (letfn [(frame [now]
@@ -482,49 +549,61 @@
                           p       (min 1.0 (/ elapsed settle-ms))
                           e       (ease-out-cubic p)
                           h       (+ from (* e (- to from)))]
-                      (reset! !settle-h h)
+                      (reset! !live-h h)
                       (set-sheet-height-px! el h)
                       (if (< p 1.0)
                         (reset! !raf (js/requestAnimationFrame frame))
                         (do
                           (clear-sheet-height! el)
-                          (reset! !settle-h nil)
+                          (reset! !live-h nil)
                           (reset! !raf nil)
                           (reset! !drag nil))))))]
           (reset! !raf (js/requestAnimationFrame frame)))))))
 
-(defn- on-handle-pointer-up!
+(defn- on-sheet-pointer-up!
   "End a drag. A real swipe snaps; a tap leaves the sheet alone so the
   trailing click can cycle. `!suppress-click` blocks the double-fire that
   would otherwise follow a snap."
-  [!drag !raf !settle-h !suppress-click sheet ^js e]
-  (when (:active? @!drag)
-    (let [{:keys [height velocity start-y last-y]} @!drag
+  [!drag !gesture !live-h !raf !suppress-click sheet ^js e]
+  (when (:active? @!gesture)
+    (let [{:keys [height velocity]} @!gesture
+          ;; The same flag the render keyed off — one definition of "this was
+          ;; a drag", so what the reader SAW mid-gesture and what the sheet
+          ;; DOES on release can never disagree.
+          moved? (boolean (:moved? @!drag))
           vh     (viewport-height)
-          moved? (> (js/Math.abs (- (or start-y 0) (or last-y 0))) 6)
           frac   (if (and height (pos? vh))
                    (/ height vh)
                    (get sheet-heights sheet 0.52))
           target (height-fraction->sheet frac velocity)]
-      (when moved?
-        (reset! !suppress-click true)
-        (rf/dispatch [:roster/set-sheet target])
-        (settle-sheet-after-drag! !drag !raf !settle-h height target))
-      (when-not moved?
-        (reset! !drag nil))
+      (if moved?
+        (do (reset! !suppress-click true)
+            (rf/dispatch [:roster/set-sheet target])
+            (settle-sheet-after-drag! !drag !raf !live-h height target))
+        ;; A tap. Hand the geometry back to the snap class — the live height
+        ;; must not outlive the gesture that wrote it, or the next paint
+        ;; re-stamps it (component-did-update) and the sheet sticks.
+        (abandon-gesture! !drag !gesture !live-h))
       (when (.-releasePointerCapture (.-currentTarget e))
         (try
           (.releasePointerCapture (.-currentTarget e) (.-pointerId e))
           (catch :default _ nil))))))
 
-(defn- on-handle-click!
+(defn- on-sheet-click!
   "Tap without a meaningful drag. Phone cycles closed → half → full →
   closed; desktop binary-toggles (half ↔ closed). Suppressed when
-  pointerup already committed a snap for this gesture."
-  [!suppress-click]
-  (if @!suppress-click
-    (reset! !suppress-click false)
-    (rf/dispatch (if (phone-stance?) [:roster/cycle] [:roster/toggle]))))
+  pointerup already committed a snap for this gesture.
+
+  Bound to the shell, so it catches taps anywhere on the lip AND the
+  handle button's own click (which bubbles here, keyboard Enter included —
+  the button keeps the role and the label, it just no longer keeps the
+  listeners). Row and search clicks come from the body and are not taps on
+  the drawer."
+  [!suppress-click ^js e]
+  (when (drag-surface? e)
+    (if @!suppress-click
+      (reset! !suppress-click false)
+      (rf/dispatch (if (phone-stance?) [:roster/cycle] [:roster/toggle])))))
 
 ;; ---------------------------------------------------------------------
 ;; The surface
@@ -533,7 +612,7 @@
   [q]
   (if (str/blank? q)
     "No aircraft in the picture"
-    "No match — try another callsign or hex"))
+    "No match — try another callsign or ICAO"))
 
 (defn scroll-row-into-view!
   "Scroll the roster row for `icao` into the list's visible band. Pure
@@ -554,7 +633,7 @@
      [:label.adsb-roster-search-label {:for "adsb-roster-search"} "Find"]
      [:input#adsb-roster-search.adsb-roster-search-input
       {:type          "search"
-       :placeholder   "callsign or hex…"
+       :placeholder   "Callsign or ICAO…"
        :value         q
        :auto-complete "off"
        :spell-check   false
@@ -576,8 +655,21 @@
 
 (defn roster
   "The Search + Sheet dock/drawer. Form-2: subscribe once, deref per render.
-  Phone drag state lives in a local ratom so the map never re-renders on
-  every pointermove — only the sheet height does.
+
+  THE DRAWER IS NOT EMPTY WHILE IT OPENS. The body used to be gated on the
+  COMMITTED sheet state, which does not change until pointerup — so a finger
+  pulling the drawer up hauled a blank panel behind it and the roster only
+  appeared, all at once, on release. It reads as a drawer that is still
+  loading, and it hides the very thing that tells you the pull is worth
+  finishing. The gate is now `body?*`: on screen from the first pixel of the
+  drag, through the settle, and gone only when the sheet is truly shut.
+
+  What made that affordable is the split between the two halves of the drag
+  state. `!drag` is a ratom holding a PHASE (:active? / :settling?), so it
+  re-renders twice per gesture. The height moves through the plain `!gesture`
+  / `!live-h` atoms straight to the DOM, so uncovering two hundred rows costs
+  nothing per frame. Live SSE paints still land mid-gesture; did-update
+  re-stamps `!live-h` so they cannot snap the sheet back to its class height.
 
   Selection → scroll: a track! watches the selected icao (map click, alert,
   roster row). When it changes and the sheet is open, the matching row is
@@ -590,11 +682,14 @@
         total           (rf/subscribe [:roster/total])
         selected        (rf/subscribe [:aircraft/selected-icao])
         hovered         (rf/subscribe [:aircraft/hovered-icao])
+        ;; Reactive: the gesture's PHASE, and nothing that moves with the
+        ;; finger. Two renders a gesture, not sixty.
         !drag           (r/atom nil)
-        ;; Settle bookkeeping — plain atoms so rAF never re-renders, and
-        ;; live picture updates re-stamp height in did-update.
+        ;; Plain atoms — the moving parts. rAF and pointermove write the DOM
+        ;; directly; live picture updates re-stamp !live-h in did-update.
+        !gesture        (atom nil)
         !raf            (atom nil)
-        !settle-h       (atom nil)
+        !live-h         (atom nil)
         !suppress-click (atom false)
         !prev-selected  (atom nil)
         !scroll-track   (atom nil)]
@@ -615,14 +710,15 @@
        :component-did-update
        (fn [_]
          ;; Picture/SSE re-renders wipe inline styles; re-apply the live
-         ;; settle height so expand does not jump back to the snap class.
-         (when-let [h @!settle-h]
+         ;; drag/settle height so the sheet does not jump back to the snap
+         ;; class under the finger.
+         (when-let [h @!live-h]
            (set-sheet-height-px! (roster-el) h)))
        :component-will-unmount
        (fn [_]
          (some-> @!scroll-track r/dispose!)
          (reset! !scroll-track nil)
-         (cancel-settle! !drag !raf !settle-h))
+         (cancel-settle! !drag !raf !live-h))
        :reagent-render
        (fn []
          (let [sheet*  @sheet
@@ -633,44 +729,57 @@
                n       (count rows*)
                sel*    @selected
                drag    @!drag
-               ;; Live drag: Reagent style. Settle: also declare height here
-               ;; so a mid-settle re-render (SSE picture) does not clear the
+               ;; MOVING, not merely touched. A press is not a gesture: it
+               ;; must mount nothing and restyle nothing, or the handle
+               ;; twitches under the finger every time the reader taps it.
+               moving? (boolean (or (:moved? drag) (:settling? drag)))
+               ;; The body is on screen whenever the drawer has room for it:
+               ;; committed open, OR travelling. A sheet being dragged up
+               ;; from closed shows the roster it is uncovering; a sheet
+               ;; settling shut keeps it until the rail arrives.
+               body?*  (or open?* moving?)
+               ;; Declare the live height here too, not only via the DOM
+               ;; writes: a re-render (SSE picture) would otherwise clear the
                ;; inline style for a frame before did-update re-stamps it —
                ;; that one-frame flash was the hard expand snap.
-               style   (cond
-                         (:active? drag)
-                         {:height (str (:height drag) "px") :max-height "none"}
-
-                         (:settling? drag)
-                         (when-let [h @!settle-h]
-                           {:height (str h "px") :max-height (str h "px")})
-
-                         :else nil)]
+               style   (when moving?
+                         (when-let [h @!live-h]
+                           {:height (str h "px") :max-height (str h "px")}))]
+           ;; Pointer listeners ride the SHELL, not the handle button: the
+           ;; whole lip — rail padding, health pin, safe-bottom band — is
+           ;; one grab target, and the body opts out (drag-surface?).
            [:div.adsb-roster
             (cond-> {:data-testid "roster"
+                     ;; data-open is the COMMITTED state — what the sheet will
+                     ;; be when the finger lifts. `is-open` is what is on
+                     ;; SCREEN, gesture included, and it is what the stylesheet
+                     ;; keys the body's geometry off. They differ exactly while
+                     ;; a drag is in flight, which is the point.
                      :data-open   (if open?* "true" "false")
                      :data-sheet  (name sheet*)
-                     :class       [(when open?* "is-open")
-                                   (when (:active? drag) "is-dragging")
+                     :class       [(when body?* "is-open")
+                                   (when (:moved? drag) "is-dragging")
                                    (when (:settling? drag) "is-settling")
-                                   (str "is-sheet-" (name sheet*))]}
+                                   (str "is-sheet-" (name sheet*))]
+                     :on-pointer-down #(on-sheet-pointer-down! !drag !gesture !live-h !raf %)
+                     :on-pointer-move #(on-sheet-pointer-move! !drag !gesture !live-h %)
+                     :on-pointer-up   #(on-sheet-pointer-up! !drag !gesture !live-h !raf !suppress-click sheet* %)
+                     :on-pointer-cancel #(when (:active? @!gesture)
+                                           (abandon-gesture! !drag !gesture !live-h))
+                     :on-click        #(on-sheet-click! !suppress-click %)}
               style (assoc :style style))
             [:div.adsb-roster-rail
+             ;; The button is the AFFORDANCE — role, label, focus ring,
+             ;; keyboard. Its click bubbles to the shell handler above.
              [:button.adsb-roster-handle
-              {:type            "button"
-               :aria-expanded   (boolean open?*)
-               :aria-label      (handle-aria-label sheet*)
-               :data-testid     "roster-toggle"
-               :data-sheet      (name sheet*)
-               :on-pointer-down #(on-handle-pointer-down! !drag !raf !settle-h %)
-               :on-pointer-move #(on-handle-pointer-move! !drag %)
-               :on-pointer-up   #(on-handle-pointer-up! !drag !raf !settle-h !suppress-click sheet* %)
-               :on-pointer-cancel #(when (:active? @!drag)
-                                     (reset! !drag nil))
-               :on-click        #(on-handle-click! !suppress-click)}
+              {:type          "button"
+               :aria-expanded (boolean open?*)
+               :aria-label    (handle-aria-label sheet*)
+               :data-testid   "roster-toggle"
+               :data-sheet    (name sheet*)}
               [:span.adsb-roster-handle-bar {:aria-hidden true}]
               [:span.adsb-roster-handle-label
                (handle-label sheet* n total* q)]]
              [health/health]]
-            (when open?*
+            (when body?*
               [roster-body q rows* sel* @hovered])]))})))

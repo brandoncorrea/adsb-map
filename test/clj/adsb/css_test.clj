@@ -108,6 +108,23 @@
     (is (str/includes? (first roster-blocks) "var(--roster-w)")
         "the dock's width is the shared roster token")))
 
+(deftest the-find-field-does-not-zoom-mobile-safari
+  ;; Mobile Safari zooms the page in on any focused form control whose text is
+  ;; under 16px, and does not zoom back out on blur — focus the find field once
+  ;; and the reader is pinching their way back to the map. Our whole type scale
+  ;; is smaller than 16px (--t0 is 13px), so the phone stance overrides this ONE
+  ;; field with a literal 16px.
+  ;;
+  ;; It is pinned here because it is invisible when it works and looks exactly
+  ;; like an off-scale mistake: the obvious "cleanup" is to pull it back onto a
+  ;; token, which silently restores the bug on a device CI never opens.
+  (let [phone (subs @css (str/index-of @css "@media (max-width: 640px)"))
+        block (blocks-for phone ".adsb-roster-search-input")]
+    (is (seq block) "the phone stance overrides the find field's size")
+    (is (str/includes? (first block) "font-size: 16px")
+        "the find field is 16px on the phone — smaller means Safari zooms on
+         focus, and the reader has to zoom back out by hand")))
+
 (deftest the-watch-reloads-our-tree-and-only-ours-in-dependency-order
   ;; The watch must NEVER reload garden itself: re-evaluating garden.types
   ;; mints a new CSSAtRule class each pass while garden.compiler keeps its

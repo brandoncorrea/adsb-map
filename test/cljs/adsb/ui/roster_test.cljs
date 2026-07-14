@@ -112,6 +112,131 @@
               drawer the reader cannot find is a deleted feature"
       (is (some? (.getByTestId rtl/screen "roster-toggle"))))))
 
+;; The drag and the tap live on the SHELL, not on the handle button (the
+;; button is smaller than the lip a finger aims at — that was the finnicky
+;; drag). These pin the consequences: every part of the lip toggles, the
+;; button still toggles by bubbling, and the body does not toggle at all.
+(defn- click! [el]
+  (rtl/act (fn [] (.click rtl/fireEvent el) js/undefined)))
+
+(deftest the-whole-lip-toggles-not-just-the-button
+  (async done
+    (fresh-db!)
+    (rf/dispatch-sync [:test/set-picture (picture)])
+    (render-roster!)
+    (let [dock (.getByTestId rtl/screen "roster")]
+      ;; The rail's padding and the safe-area band belong to the shell, and
+      ;; the shell is the grab target — a tap anywhere on the lip opens it.
+      (click! dock)
+      (-> (rtl/waitFor
+            (fn [] (assert (= "true" (.getAttribute dock "data-open")))))
+          (.then (fn [_]
+                   (is (= "true" (.getAttribute dock "data-open")))
+                   ;; The handle button keeps its role, label and focus ring;
+                   ;; its click bubbles to the shell, so a pointer tap on it —
+                   ;; and Enter on it, which fires the same click — still toggle.
+                   (click! (.getByTestId rtl/screen "roster-toggle"))
+                   (rtl/waitFor
+                     (fn [] (assert (= "false" (.getAttribute dock "data-open")))))))
+          (.then (fn [_]
+                   (is (= "false" (.getAttribute dock "data-open")))
+                   (done)))
+          (.catch (fn [err]
+                    (is false (str "the lip did not toggle the drawer: " err))
+                    (done)))))))
+
+(deftest a-row-click-is-not-a-tap-on-the-drawer
+  (async done
+    (fresh-db!)
+    (rf/dispatch-sync [:test/set-picture (picture)])
+    (open-roster!)
+    (render-roster!)
+    (let [dock (.getByTestId rtl/screen "roster")]
+      ;; A row's click bubbles through the shell's handler too. It comes from
+      ;; the body, so the drawer must ignore it — selecting an aircraft may
+      ;; not cycle the sheet out from under the reader.
+      (click! (.getByTestId rtl/screen (str "roster-row:" ups-icao)))
+      (-> (rtl/waitFor
+            (fn [] (assert (= ups-icao @(rf/subscribe [:aircraft/selected-icao])))))
+          (.then (fn [_]
+                   (is (= ups-icao @(rf/subscribe [:aircraft/selected-icao]))
+                       "the row still selects")
+                   (is (= "half" (.getAttribute dock "data-sheet"))
+                       "and the sheet stays exactly where it was")
+                   (done)))
+          (.catch (fn [err]
+                    (is false (str "row click did not land: " err))
+                    (done)))))))
+
+(defn- pointer! [el kind opts]
+  (rtl/act (fn []
+             (.dispatchEvent el (js/PointerEvent. kind
+                                                  (clj->js (merge {:bubbles true
+                                                                   :cancelable true
+                                                                   :pointerId 1
+                                                                   :button 0}
+                                                                  opts))))
+             js/undefined)))
+
+(deftest the-drawer-is-not-empty-while-it-opens
+  (async done
+    (fresh-db!)
+    (rf/dispatch-sync [:test/set-picture (picture)])
+    (render-roster!)
+    ;; The drag is the phone drawer's gesture, and the browser suite runs at
+    ;; desktop width — say so out loud rather than resizing the window.
+    (with-redefs [roster/phone-stance? (constantly true)]
+      (let [dock (.getByTestId rtl/screen "roster")]
+        (is (nil? (.queryByTestId rtl/screen "roster-list"))
+            "closed and untouched: no body")
+        ;; A finger on the lip, pulling up. NOT released.
+        (pointer! dock "pointerdown" {:clientY 700})
+        (pointer! dock "pointermove" {:clientY 500})
+        (-> (rtl/waitFor
+              (fn [] (assert (some? (.queryByTestId rtl/screen "roster-list")))))
+            (.then (fn [_]
+                     (is (some? (.getByTestId rtl/screen "roster-list"))
+                         "the roster is on screen mid-drag — the reader can see
+                          what they are pulling up, before they commit to it")
+                     (is (some? (.getByTestId rtl/screen (str "roster-row:" ups-icao)))
+                         "and it is the real picture, not a placeholder")
+                     (is (= "false" (.getAttribute dock "data-open"))
+                         "while the COMMITTED state is still closed — the sheet
+                          does not snap until the finger lifts")
+                     (done)))
+            (.catch (fn [err]
+                      (is false (str "the drawer stayed blank mid-drag: " err))
+                      (done))))))))
+
+(deftest a-press-is-not-a-gesture
+  (async done
+    (fresh-db!)
+    (rf/dispatch-sync [:test/set-picture (picture)])
+    (render-roster!)
+    (with-redefs [roster/phone-stance? (constantly true)]
+      (let [dock  (.getByTestId rtl/screen "roster")
+            klass (.getAttribute dock "class")]
+        ;; Finger down, and a tremble well inside the tap slop. Being TOUCHED
+        ;; is not a state of the drawer: the handle the reader is pressing has
+        ;; to look exactly like the handle they were about to press, so not one
+        ;; class may flip and no body may mount.
+        (pointer! dock "pointerdown" {:clientY 700})
+        (pointer! dock "pointermove" {:clientY 697})
+        (-> (rtl/waitFor (fn [] (assert (some? dock))))
+            (.then (fn [_]
+                     (is (= klass (.getAttribute dock "class"))
+                         "the class list is untouched — no is-open, no is-dragging,
+                          so every :not(.is-open) rule still matches and the rail,
+                          the grip and the label do not move")
+                     (is (nil? (.queryByTestId rtl/screen "roster-list"))
+                         "and nothing mounted behind them")
+                     (is (= "" (.. dock -style -height))
+                         "and no inline geometry was written")
+                     (done)))
+            (.catch (fn [err]
+                      (is false (str "a press disturbed the drawer: " err))
+                      (done))))))))
+
 (deftest the-roster-renders-the-picture
   (rf-test/run-test-sync
     (rf/dispatch [:test/set-picture (picture)])
