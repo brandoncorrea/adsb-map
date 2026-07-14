@@ -38,7 +38,8 @@
            (java.nio ByteBuffer)
            (java.nio.charset StandardCharsets)
            (java.time Duration)
-           (java.util.concurrent BlockingQueue LinkedBlockingQueue TimeUnit)))
+           (java.util.concurrent BlockingQueue LinkedBlockingQueue TimeUnit)
+           (java.util.function BiConsumer)))
 
 (def ^:private eof-sentinel
   "Queued by onClose/onError to mark the stream's end — distinct from a data
@@ -105,12 +106,25 @@
   ^InputStream [^BlockingQueue queue idle-timeout-ms request-next! close!]
   (let [cursor (atom nil)] ;; {:bytes ^bytes :pos int} of the chunk in hand
     (letfn [(fill! []
-              (let [chunk (take-chunk! queue idle-timeout-ms)]
-                (if (identical? chunk ::eof)
-                  false
-                  (do (reset! cursor {:bytes chunk :pos 0})
-                      (request-next!)
-                      true))))
+              ;; An empty websocket message is legal traffic, and an
+              ;; InputStream may only return 0 for a zero-length request —
+              ;; both pumps read a 0 as end-of-stream and drop the
+              ;; connection. So an empty chunk is consumed here, not handed
+              ;; up: request the next message (demand stays replenished) and
+              ;; keep waiting for bytes.
+              (loop []
+                (let [chunk (take-chunk! queue idle-timeout-ms)]
+                  (cond
+                    (identical? chunk ::eof)
+                    false
+
+                    (zero? (alength ^bytes chunk))
+                    (do (request-next!) (recur))
+
+                    :else
+                    (do (reset! cursor {:bytes chunk :pos 0})
+                        (request-next!)
+                        true)))))
             (remaining? []
               (let [{:keys [^bytes bytes pos]} @cursor]
                 (and bytes (< pos (alength bytes)))))
@@ -144,18 +158,61 @@
     (some-> websocket .abort)
     (catch Throwable _ nil)))
 
+;; THE DIAL RACE. A dial has two ends — the thread waiting on the connect
+;; future, and the JDK completing it — and either can arrive last. If the
+;; waiter gives up first, the websocket the JDK establishes moments later
+;; belongs to nobody: no reader holds it, so its TCP connection would stay
+;; open for the life of the (now long-lived, shared) HttpClient. Cancelling
+;; the future does NOT prevent this — cancel completes the future
+;; exceptionally, so a websocket established afterwards is dropped on the
+;; floor rather than handed back, which is the leak itself.
+;;
+;; So a one-shot atom is the referee: nil while the dial is in flight, then
+;; whichever end got there first. The one that arrives second finds it
+;; already claimed, and that one owns the abort. Exactly one of them does.
+
+(defn- claim-dial!
+  "The JDK end: hand the freshly established `websocket` to the waiting
+  dialer. False if the dialer already walked away — then the caller owns the
+  abort, because nobody else will."
+  [state websocket]
+  (compare-and-set! state nil websocket))
+
+(defn- abandon-dial!
+  "The waiter's end: stop waiting on a dial. Returns the websocket to abort
+  if it had already landed in the instant before we gave up (nobody will
+  read it now), nil if it is still in flight — in which case claim-dial!
+  will find the dial abandoned and abort it when it lands."
+  [state]
+  (let [landed (swap! state #(or % ::abandoned))]
+    (when-not (identical? landed ::abandoned)
+      landed)))
+
 (defn- build-websocket!
-  "Open the websocket to `uri`, adding each header (the CF-Access service
-  token — both or neither), and block up to connect-timeout-ms for the
+  "Open the websocket to `uri` on `client`, adding each header (the CF-Access
+  service token — both or neither), and block up to connect-timeout-ms for the
   upgrade. Throws if the upgrade fails (a 403 from Access, an unreachable
-  edge), which tcp/serve-connection! catches into ::unreachable."
-  ^WebSocket [^URI uri headers connect-timeout-ms ^WebSocket$Listener listener]
-  (let [builder (.newWebSocketBuilder (HttpClient/newHttpClient))]
+  edge) or never lands, which tcp/serve-connection! catches into
+  ::unreachable — and a dial we stopped waiting for is abandoned, never
+  leaked."
+  ^WebSocket [^HttpClient client ^URI uri headers connect-timeout-ms
+              ^WebSocket$Listener listener]
+  (let [builder (.newWebSocketBuilder client)
+        state   (atom nil)] ;; nil in flight, then the websocket or ::abandoned
     (.connectTimeout builder (Duration/ofMillis connect-timeout-ms))
     (doseq [[header value] headers]
       (.header builder header value))
-    (-> (.buildAsync builder uri listener)
-        (.get connect-timeout-ms TimeUnit/MILLISECONDS))))
+    (let [pending (.buildAsync builder uri listener)]
+      (.whenComplete pending
+                     (reify BiConsumer
+                       (accept [_ websocket _error]
+                         (when (and websocket (not (claim-dial! state websocket)))
+                           (close-websocket! websocket)))))
+      (try
+        (.get pending connect-timeout-ms TimeUnit/MILLISECONDS)
+        (catch Throwable failure
+          (some-> (abandon-dial! state) close-websocket!)
+          (throw failure))))))
 
 (defn transport
   "A tcp/reader-state `:transport` that dials the wss:// `uri` instead of a
@@ -165,11 +222,16 @@
   tcp calls; host/port are the URI's and used only for error context, since
   the dial target is the full URI."
   [^URI uri headers]
-  (fn [_host _port {:keys [connect-timeout-ms idle-timeout-ms]}]
-    (let [queue     (LinkedBlockingQueue.)
-          websocket (build-websocket! uri headers connect-timeout-ms
-                                      (feed-listener queue))
-          close!    #(close-websocket! websocket)]
-      {:in     (queue-input-stream queue idle-timeout-ms
-                                   #(.request websocket 1) close!)
-       :close! close!})))
+  ;; ONE HttpClient for the Source's lifetime, reused across reconnects. A
+  ;; client per dial would leave a selector thread and a connection pool
+  ;; behind on every drop — against a flapping edge redialing every
+  ;; :reconnect-ms, they accumulate for hours.
+  (let [client (HttpClient/newHttpClient)]
+    (fn [_host _port {:keys [connect-timeout-ms idle-timeout-ms]}]
+      (let [queue     (LinkedBlockingQueue.)
+            websocket (build-websocket! client uri headers connect-timeout-ms
+                                        (feed-listener queue))
+            close!    #(close-websocket! websocket)]
+        {:in     (queue-input-stream queue idle-timeout-ms
+                                     #(.request websocket 1) close!)
+         :close! close!}))))

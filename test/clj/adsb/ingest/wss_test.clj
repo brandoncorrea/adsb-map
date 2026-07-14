@@ -63,17 +63,36 @@
              (hk/send! channel (byte-array chunk))
              (Thread/sleep 1))))})))
 
-(defn- with-ws-feed
-  "Run `next-chunks!` behind a websocket server on an ephemeral 127.0.0.1
-  port and call (f uri). Never a live feeder — a localhost server we run
-  ourselves (docs/CLAUDE.md)."
-  [next-chunks! f]
-  (let [stop! (hk/run-server (ws-app next-chunks!) {:port 0 :ip "127.0.0.1"})
+(defn- ws-frame-app
+  "An http-kit ring handler that sends each byte array (next-frames!) yields
+  as ONE websocket message — empty ones included — then holds the channel
+  open. Where ws-app picks the frame boundaries for you, this one lets the
+  test dictate them."
+  [next-frames!]
+  (fn [request]
+    (hk/as-channel request
+      {:on-open
+       (fn [channel]
+         (future
+           (doseq [^bytes frame (next-frames!)]
+             (hk/send! channel frame)
+             (Thread/sleep 1))))})))
+
+(defn- with-ws-server
+  "Run `handler` on an ephemeral 127.0.0.1 port and call (f uri). Never a
+  live feeder — a localhost server we run ourselves (docs/CLAUDE.md)."
+  [handler f]
+  (let [stop! (hk/run-server handler {:port 0 :ip "127.0.0.1"})
         port  (:local-port (meta stop!))]
     (try
       (f (URI. (str "ws://127.0.0.1:" port "/feed")))
       (finally
         (stop!)))))
+
+(defn- with-ws-feed
+  "Stream `next-chunks!`' bytes as a websocket feed and call (f uri)."
+  [next-chunks! f]
+  (with-ws-server (ws-app next-chunks!) f))
 
 (def ^:private wait-timeout-ms 4000)
 
@@ -193,7 +212,7 @@
           "the transport does not change what the boundary produces"))))
 
 ;; ---------------------------------------------------------------------
-;; Stall detection: a connected-but-silent websocket drops and reconnects
+;; An empty websocket frame is legal traffic, not end of stream
 
 (defn- sbs-identification
   "One valid SBS identification line for `icao`, so a single message names a
@@ -201,6 +220,45 @@
   [icao callsign]
   (.getBytes (str "MSG,1,1,1," icao ",1,,,,," callsign ",,,,,,,,,,,\n")
              StandardCharsets/US_ASCII))
+
+(deftest an-empty-frame-between-two-messages-is-invisible-to-the-reader
+  (testing "a zero-length websocket message carries no bytes and means
+            nothing: the reader must skip it, not surface a 0-byte read.
+            An InputStream returning 0 for a nonzero request is the Beast
+            pump's end-of-stream signal and makes the SBS pump's decoder
+            throw — either way the connection drops and CPR pairing and the
+            Beast carry drop with it, so an edge emitting empty frames would
+            churn the feed once per frame (adsb-kpd)"
+    (let [connections (atom 0)
+          next-frames! (fn []
+                         (swap! connections inc)
+                         [(sbs-identification "aaaaaa" "ALPHA123")
+                          (byte-array 0) ;; the empty frame, mid-stream
+                          (sbs-identification "bbbbbb" "BRAVO123")])]
+      (with-ws-server (ws-frame-app next-frames!)
+        (fn [uri]
+          (let [src (source/open!
+                      (sbs/->source "127.0.0.1" 0
+                                    {:clock           (constantly 0)
+                                     :transport       (wss/transport uri nil)
+                                     :idle-timeout-ms 2000
+                                     :reconnect-ms    50}))]
+            (try
+              (let [picture (wait-until
+                              (fn []
+                                (let [planes (by-icao (fetch-quietly src))]
+                                  (when (contains? planes "bbbbbb") planes))))]
+                (is (= "ALPHA123" (get-in picture ["aaaaaa" :aircraft/callsign]))
+                    "the message before the empty frame decoded")
+                (is (= "BRAVO123" (get-in picture ["bbbbbb" :aircraft/callsign]))
+                    "so did the one after it — the empty frame was skipped, not
+                     read as end of stream")
+                (is (= 1 @connections)
+                    "and the feed never dropped: one connection served it all"))
+              (finally (source/close! src)))))))))
+
+;; ---------------------------------------------------------------------
+;; Stall detection: a connected-but-silent websocket drops and reconnects
 
 (deftest silence-is-a-stall-that-drops-and-reconnects
   (testing "a websocket that names one aircraft then falls silent past
@@ -256,3 +314,87 @@
         (try
           (is (thrown? ExceptionInfo (source/fetch! src)))
           (finally (source/close! src)))))))
+
+;; ---------------------------------------------------------------------
+;; Dial lifecycle: one client across reconnects, and no dial left behind
+
+(defn- selector-thread-count
+  "How many java.net.http.HttpClient selector threads are alive. Each
+  HttpClient starts exactly one, named HttpClient-N-SelectorManager, and it
+  outlives any single request — so this counts live clients."
+  []
+  (->> (.keySet (Thread/getAllStackTraces))
+       (filter #(re-matches #"HttpClient-\d+-SelectorManager" (.getName ^Thread %)))
+       count))
+
+(deftest reconnects-reuse-a-single-http-client
+  (testing "a Source that drops and re-dials many times must not hatch an
+            HttpClient per dial — each brings its own selector thread and
+            connection pool, and against a flapping edge redialing every
+            :reconnect-ms they pile up for hours (adsb-ad8). One client for
+            the Source's lifetime, so the selector threads do not grow with
+            the reconnects"
+    (let [connections (atom 0)
+          ;; every connection names one aircraft then goes silent, so the
+          ;; idle timeout drops it and the reader re-dials, over and over.
+          next-chunks! (fn []
+                         (swap! connections inc)
+                         (seq (sbs-identification "aaaaaa" "ALPHA123")))
+          before (selector-thread-count)]
+      (with-ws-feed next-chunks!
+        (fn [uri]
+          (let [src (source/open!
+                      (sbs/->source "127.0.0.1" 0
+                                    {:clock           (constantly 0)
+                                     :transport       (wss/transport uri nil)
+                                     :idle-timeout-ms 100
+                                     :reconnect-ms    25}))]
+            (try
+              (is (wait-until #(<= 4 @connections))
+                  "the reader re-dialed several times")
+              (is (>= 1 (- (selector-thread-count) before))
+                  "but at most one selector thread appeared — one client, reused")
+              (finally (source/close! src)))))))))
+
+;; A dial we stop waiting for must never leave a live websocket behind: no
+;; reader holds it, so its TCP connection would sit open for the life of the
+;; (now shared, long-lived) client. Whichever end of the dial arrives second
+;; owns the abort — claim-dial! / abandon-dial! are the referee, and this is
+;; the one place both orderings can be driven deterministically. Driving it
+;; through a slow server proves nothing: the JDK's own builder connectTimeout
+;; tears the handshake down first, and the narrow race left over — the future
+;; completing just as .get gives up — is not one a server can be made to hit
+;; on demand.
+
+(def ^:private claim-dial! #'wss/claim-dial!)
+(def ^:private abandon-dial! #'wss/abandon-dial!)
+
+(deftest a-dial-that-lands-before-we-give-up-is-handed-to-the-dialer
+  (testing "the ordinary connect: the websocket lands, the waiting dialer
+            claims it, and abandon-dial! is never called — nobody aborts it"
+    (let [websocket (Object.)
+          state     (atom nil)]
+      (is (true? (claim-dial! state websocket))
+          "the dial is claimed, so the JDK end does not abort it")
+      (is (identical? websocket @state)))))
+
+(deftest a-dial-still-in-flight-when-we-give-up-is-aborted-when-it-lands
+  (testing "we time out first: there is nothing to abort yet, so the abort
+            falls to the JDK end — claim-dial! must refuse the websocket
+            that lands afterwards, marking it the caller's to close (adsb-ad8)"
+    (let [state (atom nil)]
+      (is (nil? (abandon-dial! state))
+          "nothing had landed, so the waiter has nothing to abort")
+      (is (false? (claim-dial! state (Object.)))
+          "the late websocket is refused: whoever established it aborts it"))))
+
+(deftest a-dial-that-lands-in-the-instant-we-give-up-is-aborted-by-us
+  (testing "the other ordering: the websocket lands and is claimed just as
+            the dialer stops waiting. The JDK end has already handed it over
+            and will not abort it, so abandon-dial! must return it — else a
+            live websocket no reader holds stays open (adsb-ad8)"
+    (let [websocket (Object.)
+          state     (atom nil)]
+      (is (true? (claim-dial! state websocket)))
+      (is (identical? websocket (abandon-dial! state))
+          "the dial we walked away from comes back to us to abort"))))
