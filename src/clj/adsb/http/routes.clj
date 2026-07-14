@@ -18,7 +18,9 @@
             [reitit.ring :as ring]
             [reitit.ring.coercion :as coercion]
             [reitit.ring.middleware.exception :as exception]
-            [reitit.ring.middleware.muuntaja :as muuntaja-mw]))
+            [reitit.ring.middleware.muuntaja :as muuntaja-mw]
+            [ring.middleware.not-modified :as not-modified]
+            [ring.util.response :as response]))
 
 (def health-response
   [:map
@@ -74,6 +76,81 @@
   {:status 503
    :body   {:error "stream not wired"}})
 
+;; ---------------------------------------------------------------------
+;; Static asset caching (adsb-8cb).
+
+(def ^:const static-cache-control
+  "Cache the compiled frontend — but never SERVE a cached copy without
+  asking us first.
+
+  This exists because the app previously set no Cache-Control at all,
+  and a response that declines to say is not a response nobody caches:
+  DigitalOcean's router stamps `Cache-Control: private` on anything that
+  arrives without one (measured — even a bare 403 with an empty body
+  comes back `private`), and Cloudflare, reading that, refused to cache
+  the bundle at all. Every first load pulled the whole ~1.2 MB from this
+  container. Saying nothing was a decision; it was just someone else's.
+
+  `no-cache` is NOT `no-store`. Caches may keep the bytes; they must
+  revalidate before serving them. Ring already puts a Last-Modified on
+  every resource response, so that revalidation is a conditional GET
+  that comes back 304 with no body (see wrap-static-caching) — the
+  bundle crosses the wire once per change instead of once per load.
+
+  It is `no-cache` and not a long `max-age` because the bundle is NOT
+  fingerprinted: it is /js/main.js at every deploy, so a cached copy
+  whose max-age has not expired is a cache serving the OLD app with no
+  way to be told otherwise. Revalidation buys the caching without the
+  staleness. Fingerprint the bundle (adsb-452) and this becomes
+  `max-age=31536000, immutable` and the revalidation disappears too.
+
+  Compression is deliberately NOT our business: the edge already
+  brotli-compresses this (measured — 1,233,883 bytes become 348 KB), so
+  a compression middleware here would buy nothing and would put a
+  body-buffering middleware one route away from text/event-stream."
+  "public, no-cache")
+
+(defn- cached
+  "Add the caching header to a static response. nil passes through
+  untouched — a nil response means the resource handler found no such
+  file, and the 404 default handler downstream, not this, decides what
+  that becomes."
+  [resp]
+  (when resp
+    (response/header resp "Cache-Control" static-cache-control)))
+
+(defn- wrap-static-caching
+  "Ring middleware for the STATIC ASSET branch, and nothing else.
+
+  Two things, from the inside out:
+
+    wrap-not-modified  turns a conditional GET whose If-Modified-Since
+                       matches the resource's Last-Modified into a 304
+                       with no body. Without it the origin re-ships the
+                       entire bundle on every revalidation — measured
+                       against the deployment, it did exactly that, so
+                       even a browser that had the file already paid
+                       1.2 MB to be told it was current.
+    Cache-Control      makes the response cacheable in the first place.
+                       It sits OUTSIDE so the 304 carries it too: a 304
+                       that omits Cache-Control leaves a cache to fall
+                       back on its own heuristics, which is how we got
+                       here.
+
+  That it wraps ONLY the resource handler is the load-bearing part. The
+  SSE stream must never meet a middleware that inspects, buffers, or
+  conditionally empties a response body (adsb.stream) — an event-stream
+  is not a document: it has no Last-Modified, it is never complete, and
+  a 304 is a category error against it. Static assets are the only
+  responses here that are safe to cache and the only ones that need to
+  be, so they are the only ones this touches."
+  [handler]
+  (let [handler (not-modified/wrap-not-modified handler)]
+    (fn
+      ([request] (cached (handler request)))
+      ([request respond raise]
+       (handler request (fn [resp] (respond (cached resp))) raise)))))
+
 (defn handler
   "The complete Ring handler: API routes first, then static assets from
   resources/public, then a 404 default. Dependencies are injected —
@@ -110,7 +187,7 @@
                  :feeder-status  feeder-status
                  :stream-connect stream-connect})
         (ring/routes
-          (ring/create-resource-handler {:path "/"})
+          (wrap-static-caching (ring/create-resource-handler {:path "/"}))
           (ring/create-default-handler)))
       dev-csp?)
     origin-token))
