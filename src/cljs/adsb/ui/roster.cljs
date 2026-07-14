@@ -377,14 +377,21 @@
 
 (defn sheet-height-px
   "Rendered height of a snap in CSS pixels. Mirrors adsb.css.roster's
-  phone sheet rules (fraction of viewport + safe-bottom, border-box)."
+  phone sheet rules (fraction of viewport + safe-bottom, border-box).
+
+  Full is capped at `vh - safe-top`, the same clamp --roster-full-h applies
+  in CSS: the sheet top stops at the top safe area so the handle stays on
+  screen. Without the cap here the rAF settle would land on a taller height
+  than the class it hands back to, and the sheet would jump on release."
   [sheet]
   (let [vh   (viewport-height)
         safe (css-px "--safe-bottom")
         frac (get sheet-heights sheet 0.52)]
-    (if (= :closed sheet)
-      (+ closed-rail-px safe)
-      (+ (* frac vh) safe))))
+    (cond
+      (= :closed sheet) (+ closed-rail-px safe)
+      (= :full sheet)   (min (+ (* frac vh) safe)
+                             (- vh (css-px "--safe-top")))
+      :else             (+ (* frac vh) safe))))
 
 (defn- pointer-y
   [^js e]
@@ -495,7 +502,11 @@
             t   (js/performance.now)
             dy  (- start-y y)                 ; up = grow the sheet
             vh  (viewport-height)
-            h   (max (closed-sheet-min-px) (min vh (+ start-h dy)))
+            ;; Ceiling is vh - safe-top, not vh: the same clamp the full snap
+            ;; and --roster-full-h use, so the handle at the sheet's top edge
+            ;; cannot be dragged up behind a notch where it can't be grabbed.
+            top (- vh (css-px "--safe-top"))
+            h   (max (closed-sheet-min-px) (min top (+ start-h dy)))
             dt  (max 1 (- t last-t))
             vy  (/ (- last-y y) dt)]          ; positive = opening
         (swap! !gesture assoc
@@ -577,6 +588,16 @@
                    (/ height vh)
                    (get sheet-heights sheet 0.52))
           target (height-fraction->sheet frac velocity)]
+      ;; END THE GESTURE ON EVERY RELEASE, NOT JUST A TAP. `!gesture` carries
+      ;; `:active?`, and `on-sheet-pointer-move!` drags whenever it is set.
+      ;; A TOUCH release is silent until the next tap, so leaving it set did
+      ;; no harm there — but a MOUSE keeps firing `pointermove` on plain
+      ;; hover after the button is up, and every one of those was read as a
+      ;; live drag. The drawer trailed the bare cursor: "the mouse hangs onto
+      ;; the drag." The tap branch already cleared it (abandon-gesture!); the
+      ;; moved branch never did. Clear it here so both paths leave a dead
+      ;; gesture, and only the settle's own atoms (!drag/!live-h) stay live.
+      (reset! !gesture nil)
       (if moved?
         (do (reset! !suppress-click true)
             (rf/dispatch [:roster/set-sheet target])

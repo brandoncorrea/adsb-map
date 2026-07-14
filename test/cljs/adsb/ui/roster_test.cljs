@@ -237,6 +237,50 @@
                       (is false (str "a press disturbed the drawer: " err))
                       (done))))))))
 
+(deftest a-release-ends-the-gesture-so-the-mouse-cannot-hang-on
+  ;; THE MOUSE HANGS ON. `!gesture` carries :active?, and the move handler
+  ;; drags whenever it is set. A TOUCH release is silent until the next tap,
+  ;; so a stale :active? was harmless there — but a MOUSE keeps firing
+  ;; pointermove on plain hover after the button is up, and every one of
+  ;; those was read as a live drag: the drawer trailed the bare cursor. The
+  ;; moved-release branch used to leave :active? set; only the tap branch
+  ;; cleared it. This pins the release as the end of the gesture on BOTH
+  ;; paths — a bare hover after a real drag must be completely inert.
+  (async done
+    (fresh-db!)
+    (rf/dispatch-sync [:test/set-picture (picture)])
+    (render-roster!)
+    (with-redefs [roster/phone-stance? (constantly true)]
+      (let [dock (.getByTestId rtl/screen "roster")]
+        ;; A real drag: down on the lip, up past the slop, then release.
+        (pointer! dock "pointerdown" {:clientY 700})
+        (pointer! dock "pointermove" {:clientY 300})
+        (pointer! dock "pointerup"   {:clientY 300})
+        (-> (rtl/waitFor
+              (fn []
+                ;; The rAF settle has landed: no live gesture classes remain.
+                (let [k (.getAttribute dock "class")]
+                  (assert (not (.includes k "is-dragging")))
+                  (assert (not (.includes k "is-settling"))))))
+            (.then (fn [_]
+                     (let [committed (.getAttribute dock "data-sheet")
+                           settled-h (.. dock -style -height)]
+                       ;; A bare hover move, no button down (buttons 0). Before
+                       ;; the fix this re-armed the drag and hauled the sheet to
+                       ;; the cursor; now it does nothing at all.
+                       (pointer! dock "pointermove" {:clientY 600 :buttons 0})
+                       (r/flush)
+                       (is (= committed (.getAttribute dock "data-sheet"))
+                           "the committed snap is unchanged by a bare hover move")
+                       (is (not (.includes (.getAttribute dock "class") "is-dragging"))
+                           "no drag re-started — the released gesture is dead")
+                       (is (= settled-h (.. dock -style -height))
+                           "and the height did not chase the cursor: the mouse lets go")
+                       (done))))
+            (.catch (fn [err]
+                      (is false (str "the release did not end the gesture: " err))
+                      (done))))))))
+
 (deftest the-roster-renders-the-picture
   (rf-test/run-test-sync
     (rf/dispatch [:test/set-picture (picture)])

@@ -356,7 +356,21 @@
       ;; the .is-sheet-* classes below for closed / full. Rail is a hair
       ;; taller than 44 so the handle label keeps air above the screen edge
       ;; (adsb-rsm).
-      (decl :--roster-sheet-h "52vh"
+      ;;
+      ;; dvh, NOT vh. `vh` is the LARGE viewport — the height with the mobile
+      ;; URL bar retracted, the tallest the page ever gets. Chrome mobile
+      ;; shows the URL bar most of the time, so a sheet sized in `vh` is
+      ;; taller than what is actually on screen: its top edge — the handle —
+      ;; is shoved above the visible viewport and cannot be grabbed to close
+      ;; it. `dvh` is the DYNAMIC viewport, the height on screen right now,
+      ;; and it is also what the drag math reads (window.innerHeight), so CSS
+      ;; and JS finally measure the sheet against the same ruler.
+      ;;
+      ;; --roster-full-h additionally clamps to 100dvh - safe-top, so a notch
+      ;; or status-bar inset can never eat the handle even at the full snap:
+      ;; the sheet top stops AT the top safe area, never behind it.
+      (decl :--roster-sheet-h "52dvh"
+            :--roster-full-h  "min(calc(92dvh + var(--safe-bottom)), calc(100dvh - var(--safe-top)))"
             :--roster-rail-h  "48px")]
 
      [:.adsb-roster
@@ -388,13 +402,15 @@
             :width      "auto")]
 
      [".adsb-roster.is-sheet-half"
-      (decl :height     "calc(52vh + var(--safe-bottom))"
-            :max-height "calc(52vh + var(--safe-bottom))")]
+      (decl :height     "calc(52dvh + var(--safe-bottom))"
+            :max-height "calc(52dvh + var(--safe-bottom))")]
 
      [".adsb-roster.is-sheet-full"
       ;; Mostly full: a band of chart remains above so it reads as a drawer.
-      (decl :height     "calc(92vh + var(--safe-bottom))"
-            :max-height "calc(92vh + var(--safe-bottom))")]
+      ;; --roster-full-h caps the height at 100dvh - safe-top, so the handle
+      ;; at the sheet's top edge stays below the notch and stays grabbable.
+      (decl :height     "var(--roster-full-h)"
+            :max-height "var(--roster-full-h)")]
 
      ;; Finger tracking and rAF settle must not fight a CSS transition.
      [".adsb-roster.is-dragging,
@@ -575,16 +591,18 @@
             :bottom "calc(var(--roster-rail-h) + var(--safe-bottom) + 10px + 34px)")]
 
      [".adsb-shell:has(.adsb-roster.is-sheet-half) .maplibregl-ctrl-bottom-right"
-      (decl :bottom "calc(52vh + var(--safe-bottom))")]
+      (decl :bottom "calc(52dvh + var(--safe-bottom))")]
 
      [".adsb-shell:has(.adsb-roster.is-sheet-half) .adsb-follow-control"
-      (decl :bottom "calc(52vh + var(--safe-bottom) + 10px + 34px)")]
+      (decl :bottom "calc(52dvh + var(--safe-bottom) + 10px + 34px)")]
 
+     ;; Full clears the clamped sheet top (--roster-full-h), so the (i) and
+     ;; the reticle ride exactly the drawer edge on every device.
      [".adsb-shell:has(.adsb-roster.is-sheet-full) .maplibregl-ctrl-bottom-right"
-      (decl :bottom "calc(92vh + var(--safe-bottom))")]
+      (decl :bottom "var(--roster-full-h)")]
 
      [".adsb-shell:has(.adsb-roster.is-sheet-full) .adsb-follow-control"
-      (decl :bottom "calc(92vh + var(--safe-bottom) + 10px + 34px)")]]))
+      (decl :bottom "calc(var(--roster-full-h) + 10px + 34px)")]]))
 
 (def styles
   [dock phone])
