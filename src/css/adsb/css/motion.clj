@@ -16,6 +16,15 @@
     ["from" (decl :opacity 0
                   :transform "translateY(-4px)")]))
 
+(def settle-up
+  "The same settle, rising — for surfaces anchored to the BOTTOM edge (the
+  phone's drawer stands up out of the Stack bar). A bottom sheet drifting
+  DOWN into place reads as falling out of the sky it is supposed to grow
+  from."
+  (at-keyframes "adsb-settle-up"
+    ["from" (decl :opacity 0
+                  :transform "translateY(4px)")]))
+
 (def breathe
   ;; 0% and 100% are separate frames because Garden cannot render a GROUPED
   ;; keyframe selector (`0%, 100%` comes out as `0, % { 1 0 0 % }`). Two
@@ -75,4 +84,4 @@
 (def styles
   "The keyframes only. `reduced-motion` is NOT here — it is emitted at the
   END of the cascade by adsb.css.app, where it can actually win."
-  [settle breathe ring-draw mayday-draw])
+  [settle settle-up breathe ring-draw mayday-draw])

@@ -118,11 +118,13 @@
     (is (str/includes? base "background: var(--paper-veil)") "on the card's paper")
     (is (str/includes? base "animation: adsb-settle") "settling in like one")
     (is (some? phone) "and the phone stance re-pins it")
-    (is (str/includes? phone "top: 0") "flush into the corner")
+    (is (str/includes? phone "top: auto") "unpinned from the panel's corner")
+    (is (str/includes? phone "bottom: calc(var(--stack-w)")
+        "a sheet standing on the recumbent Stack — it rises from the bar
+        that holds the caption the finger tapped (adsb-88m)")
     (is (str/includes? phone "border-radius: 0") "square again")
-    (is (str/includes? phone "var(--stack-w)")
-        "stopping short of the recumbent Stack — the inset that is a phone
-        fact, not a drawer fact")
+    (is (str/includes? phone "animation: adsb-settle-up")
+        "and it settles UP out of the bar, not down out of the sky")
     (is (empty? extra) "two stances, two rules, nothing else claiming it")))
 
 (deftest the-night-edition-only-repoints-the-day

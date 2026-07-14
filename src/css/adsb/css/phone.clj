@@ -19,6 +19,15 @@
 
 (def styles
   (at-media {:max-width "640px"}
+    ;; The Stack's footprint, re-pinned for the recumbent stance: the bar
+    ;; spends --stack-w as its HEIGHT, and a caption line plus the ruler
+    ;; fits in 76px. The desktop's 96px is the standing COLUMN's width
+    ;; (adsb.css.tokens) — inherited here, it would swell the bar for
+    ;; nothing. Every surface that clears the Stack by this token (the
+    ;; ribbon, the drawer, the attribution) follows automatically.
+    [":root"
+     (decl :--stack-w "76px")]
+
     [:.adsb-alerts
      (decl :right 0)]
 

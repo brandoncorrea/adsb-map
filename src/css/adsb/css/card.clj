@@ -33,6 +33,28 @@
         :box-sizing    "border-box"
         :animation     "adsb-settle 180ms ease-out"))
 
+(def title
+  "A card's name, in the plotter's stamp: bold, at --t1, tracked. The panel
+  prints a callsign here and the drawer prints its band's label, and the two
+  must be the SAME stamp — the drawer wore a faded caption for a title once,
+  and the two cards read as two different apps (adsb-l4m). Guarded against a
+  hostile callsign shearing the card."
+  (decl :font-size      "var(--t1)"
+        :font-weight    700
+        :letter-spacing "0.04em"
+        :overflow-wrap  "anywhere"))
+
+(def head
+  "A card's header row: title left, the way out at the end, and §4's ink
+  rule under the whole line — the strong rule is half of what makes the
+  index card read as one."
+  (decl :display         "flex"
+        :align-items     "baseline"
+        :justify-content "space-between"
+        :gap             "var(--s2)"
+        :padding         "var(--s3) var(--s3) var(--s2)"
+        :border-bottom   "1px solid var(--ink)"))
+
 (def close
   "A card's × — faded until wanted, ink on hover (each surface writes its
   own :hover/:focus-visible rules; this is the shared voice)."

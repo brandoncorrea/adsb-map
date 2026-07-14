@@ -22,20 +22,10 @@
           :z-index  2
           :width    "288px")]
 
-   [:.adsb-panel-header
-    (decl :display         "flex"
-          :align-items     "baseline"
-          :justify-content "space-between"
-          :gap             "var(--s2)"
-          :padding         "var(--s3) var(--s3) var(--s2)"
-          :border-bottom   "1px solid var(--ink)")]
+   ;; The shared card header and title stamp (adsb.css.card).
+   [:.adsb-panel-header card/head]
 
-   [:.adsb-panel-title
-    (decl :font-size      "var(--t1)"
-          :font-weight    700
-          :letter-spacing "0.04em"
-          ;; a hostile callsign must not shear the card
-          :overflow-wrap  "anywhere")]
+   [:.adsb-panel-title card/title]
 
    ;; The shared close voice (adsb.css.card), plus this card's own geometry.
    [:.adsb-panel-close

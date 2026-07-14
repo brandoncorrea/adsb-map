@@ -53,12 +53,15 @@
    ;; overflow markers hang outside that view — a child of the scroller would
    ;; scroll away with the sky it is reporting on.
    [:.adsb-stack-ruler
-    (decl :position    "relative"
-          :flex        1
-          :width       "22px"
-          :min-height  "55%"
-          :margin-left "auto"             ; labels live to its left
-          :border      "1px solid var(--rule-strong)")]
+    (decl :position      "relative"
+          :flex          1
+          :width         "26px"
+          :min-height    "55%"
+          :margin-left   "auto"           ; labels live to its left
+          ;; the SFC label hangs half below the ruler's foot; without this it
+          ;; crowded the first census box (adsb-lak)
+          :margin-bottom "var(--s2)"
+          :border        "1px solid var(--rule-strong)")]
 
    ;; THE VIEW — a real scroll container, and that is the whole point. The browser
    ;; owns the panning, and with it momentum on the platform's own deceleration
@@ -181,12 +184,15 @@
           :outline-offset "1px")]
 
    ;; Airborne: an ink bar across the ruler with a hairline paper halo so it
-   ;; survives every band of the gradient. Centered on its altitude.
+   ;; survives every band of the gradient. Centered on its altitude. 2px, not
+   ;; 3 — forty aircraft at 3px+halo read as a barcode over the day gradient,
+   ;; and the ramp is the map key: the ticks may mark it, never bury it
+   ;; (adsb-lak). The phone bar keeps 3px: its axis is four times longer.
    [".adsb-stack-ruler .adsb-stack-tick"
     (decl :position   "absolute"
           :left       "-3px"
           :right      "-3px"
-          :height     "3px"
+          :height     "2px"
           :bottom     "calc(var(--alt-pct, 0) * 1%)"
           :transform  "translateY(50%)"
           :background "var(--ink)"
@@ -205,7 +211,7 @@
           :inset    "-9px")]
 
    [".adsb-stack-ruler .adsb-stack-tick:hover"
-    (decl :height  "5px"
+    (decl :height  "4px"
           :z-index 2)]
 
    ;; (There is no "hold the ruler still" rule any more, and its absence is the
@@ -261,7 +267,7 @@
     (decl :z-index 2)]
 
    [".adsb-stack-ruler .adsb-stack-tick-selected"
-    (decl :height     "5px"
+    (decl :height     "4px"
           :background "var(--magenta)"
           :box-shadow "0 0 0 1px var(--paper-veil)")]
 
@@ -270,7 +276,7 @@
     (decl :z-index 3)]
 
    [".adsb-stack-ruler .adsb-stack-tick-emergency"
-    (decl :height     "7px"
+    (decl :height     "6px"
           :background (str "repeating-linear-gradient("
                            "45deg, "
                            "var(--emergency) 0, "
@@ -494,18 +500,15 @@
           ;; there on a desktop. The phone block restores it.)
           :max-height     "calc(100vh - 2 * var(--s3))")]
 
+   ;; The shared card header (adsb.css.card): the same ink rule and stamp the
+   ;; panel's header wears. The drawer wore a faded caption for a title once,
+   ;; and next to the panel it read as a different app (adsb-l4m).
    [:.adsb-stack-drawer-head
-    (decl :display       "flex"
-          :align-items   "center"
-          :gap           "var(--s2)"
-          :flex          "none"
-          :padding       "var(--s2) var(--s3)"
-          :white-space   "nowrap"      ; the label sets the width; it never wraps
-          :border-bottom "1px solid var(--rule)")]
+    card/head
+    (decl :flex        "none"
+          :white-space "nowrap")]      ; the label sets the width; it never wraps
 
-   ;; voice: adsb.css.captions
-   [:.adsb-stack-drawer-title
-    (decl :color "var(--faded-ink)")]
+   [:.adsb-stack-drawer-title card/title]
 
    ;; The shared close voice (adsb.css.card), in a finger-sized box.
    [:.adsb-stack-drawer-close
@@ -636,14 +639,15 @@
     ;; ruler do share a column.) min-height goes back to 0: the recumbent
     ;; ruler's height is its thickness, and 55% of the bar would swell it.
     [:.adsb-stack-ruler
-     (decl :--stack-axis "to right"
-           :order        2
-           :flex         "1 0 100%"
-           :width        "auto"
-           :height       "22px"
-           :min-height   0
-           :margin-left  0
-           :align-self   "flex-end")]
+     (decl :--stack-axis  "to right"
+           :order         2
+           :flex          "1 0 100%"
+           :width         "auto"
+           :height        "22px"
+           :min-height    0
+           :margin-left   0
+           :margin-bottom 0        ; the SFC clearance is the standing ruler's
+           :align-self    "flex-end")]
 
     ;; Lying down, the sky scrolls left-to-right — and the browser gets that axis.
     [:.adsb-stack-ruler-view
@@ -775,22 +779,26 @@
     [:.adsb-stack-shelf-count
      (decl :margin-left 0)]
 
-    ;; THE DRAWER GOES BACK INTO THE CORNER. The card face is the desktop's
-    ;; stance; here an edge sheet is the native idiom, and a gutter between a
-    ;; drawer and the corner it slides from is a strip of map you cannot see
-    ;; and cannot use. Opaque leaf (the veil is for cards the chart shows
-    ;; through around every edge), borders only on the two edges that are
-    ;; on-screen, square corners — and the bottom inset returns: the phone's
-    ;; Stack lies along the bottom edge, and the sheet must stop short of it.
+    ;; THE DRAWER RISES FROM THE BAR THAT OPENED IT. The captions live on the
+    ;; recumbent Stack along the bottom edge, so the sheet stands up directly
+    ;; above them — from under the reader's own finger — instead of appearing
+    ;; in the far corner. The far corner was also the PANEL'S corner on a
+    ;; phone, and the two stacked (adsb-88m); the bottom-left is the one wall
+    ;; the panel never uses. An edge sheet, not a card: opaque leaf (the veil
+    ;; is for cards the chart shows through around every edge), borders only
+    ;; on the two edges that are on-screen, square corners, and it settles UP
+    ;; — out of the bar — not down out of the sky.
     [:.adsb-stack-drawer
-     (decl :top           0
+     (decl :top           "auto"
            :left          0
-           :max-height    "calc(100vh - var(--stack-w) - env(safe-area-inset-bottom, 0px))"
+           :bottom        "calc(var(--stack-w) + env(safe-area-inset-bottom, 0px))"
+           :max-height    "30vh"
            :background    "var(--paper-chrome)"
            :border        "none"
+           :border-top    "1px solid var(--rule-strong)"
            :border-right  "1px solid var(--rule-strong)"
-           :border-bottom "1px solid var(--rule-strong)"
-           :border-radius 0)]
+           :border-radius 0
+           :animation     "adsb-settle-up 180ms ease-out")]
 
     ;; HIT-SLOP, the ticks' trick again (adsb-4et): the caption prints at
     ;; --t-2, which is nowhere near a finger's 44px, and it now has no box to
