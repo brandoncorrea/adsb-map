@@ -1,26 +1,82 @@
 (ns adsb.stream.broadcast
-  "SSE fan-out of the aircraft picture: a client registry, a ~1 Hz tick
-  that sends every client the full current picture, and a heartbeat.
+  "SSE fan-out of the aircraft picture: a client registry, an immediate
+  per-aircraft upsert path fed by the streaming Sources (adsb-jpf), a
+  full-picture tick for poll deployments, a low-rate stats tick, and a
+  heartbeat.
 
-  On connect a client receives one `snapshot` event, then an `update`
-  event per tick — both carry the full picture on the adsb.wire format,
-  so a reconnect needs no replay. The tick obtains the picture through
-  the injected `:picture` fn (a fn of now-ms); production injects
+  AIRCRAFT DATA AND STATS NEVER SHARE A FRAME (owner decision,
+  adsb-jpf): coupled in one envelope, a change to either forces itself
+  on the other; separated, each evolves alone. So a client sees four
+  kinds of traffic:
+
+    * one `snapshot` on connect — the full picture, aircraft only —
+      followed immediately by one `stats` frame, so the chrome
+      populates without waiting out a stats interval.
+
+    * `aircraft` events — ONE full merged aircraft per event, pushed the
+      instant a streaming Source applies a message. NO tick and NO
+      coalesce window sit in this path (owner requirement, adsb-jpf):
+      the ingest reader thread enqueues into a small bounded queue
+      (offer-delta! — offer, never put) and a dedicated fan-out thread
+      drains it to every ready client, one SSE frame per delta. Poll
+      deployments never enqueue and get their aircraft from the tick
+      below. On a streaming deployment this path IS the aircraft
+      stream: there is no recurring full-picture frame behind it.
+
+    * `update` events — the full picture, aircraft only, every
+      :interval-ms. The POLL deployment's update path (~1 Hz — its
+      cadence is inherent to polling). A streaming deployment passes
+      :interval-ms nil and sends NO update frames at all: aircraft data
+      flows exclusively as snapshot + upserts.
+
+    * `stats` events — session stats and feeder health, every
+      :stats-interval-ms (~10 s), both deployments alike. Stats are
+      computed on this cadence ONLY, never per delta and never per
+      update frame.
+
+  CONVERGENCE, without a reconcile frame. A dropped or lost upsert
+  heals on that aircraft's next message (~0.5 s on a live feed) —
+  upserts are idempotent full states, not diffs. An aircraft that goes
+  SILENT is removed by client-side age-out: the browser judges every
+  aircraft against the shared adsb.aircraft threshold on its own clock,
+  so a track the server would prune disappears from the map without a
+  server frame saying so. The server's own sweep still runs here on the
+  scheduler — the ticks obtain the picture through the injected
+  `:picture` fn (a fn of now-ms), and production injects
   adsb.state/age-out!, which prunes long-silent aircraft AND returns
-  the surviving picture — age-out runs on the broadcast cadence, one
-  scheduler for both jobs (decision recorded on adsb-kbm.2).
+  the surviving picture. The stats tick runs EVEN WITH ZERO CLIENTS and
+  even when :interval-ms is nil, so the sweep never stops (decision
+  recorded on adsb-kbm.2; the upsert path changes nothing here, since
+  it never removes anything).
 
-  ## Slow-consumer policy (adsb-kbm.2)
+  Frame ids increment across ALL event kinds — snapshot, update, stats,
+  aircraft — off one shared counter, so ids increase over the whole
+  stream; the tick thread and the fan-out thread can interleave sends,
+  so ids on a channel are increasing but not always consecutive.
+
+  ## Slow-consumer policy (adsb-kbm.2, re-argued for adsb-jpf)
 
   http-kit's async channels do not backpressure: send! only enqueues,
   and its boolean says whether the channel was still open. The policy
   is DROP-AND-CLOSE: any client whose send! returns false is closed and
-  unregistered on the spot. What bounds a stalled-but-still-open
-  consumer is that every frame is the full picture, never a queued
-  backlog of deltas — the server buffers at most one bounded frame per
-  tick until the OS gives up on the socket and send! starts failing.
-  A dropped client reconnects and gets a fresh snapshot; nothing is
-  owed to it.
+  unregistered on the spot. The OLD bound — every frame is the full
+  picture, so at most one bounded frame per tick queues — is GONE:
+  `aircraft` events are per-delta frames. What bounds a
+  stalled-but-still-open consumer now is different but still real:
+
+    * a per-delta frame is SMALL (one wire aircraft, a few hundred
+      bytes), and frames are produced at the feed's message rate — the
+      server cannot manufacture them faster than the radio does, and
+      the bounded handoff queue caps any burst the fan-out replays;
+    * http-kit buffers per channel only until the OS pushes back and
+      send! reports the channel closed, at which point the client is
+      dropped — so a stalled channel holds a bounded burst of small
+      frames, never an unbounded backlog of full pictures;
+    * healing is owed to no one: a dropped client reconnects into a
+      fresh snapshot, a client that missed upserts (queue pressure, a
+      lossy interlude) converges on each aircraft's next message, and a
+      silent aircraft leaves via client-side age-out (CONVERGENCE,
+      above).
 
   ## Connection limits (adsb-kh4.4)
 
@@ -70,11 +126,25 @@
     (java.lang.reflect Field)
     (java.net InetSocketAddress)
     (java.nio.channels SelectionKey SocketChannel)
-    (java.util.concurrent Executors ScheduledExecutorService
-                          ThreadFactory TimeUnit)
+    (java.util.concurrent ArrayBlockingQueue Executors
+                          ScheduledExecutorService ThreadFactory TimeUnit)
     (org.httpkit.server AsyncChannel)))
 
 (def ^:const default-interval-ms 1000)
+
+(def ^:const default-stats-interval-ms
+  "The `stats` event cadence — and, riding along, the floor on the
+  server's age-out sweep when no update tick runs (ns docstring). Low
+  on purpose: stats are a readout, not the sky."
+  10000)
+
+(def ^:const default-delta-queue-depth
+  "Capacity of the bounded reader -> fan-out handoff queue. A busy local
+  sky is ~35 aircraft at ~60 messages/s, against a fan-out that drains
+  in microseconds — the queue lives near empty. 1024 slots is ~17 s of
+  headroom under a wholly stalled fan-out before offers start failing,
+  and a failed offer is safe by design (offer-delta!)."
+  1024)
 
 (def ^:const default-heartbeat-ms 15000)
 
@@ -100,19 +170,45 @@
 
 (def ^:const update-event "update")
 
+(def ^:const aircraft-event
+  "The single-aircraft upsert event (adsb-jpf): one full merged aircraft
+  on the adsb.wire upsert envelope, pushed per ingest message."
+  "aircraft")
+
+(def ^:const stats-event
+  "The stats event: session stats and feeder health on the adsb.wire
+  stats envelope — the ONLY frame either may ride (ns docstring)."
+  "stats")
+
 ;; ---------------------------------------------------------------------
-;; Frames
+;; Frames — every builder shares the frame-id counter (the ! is that
+;; counter), so ids increase across the whole stream regardless of kind.
 
 (defn- picture-frame!
-  "One full-picture SSE frame as of now-ms, carrying the session `stats`
-  (adsb.stats, or nil) and the `feeder` health (adsb.ingest.poll/status, or
-  nil). The ! is the frame-id counter: snapshot and update frames share it,
-  so ids increase across the whole stream."
-  [{:stream/keys [frame-id]} event-name picture stats feeder now-ms]
+  "One full-picture SSE frame as of now-ms — aircraft data only."
+  [{:stream/keys [frame-id]} event-name picture now-ms]
   (sse/event-frame event-name
                    (swap! frame-id inc)
                    (json/generate-string
-                     (wire/picture->wire picture stats feeder now-ms))))
+                     (wire/picture->wire picture now-ms))))
+
+(defn- upsert-frame!
+  "One single-aircraft upsert SSE frame: the full merged state one
+  streaming-Source message produced, as of its arrival instant."
+  [{:stream/keys [frame-id]} aircraft now-ms]
+  (sse/event-frame aircraft-event
+                   (swap! frame-id inc)
+                   (json/generate-string
+                     (wire/upsert->wire aircraft now-ms))))
+
+(defn- stats-frame!
+  "One stats SSE frame as of now-ms: the session `stats` (adsb.stats, or
+  nil) and the `feeder` health (adsb.ingest.poll/status, or nil)."
+  [{:stream/keys [frame-id]} stats feeder now-ms]
+  (sse/event-frame stats-event
+                   (swap! frame-id inc)
+                   (json/generate-string
+                     (wire/stats-event->wire stats feeder now-ms))))
 
 ;; ---------------------------------------------------------------------
 ;; The registry, admission, and the slow-consumer policy
@@ -333,14 +429,30 @@
 ;; The tick and the heartbeat
 
 (defn- broadcast-picture!
-  "One tick: obtain the picture as of now — the injected fn runs even
-  with no audience, because in production it is also the age-out
-  sweep — compute the session stats and cache them for the next connect's
-  snapshot, then fan the update out to whoever is listening. Stats are
-  computed ONLY here, on the single broadcast thread, so their
-  accumulator (adsb.stats) has one writer; connect! reuses the cache
-  rather than recomputing off-thread. The feeder status is a plain read of
-  the poller's atom, safe from any thread, so it is read fresh per frame
+  "One update tick — the POLL deployment's aircraft path (~1 Hz; a
+  streaming deployment does not schedule this at all, ns docstring):
+  obtain the picture as of now — the injected fn runs even with no
+  audience, because in production it is also the age-out sweep — and fan
+  the full picture out to whoever is listening. Aircraft only; stats
+  live on their own tick."
+  [{:stream/keys [picture clients] :as broadcaster}]
+  (let [now-ms          (System/currentTimeMillis)
+        current-picture (picture now-ms)]
+    (when (seq @clients)
+      (broadcast! broadcaster
+                  (picture-frame! broadcaster update-event
+                                  current-picture now-ms)))))
+
+(defn- broadcast-stats!
+  "One stats tick: obtain the picture as of now — on a streaming
+  deployment (no update tick) THIS is the age-out sweep, so it runs even
+  with no audience — compute the session stats and cache them for the
+  next connect's post-snapshot stats frame, then fan a stats frame out
+  to whoever is listening. Stats are computed ONLY here, on the single
+  scheduler thread and never per delta, so their accumulator
+  (adsb.stats) has one writer; connect! reuses the cache rather than
+  recomputing off-thread. The feeder status is a plain read of the
+  poller's atom, safe from any thread, so it is read fresh per frame
   rather than cached."
   [{:stream/keys [picture stats feeder last-stats clients] :as broadcaster}]
   (let [now-ms          (System/currentTimeMillis)
@@ -349,12 +461,81 @@
     (reset! last-stats current-stats)
     (when (seq @clients)
       (broadcast! broadcaster
-                  (picture-frame! broadcaster update-event
-                                  current-picture current-stats (feeder)
-                                  now-ms)))))
+                  (stats-frame! broadcaster current-stats (feeder) now-ms)))))
 
 (defn- broadcast-heartbeat! [broadcaster]
   (broadcast! broadcaster (sse/comment-frame "hb")))
+
+;; ---------------------------------------------------------------------
+;; The per-aircraft upsert path (adsb-jpf): reader thread -> bounded
+;; queue -> dedicated fan-out thread -> every ready client. No tick, no
+;; coalescing, and the enqueue side can never block.
+
+(defn offer-delta!
+  "Hand one aircraft's full merged post-accumulate state (plus its
+  arrival instant) to the fan-out thread. Called from an INGEST READER
+  THREAD, which must never block on fan-out — and it never does: a
+  bounded queue and `offer`, never `put`. Returns true when enqueued,
+  false when the queue was full and the delta was DROPPED.
+
+  Drop policy: the NEWEST delta is dropped — the failed offer is simply
+  discarded — not the oldest. Drop-oldest sounds fresher, but buying it
+  takes a poll-then-offer dance that races the draining thread and can
+  STILL fail, where a lone failed offer is one atomic, provably
+  non-blocking call. And the freshness it would buy is negligible: the
+  queue is only full when the fan-out has stalled for many seconds, at
+  which point everything in it is about stale to the same degree — and
+  every drop heals regardless, because upserts are idempotent full
+  states: the aircraft's next message (~0.5 s on a live feed) or the
+  reconcile frame re-asserts it. Simplicity wins the tie."
+  [{:stream/keys [^ArrayBlockingQueue deltas]} aircraft now-ms]
+  (.offer deltas [aircraft now-ms]))
+
+(def ^:const ^:private delta-poll-ms
+  "How long the fan-out thread parks waiting for a delta before
+  re-checking whether it was stopped. Latency is unaffected — a parked
+  poll wakes the instant an offer lands."
+  100)
+
+(defn- take-delta!
+  "The next queued [aircraft now-ms], or nil after delta-poll-ms of
+  quiet (or an interrupt) so the loop can notice stop!."
+  [^ArrayBlockingQueue deltas]
+  (try
+    (.poll deltas delta-poll-ms TimeUnit/MILLISECONDS)
+    (catch InterruptedException _ nil)))
+
+(defn- broadcast-delta!
+  "Fan one dequeued delta out as an `aircraft` frame — skipping even the
+  serialization when nobody is connected, which is the poll deployment
+  and the empty-audience streaming one."
+  [{:stream/keys [clients] :as broadcaster} [aircraft now-ms]]
+  (when (seq @clients)
+    (broadcast! broadcaster (upsert-frame! broadcaster aircraft now-ms))))
+
+(defn- run-delta-fan-out!
+  "The fan-out thread's body: drain the handoff queue, one SSE frame per
+  delta. The catch is load-bearing for the same reason as schedule!'s: a
+  fan-out loop that dies is a stream that silently degrades to reconcile
+  cadence."
+  [{:stream/keys [delta-running? deltas] :as broadcaster}]
+  (loop []
+    (when @delta-running?
+      (when-some [delta (take-delta! deltas)]
+        (try
+          (broadcast-delta! broadcaster delta)
+          (catch Throwable e
+            (log/error e "SSE delta fan-out failed"))))
+      (recur))))
+
+(defn- start-delta-fan-out!
+  "Start the dedicated fan-out consumer. A daemon, like every broadcast
+  thread, so a live broadcaster never blocks JVM exit."
+  ^Thread [broadcaster]
+  (doto (Thread. ^Runnable #(run-delta-fan-out! broadcaster)
+                 "adsb-sse-delta-fan-out")
+    (.setDaemon true)
+    (.start)))
 
 ;; ---------------------------------------------------------------------
 ;; Client-address diagnostic (adsb-nnk) — TEMPORARY, and off by default.
@@ -403,8 +584,9 @@
 (defn connect!
   "The GET /api/stream handler body: admit the client under the
   connection limits (503 + Retry-After when over — ns docstring),
-  switch the request to an http-kit async channel, send the SSE headers
-  and one full snapshot, and join the ticks that follow. The registry
+  switch the request to an http-kit async channel, send the SSE headers,
+  one full snapshot, and one stats frame, and join the traffic that
+  follows. The registry
   slot is claimed atomically on open and freed by on-close (the browser
   went away), by a failed send (drop-and-close), or by rejection.
 
@@ -430,15 +612,22 @@
         {:on-open  (fn [channel]
                      (if-some [reason (try-register! broadcaster channel ip)]
                        (reject! broadcaster channel reason ip)
-                       (let [now-ms (System/currentTimeMillis)
-                             frame  (picture-frame! broadcaster snapshot-event
-                                                    (picture now-ms) @last-stats
+                       ;; Snapshot, then one immediate stats frame from
+                       ;; the tick's cache, so the chrome populates
+                       ;; without waiting out a stats interval.
+                       (let [now-ms   (System/currentTimeMillis)
+                             snapshot (picture-frame! broadcaster
+                                                      snapshot-event
+                                                      (picture now-ms)
+                                                      now-ms)
+                             stats-f  (stats-frame! broadcaster @last-stats
                                                     (feeder) now-ms)]
                          (if (and (http-kit/send! channel
                                                   {:status  200
                                                    :headers sse/headers}
                                                   false)
-                                  (http-kit/send! channel frame false))
+                                  (http-kit/send! channel snapshot false)
+                                  (http-kit/send! channel stats-f false))
                            (mark-ready! broadcaster channel)
                            (drop-client! broadcaster channel)))))
          :on-close (fn [channel _status]
@@ -455,17 +644,18 @@
         (.setDaemon true)))))
 
 (defn- schedule!
-  "Run task! every period-ms, forever. The catch is load-bearing: a
-  ScheduledExecutorService silently cancels a task that throws, and a
-  broadcast that dies is a map that freezes."
-  [^ScheduledExecutorService executor period-ms task!]
+  "Run task! every period-ms, forever, starting after initial-delay-ms
+  (0 runs it at once — the stats tick warms its cache that way). The
+  catch is load-bearing: a ScheduledExecutorService silently cancels a
+  task that throws, and a broadcast that dies is a map that freezes."
+  [^ScheduledExecutorService executor initial-delay-ms period-ms task!]
   (.scheduleAtFixedRate executor
                         (fn []
                           (try
                             (task!)
                             (catch Throwable e
                               (log/error e "SSE broadcast task failed"))))
-                        (long period-ms)
+                        (long initial-delay-ms)
                         (long period-ms)
                         TimeUnit/MILLISECONDS))
 
@@ -482,20 +672,35 @@
   (= "true" (some-> (System/getenv var-name) str/trim str/lower-case)))
 
 (defn start!
-  "Start the broadcast tick and the heartbeat. Options:
+  "Start the ticks, the heartbeat, and the per-aircraft upsert fan-out
+  (offer-delta! feeds it; a deployment with no streaming Source simply
+  never calls it and pays one parked daemon thread). Options:
 
     :picture       REQUIRED — fn of now-ms returning the picture
                    (icao -> aircraft) to put on the wire. Production
                    injects adsb.state/age-out! (see the ns docstring).
     :stats         fn of [picture now-ms] returning the session stats map
-                   (adsb.stats) for the frame, or nil. Called only on the
-                   tick; defaults to (constantly nil) — no stats.
+                   (adsb.stats) for the stats frame, or nil. Called only
+                   on the stats tick — never per delta; defaults to
+                   (constantly nil).
     :feeder        thunk returning the feeder status map
-                   (adsb.ingest.poll/status) for the frame, or nil. Read
-                   fresh per frame (a plain atom read, thread-safe);
+                   (adsb.ingest.poll/status) for the stats frame, or nil.
+                   Read fresh per frame (a plain atom read, thread-safe);
                    defaults to (constantly nil) — no feeder health.
-    :interval-ms   update tick period (default 1000, ~1 Hz)
+    :interval-ms   full-picture `update` tick period (default 1000,
+                   ~1 Hz — the poll deployment's aircraft path). NIL
+                   DISABLES the update tick entirely: the streaming
+                   deployment, where aircraft data flows exclusively as
+                   snapshot + per-delta upserts (adsb.main; ns
+                   docstring).
+    :stats-interval-ms  `stats` event period (default 10000, ~10 s).
+                   Fires once immediately at start to warm the cache the
+                   connect-time stats frame reads, and runs regardless
+                   of :interval-ms and of audience — it doubles as the
+                   age-out sweep's floor (ns docstring).
     :heartbeat-ms  heartbeat comment period (default 15000)
+    :delta-queue-depth  capacity of the reader -> fan-out handoff queue
+                   (default default-delta-queue-depth; see offer-delta!)
 
   Connection limits (ns docstring) — an explicit option wins, else the
   environment variable, else the compiled default. The env fallback
@@ -528,20 +733,28 @@
                       diagnose-client-ip-env and adsb-nnk.
 
   Returns a broadcaster to hand to connect!, client-count, and stop!."
-  [{:keys [picture stats feeder interval-ms heartbeat-ms
-           max-clients max-per-ip trust-forwarded? trusted-proxy-hops
-           diagnose-client-ip?]
-    :or   {stats        (constantly nil)
-           feeder       (constantly nil)
-           interval-ms  default-interval-ms
-           heartbeat-ms default-heartbeat-ms}}]
-  (let [executor    (Executors/newSingleThreadScheduledExecutor
+  [{:keys [picture stats feeder stats-interval-ms heartbeat-ms
+           delta-queue-depth max-clients max-per-ip trust-forwarded?
+           trusted-proxy-hops diagnose-client-ip?]
+    :or   {stats             (constantly nil)
+           feeder            (constantly nil)
+           stats-interval-ms default-stats-interval-ms
+           heartbeat-ms      default-heartbeat-ms
+           delta-queue-depth default-delta-queue-depth}
+    :as   options}]
+  (let [;; get, not :or destructuring: an EXPLICIT nil must survive to
+        ;; mean "no update tick" (docstring), and :or would default it.
+        interval-ms (get options :interval-ms default-interval-ms)
+        executor    (Executors/newSingleThreadScheduledExecutor
                       broadcast-threads)
         broadcaster {:stream/picture    picture
                      :stream/stats      stats
                      :stream/feeder     feeder
                      :stream/last-stats (atom nil)
                      :stream/clients    (atom {})
+                     :stream/deltas     (ArrayBlockingQueue.
+                                          (int delta-queue-depth))
+                     :stream/delta-running? (atom true)
                      :stream/limits
                      {:max-clients (or max-clients
                                        (env-limit "ADSB_SSE_MAX_CLIENTS")
@@ -565,9 +778,14 @@
                        (atom diagnose-budget))
                      :stream/frame-id   (atom 0)
                      :stream/executor   executor}]
-    (schedule! executor interval-ms #(broadcast-picture! broadcaster))
-    (schedule! executor heartbeat-ms #(broadcast-heartbeat! broadcaster))
-    broadcaster))
+    (when interval-ms
+      (schedule! executor interval-ms interval-ms
+                 #(broadcast-picture! broadcaster)))
+    (schedule! executor 0 stats-interval-ms #(broadcast-stats! broadcaster))
+    (schedule! executor heartbeat-ms heartbeat-ms
+               #(broadcast-heartbeat! broadcaster))
+    (assoc broadcaster
+           :stream/delta-thread (start-delta-fan-out! broadcaster))))
 
 (defn client-count
   "How many SSE clients are connected right now."
@@ -585,9 +803,13 @@
   (boolean trust-forwarded?))
 
 (defn stop!
-  "Stop the ticks and close every client. Idempotent."
-  [{:stream/keys [^ScheduledExecutorService executor clients]}]
+  "Stop the ticks and the delta fan-out and close every client.
+  Idempotent."
+  [{:stream/keys [^ScheduledExecutorService executor clients
+                  delta-running? ^Thread delta-thread]}]
   (.shutdownNow executor)
+  (some-> delta-running? (reset! false))
+  (some-> delta-thread .interrupt)
   (doseq [channel (keys @clients)]
     (http-kit/close channel))
   (reset! clients {})

@@ -7,6 +7,9 @@
     [adsb.aircraft :as aircraft]
     [adsb.fixtures :as fixtures]
     [adsb.http.server :as server]
+    [adsb.ingest.sbs :as sbs]
+    [adsb.ingest.source :as source]
+    [adsb.ingest.tcp :as tcp]
     [adsb.stream.broadcast :as broadcast]
     [cheshire.core :as json]
     [clojure.java.io :as io]
@@ -14,10 +17,12 @@
     [clojure.test :refer [deftest testing is]]
     [org.httpkit.server :as http-kit])
   (:import
-    (java.io BufferedReader)
+    (java.io BufferedReader OutputStreamWriter PipedInputStream
+             PipedOutputStream)
     (java.net Socket URI)
     (java.net.http HttpClient HttpRequest HttpRequest$Builder HttpResponse
-                   HttpResponse$BodyHandlers)))
+                   HttpResponse$BodyHandlers)
+    (java.nio.charset StandardCharsets)))
 
 (def ^:private captured-at-ms 1720713600000)
 
@@ -34,25 +39,34 @@
 (defn- start-streaming-server!
   "A broadcaster plus the real http server on an ephemeral port.
   Updates every 50 ms by default so tests read frames fast; heartbeats
-  effectively off unless a test turns them up. Limits are pinned
-  explicitly so a stray ADSB_SSE_* in the environment cannot bend a
-  test."
-  [{:keys [picture stats feeder interval-ms heartbeat-ms
+  and periodic stats effectively off unless a test turns them up (the
+  connect-time stats frame still arrives — it is part of the connect
+  contract, not of the cadence). :interval-ms nil is honored: it
+  disables the update tick, the streaming deployment's shape. Limits
+  are pinned explicitly so a stray ADSB_SSE_* in the environment cannot
+  bend a test."
+  [{:keys [picture stats feeder interval-ms stats-interval-ms heartbeat-ms
            max-clients max-per-ip trust-forwarded? trusted-proxy-hops]
     :or   {picture            (constantly cast-picture)
            stats              (constantly nil)
            feeder             (constantly nil)
            interval-ms        50
+           stats-interval-ms  60000
            heartbeat-ms       60000
            max-clients        100
            max-per-ip         100
            trust-forwarded?   false
-           trusted-proxy-hops 1}}]
+           trusted-proxy-hops 1}
+    :as   opts}]
   (let [broadcaster (broadcast/start!
                       {:picture            picture
                        :stats              stats
                        :feeder             feeder
-                       :interval-ms        interval-ms
+                       ;; honor an explicit nil (no update tick)
+                       :interval-ms        (if (contains? opts :interval-ms)
+                                             (:interval-ms opts)
+                                             interval-ms)
+                       :stats-interval-ms  stats-interval-ms
                        :heartbeat-ms       heartbeat-ms
                        :max-clients        max-clients
                        :max-per-ip         max-per-ip
@@ -144,32 +158,44 @@
 ;; ---------------------------------------------------------------------
 ;; The stream's contract
 
-(deftest snapshot-then-updates
-  (testing "a new client receives one full snapshot, then ~per-tick
-            updates, with ids increasing across the stream"
+(deftest snapshot-then-stats-then-updates
+  (testing "a new client receives one full snapshot (aircraft only), one
+            immediate stats frame, then ~per-tick updates, with ids
+            increasing across every event kind"
     (let [streaming (start-streaming-server! {})
           reader    (open-stream! (:port streaming))]
       (try
         (let [snapshot     (read-frame! reader)
+              stats-frame  (read-frame! reader)
               update-frame (read-frame! reader)]
           (is (= "snapshot" (frame-event snapshot)))
-          (let [{:keys [at aircraft]} (frame-data snapshot)]
+          (let [{:keys [at aircraft] :as envelope} (frame-data snapshot)]
             (is (number? at))
             (is (= (count cast-picture) (count aircraft)))
             (is (contains? (set (map :icao aircraft)) "abc0e4"))
             (is (every? :seen-at aircraft)
-                "the aging timestamp rides on every wire aircraft"))
+                "the aging timestamp rides on every wire aircraft")
+            (is (not (contains? envelope :stats))
+                "aircraft data and stats never share a payload (adsb-jpf)"))
+          (is (= "stats" (frame-event stats-frame))
+              "one stats frame right behind the snapshot, so the chrome
+               populates without waiting out a stats interval")
+          (is (not (contains? (frame-data stats-frame) :aircraft)))
           (is (= "update" (frame-event update-frame)))
-          (is (= (count cast-picture)
-                 (count (:aircraft (frame-data update-frame)))))
-          (is (< (frame-id snapshot) (frame-id update-frame))))
+          (let [update-envelope (frame-data update-frame)]
+            (is (= (count cast-picture) (count (:aircraft update-envelope))))
+            (is (not (contains? update-envelope :stats))))
+          (is (< (frame-id snapshot)
+                 (frame-id stats-frame)
+                 (frame-id update-frame))))
         (finally
           (.close reader)
           (stop-streaming-server! streaming))))))
 
-(deftest stats-ride-the-envelope
-  (testing "the session stats the broadcaster computes on the tick reach
-            both the snapshot and the update frame as the wire scalars"
+(deftest stats-ride-their-own-event
+  (testing "the session stats the broadcaster computes on the stats tick
+            reach the client as a stats event's wire scalars — never on an
+            aircraft frame"
     (let [streaming (start-streaming-server!
                       {:stats (constantly {:stats/max-range-km 312
                                            :stats/message-rate 148
@@ -177,9 +203,7 @@
                                            :stats/aircraft-count 5})})
           reader    (open-stream! (:port streaming))]
       (try
-        ;; The snapshot serves the cached stats from the first tick, so
-        ;; skip to an update frame to see a freshly computed one.
-        (read-frame! reader)
+        (read-frame! reader)                       ; the snapshot
         (let [{:keys [stats]} (frame-data (read-frame! reader))]
           (is (= {:max-range-km 312 :message-rate 148} stats)
               "only the two scalars, never the counts"))
@@ -187,9 +211,9 @@
           (.close reader)
           (stop-streaming-server! streaming))))))
 
-(deftest feeder-status-rides-the-envelope
-  (testing "the feeder status the broadcaster reads reaches both the snapshot
-            and the update frame as the wire status + timestamp, and the
+(deftest feeder-status-rides-the-stats-event
+  (testing "the feeder status the broadcaster reads reaches the client on
+            the stats event as the wire status + timestamp, and the
             internal error detail never leaves"
     (let [streaming (start-streaming-server!
                       {:feeder (constantly
@@ -199,14 +223,14 @@
                                   "connect timed out: dietpi.local:8100"})})
           reader    (open-stream! (:port streaming))]
       (try
-        (let [snapshot (read-frame! reader)
-              update-f (read-frame! reader)]
-          (doseq [frame [snapshot update-f]]
-            (is (= {:status "down" :last-success 1720713599000}
-                   (:feeder (frame-data frame)))
-                "status and timestamp, nothing more")
-            (is (not (str/includes? (frame-json frame) "dietpi.local"))
-                "the error string — a leak risk — never reaches the wire")))
+        (read-frame! reader)                       ; the snapshot
+        (let [stats-frame (read-frame! reader)]
+          (is (= "stats" (frame-event stats-frame)))
+          (is (= {:status "down" :last-success 1720713599000}
+                 (:feeder (frame-data stats-frame)))
+              "status and timestamp, nothing more")
+          (is (not (str/includes? (frame-json stats-frame) "dietpi.local"))
+              "the error string — a leak risk — never reaches the wire"))
         (finally
           (.close reader)
           (stop-streaming-server! streaming))))))
@@ -218,13 +242,137 @@
                                               :heartbeat-ms 100})
           reader    (open-stream! (:port streaming))]
       (try
-        ;; The snapshot arrives on connect; with updates effectively
-        ;; off, the next frame on the wire must be the heartbeat.
+        ;; The snapshot and its stats frame arrive on connect; with
+        ;; updates and periodic stats effectively off, the next frame on
+        ;; the wire must be the heartbeat.
+        (read-frame! reader)
         (read-frame! reader)
         (is (= [": hb"] (read-frame! reader)))
         (finally
           (.close reader)
           (stop-streaming-server! streaming))))))
+
+;; ---------------------------------------------------------------------
+;; The per-aircraft upsert path (adsb-jpf)
+
+(def ^:const ^:private sbs-position-line
+  "One SBS MSG,3 line — a1b2c3 with a position and altitude."
+  "MSG,3,1,1,A1B2C3,1,,,,,,37000,,,39.8721,-104.6702,,,,,,")
+
+(defn- with-piped-sbs-source!
+  "An SbsSource whose transport is an in-memory pipe — a real reader
+  thread and a real accumulate path, no socket — wired to `on-delta`.
+  Calls (f write-line!) once the reader is connected, closing everything
+  after. write-line! feeds the reader one SBS line."
+  [on-delta f]
+  (let [out (PipedOutputStream.)
+        in  (PipedInputStream. out)
+        src (source/open!
+              (sbs/->source "pipe" 0
+                            {:transport (fn [_host _port _opts]
+                                          {:in     in
+                                           :close! #(tcp/close-quietly! in)})
+                             :on-delta  on-delta}))
+        w   (OutputStreamWriter. out StandardCharsets/US_ASCII)]
+    (try
+      (is (true? (eventually #(deref (:connected? src))))
+          "the reader dialed the pipe")
+      (f (fn write-line! [line]
+           (.write w (str line "\n"))
+           (.flush w)))
+      (finally
+        (source/close! src)
+        (.close w)))))
+
+(deftest a-delta-reaches-a-live-client-fast-with-no-tick-in-the-path
+  ;; THE LATENCY PROOF (adsb-jpf): a message arriving at a Source-shaped
+  ;; path — a real SbsSource reader thread, its accumulate, the :on-delta
+  ;; hook, the bounded queue, the fan-out thread, http-kit, a real TCP
+  ;; read — lands on the client well under 100 ms. Every tick is pinned
+  ;; effectively off (update tick nil — the streaming deployment — and
+  ;; stats/heartbeat at 60 s), so no fixed cadence can be in the path:
+  ;; if the push were tick-driven, this test could not pass.
+  (let [streaming (start-streaming-server! {:interval-ms nil})
+        b         (:broadcaster streaming)
+        reader    (doto (open-stream! (:port streaming))
+                    (read-frame!)     ; the snapshot
+                    (read-frame!))]   ; the connect-time stats frame
+    (try
+      (with-piped-sbs-source!
+        (fn [aircraft now-ms] (broadcast/offer-delta! b aircraft now-ms))
+        (fn [write-line!]
+          (let [started-at (System/nanoTime)]
+            (write-line! sbs-position-line)
+            (let [frame      (read-frame! reader)
+                  elapsed-ms (/ (- (System/nanoTime) started-at) 1e6)]
+              (is (= "aircraft" (frame-event frame)))
+              (is (= "a1b2c3" (get-in (frame-data frame) [:aircraft :icao]))
+                  "the upsert carries the one merged aircraft")
+              (is (number? (get-in (frame-data frame) [:aircraft :seen-at]))
+                  "stamped at its arrival instant")
+              (is (< elapsed-ms 100)
+                  (str "delta-to-client took " elapsed-ms " ms"))))))
+      (finally
+        (.close reader)
+        (stop-streaming-server! streaming)))))
+
+(deftest streaming-shape-has-no-update-tick
+  (testing "with :interval-ms nil (the streaming deployment) a client gets
+            the snapshot and its stats frame and then NO full-picture
+            updates — the next thing on the wire is the heartbeat"
+    (let [streaming (start-streaming-server! {:interval-ms  nil
+                                              :heartbeat-ms 100})
+          reader    (open-stream! (:port streaming))]
+      (try
+        (is (= "snapshot" (frame-event (read-frame! reader))))
+        (is (= "stats" (frame-event (read-frame! reader))))
+        (is (= [": hb"] (read-frame! reader))
+            "no update frame ever comes")
+        (finally
+          (.close reader)
+          (stop-streaming-server! streaming))))))
+
+(deftest offer-delta!-never-blocks-and-drops-newest-under-pressure
+  ;; The reader thread must NEVER block on fan-out. A stopped broadcaster
+  ;; is the worst case — a fan-out that never drains — so a tiny queue
+  ;; fills and every further offer must return false immediately rather
+  ;; than wait (offer, never put; drop-newest — see the docstring).
+  (let [broadcaster (broadcast/start! {:picture           (constantly {})
+                                       :interval-ms       nil
+                                       :stats-interval-ms 60000
+                                       :delta-queue-depth 4})]
+    (broadcast/stop! broadcaster)
+    (Thread/sleep 150)                  ; let the fan-out thread exit
+    (let [started-at (System/nanoTime)
+          results    (mapv (fn [i]
+                             (broadcast/offer-delta!
+                               broadcaster #:aircraft{:icao (str i)} i))
+                           (range 10))
+          elapsed-ms (/ (- (System/nanoTime) started-at) 1e6)]
+      (is (= [true true true true] (take 4 results))
+          "the queue admits up to its depth")
+      (is (every? false? (drop 4 results))
+          "at capacity the NEWEST delta is dropped — the offer just fails")
+      (is (< elapsed-ms 200)
+          (str "ten offers against a full queue took " elapsed-ms
+               " ms — an offer never waits")))))
+
+(deftest the-age-out-sweep-outlives-the-update-tick
+  (testing "with no update tick (streaming) and zero clients, the injected
+            picture fn — production's age-out sweep — still runs on the
+            stats cadence"
+    (let [sweeps      (atom 0)
+          broadcaster (broadcast/start!
+                        {:picture           (fn [_now-ms]
+                                              (swap! sweeps inc)
+                                              {})
+                         :interval-ms       nil
+                         :stats-interval-ms 20})]
+      (try
+        (is (true? (eventually #(< 2 @sweeps)))
+            "the sweep keeps running with no audience at all")
+        (finally
+          (broadcast/stop! broadcaster))))))
 
 (deftest disconnect-cleanup
   (testing "closing the connection removes the client from the registry
@@ -251,11 +399,13 @@
 ;; internet-facing, so admission is bounded in the registry itself.
 
 (defn- open-admitted!
-  "Open a stream and consume its snapshot, so the client is admitted,
-  ready, and receiving ticks. Returns the reader; the caller closes."
+  "Open a stream and consume its snapshot and connect-time stats frame,
+  so the client is admitted, ready, and receiving ticks. Returns the
+  reader; the caller closes."
   (^BufferedReader [port] (open-admitted! port {}))
   (^BufferedReader [port headers]
    (doto (open-stream! port headers)
+     (read-frame!)
      (read-frame!))))
 
 (deftest total-connection-cap
@@ -557,12 +707,20 @@
                       {:picture (constantly poisoned-picture)})
           reader    (open-stream! (:port streaming))]
       (try
-        (doseq [frame [(read-frame! reader) (read-frame! reader)]]
-          (let [json-text (frame-json frame)]
-            (is (str/includes? json-text "abc0e4")
-                "the frame still carries the aircraft")
-            (is (not (re-find receiver-relative-pattern json-text)))
-            (is (not (str/includes? json-text "987.654")))))
+        ;; snapshot, the connect-time stats frame, then an update — the
+        ;; aircraft-bearing frames must carry the cast and nothing
+        ;; receiver-relative; the stats frame carries no aircraft at all.
+        (let [snapshot    (read-frame! reader)
+              stats-frame (read-frame! reader)
+              update-f    (read-frame! reader)]
+          (is (= "stats" (frame-event stats-frame)))
+          (is (not (str/includes? (frame-json stats-frame) "987.654")))
+          (doseq [frame [snapshot update-f]]
+            (let [json-text (frame-json frame)]
+              (is (str/includes? json-text "abc0e4")
+                  "the frame still carries the aircraft")
+              (is (not (re-find receiver-relative-pattern json-text)))
+              (is (not (str/includes? json-text "987.654"))))))
         (finally
           (.close reader)
           (stop-streaming-server! streaming)))))

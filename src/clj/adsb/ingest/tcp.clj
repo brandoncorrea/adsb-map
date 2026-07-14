@@ -39,8 +39,20 @@
   connected-but-silent feed is NOT unreachable: fetch! returns the current
   snapshot, which ages out on its own as the silence lengthens. The reader
   reconnects after a drop, so a transient outage self-heals into a fetch!
-  that stops throwing."
-  (:require [adsb.accumulator :as accumulator])
+  that stops throwing.
+
+  THE DELTA HOOK is `:on-delta`, an OPTIONAL capability in the Metadata
+  mould (adsb.ingest.source): a fn of [merged-aircraft now-ms] fired
+  after every accumulate with the aircraft's FULL post-merge state — the
+  seam the composition root uses to push each message to SSE clients the
+  instant it lands (adsb-jpf, adsb.stream.broadcast/offer-delta!).
+  Sources that take no hook (fn-source, replay, ultrafeeder — and any
+  streaming Source constructed without one) need nothing: accumulate!
+  no-ops on a nil hook. The hook RUNS ON THE READER THREAD, so it must
+  never block; production hands off through a bounded queue and drops
+  under pressure rather than stall the radio."
+  (:require [adsb.accumulator :as accumulator]
+            [clojure.tools.logging :as log])
   (:import (java.net InetSocketAddress Socket)))
 
 (def ^:const default-connect-timeout-ms 5000)
@@ -103,6 +115,25 @@
   (try
     (Thread/sleep (long ms))
     (catch InterruptedException _ nil)))
+
+;; ---------------------------------------------------------------------
+;; The accumulate step the format pumps share
+
+(defn accumulate!
+  "Fold one coerced delta, heard at now-ms, into the Source's picture,
+  then hand the aircraft's FULL MERGED post-accumulate state to the
+  optional :on-delta hook (ns docstring). Runs on the reader thread —
+  the try is load-bearing: a hook that throws must cost that one
+  notification, never the connection, or a broken subscriber would turn
+  every message into a reconnect."
+  [{:keys [picture on-delta]} delta now-ms]
+  (let [merged (-> (swap! picture accumulator/accumulate delta now-ms)
+                   (get (:aircraft/icao delta)))]
+    (when on-delta
+      (try
+        (on-delta merged now-ms)
+        (catch Throwable e
+          (log/error e "on-delta hook threw; delta not propagated"))))))
 
 ;; ---------------------------------------------------------------------
 ;; The reader thread: dial via :transport, pump via :consume!, reconnect
@@ -197,9 +228,13 @@
     :reconnect-ms        pause before re-dialing a dropped connection
     :clock               0-arg fn returning epoch ms — injected so tests
                          drive freshness and age-out deterministically
-                         (default the wall clock)"
+                         (default the wall clock)
+    :on-delta            OPTIONAL fn of [merged-aircraft now-ms], fired
+                         on the reader thread after every accumulate
+                         with the aircraft's full post-merge state (ns
+                         docstring; adsb-jpf). Default nil — no hook."
   [host port {:keys [transport connect-timeout-ms idle-timeout-ms
-                     reconnect-ms clock]
+                     reconnect-ms clock on-delta]
               :or   {transport           socket-transport
                      connect-timeout-ms  default-connect-timeout-ms
                      idle-timeout-ms     default-idle-timeout-ms
@@ -213,6 +248,7 @@
    :idle-timeout-ms    idle-timeout-ms
    :reconnect-ms       reconnect-ms
    :clock              clock
+   :on-delta           on-delta
    :consume!           consume!
    :thread-name        thread-name
    :picture            (atom {})

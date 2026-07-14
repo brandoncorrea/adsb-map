@@ -8,18 +8,43 @@
 
   ## The format
 
-  Every SSE data payload — `snapshot` and `update` events alike — is
-  one envelope carrying the FULL current picture, a small stats map, and
-  the feeder's health:
+  Three payload shapes, one per family of SSE event. AIRCRAFT DATA AND
+  STATS NEVER SHARE A PAYLOAD (owner decision, adsb-jpf): mixing them in
+  one frame couples them — a change to either forces itself on the
+  other — while separated, each can evolve without breaking the other.
+
+  A FULL-PICTURE payload — `snapshot` and `update` events alike — is
+  one envelope carrying the FULL current picture and nothing else:
 
       {\"at\": 1720713600000,
-       \"stats\": {\"max-range-km\": 312, \"message-rate\": 148},
-       \"feeder\": {\"status\": \"ok\", \"last-success\": 1720713599000},
        \"aircraft\": [<wire aircraft> ...]}
 
   `at` is the epoch-ms instant the frame was built. An update is not a
-  delta, so a client treats every frame as a wholesale replacement and
-  can never accumulate drift; a reconnect needs no replay.
+  delta, so a client treats every full-picture frame as a wholesale
+  replacement and can never accumulate drift; a reconnect needs no
+  replay.
+
+  An UPSERT payload — the `aircraft` event (adsb-jpf) — carries ONE
+  aircraft's full merged state, pushed the instant a streaming Source
+  applied a message:
+
+      {\"at\": 1720713600123,
+       \"aircraft\": <wire aircraft>}
+
+  The aircraft is the SAME wire shape a full-picture frame's array holds
+  (aircraft->wire both ways), so a client decodes it with the same codec
+  and merges it into its picture by `icao`. It is a full merged state,
+  not a field diff — idempotent, so a lost or dropped upsert heals on
+  that aircraft's next message; no sequencing or replay protocol exists
+  or is needed.
+
+  A STATS payload — the `stats` event — carries the session stats and
+  the feeder's health on a low, fixed cadence (~10 s), plus once right
+  after the connect-time snapshot so the chrome populates immediately:
+
+      {\"at\": 1720713600000,
+       \"stats\": {\"max-range-km\": 312, \"message-rate\": 148},
+       \"feeder\": {\"status\": \"ok\", \"last-success\": 1720713599000}}
 
   `stats` is the session readout the server computes (adsb.stats) — two
   SCALARS, no position:
@@ -33,7 +58,7 @@
   `feeder` is the ingest side's health (adsb.ingest.poll/status) — the
   one thing the picture alone cannot tell the browser. A live stream over
   a dead feeder looks perfectly healthy while the sky silently ages out,
-  so the feeder's reachability rides every frame:
+  so the feeder's reachability rides every stats frame:
 
       status         \"ok\" | \"down\" | \"starting\" — an ALLOWLIST of the
                      three states (adsb.ingest.poll). A status the wire
@@ -162,15 +187,34 @@
           last-success-ms (assoc :last-success last-success-ms)))
 
 (defn picture->wire
-  "The picture (icao -> aircraft), the session `stats`, and the `feeder`
-  health as one frame envelope, built at `at-ms`. Sent as the connect-time
-  snapshot and as every update. `stats` is the server stats map (adsb.stats)
-  or nil; `feeder` is the feeder status map (adsb.ingest.poll/status) or nil."
-  [picture stats feeder at-ms]
+  "The picture (icao -> aircraft) as one full-picture frame envelope,
+  built at `at-ms`. Sent as the connect-time snapshot and as every
+  update. Aircraft data ONLY — stats and feeder health travel on their
+  own `stats` event (stats-event->wire), never in an aircraft frame
+  (ns docstring)."
+  [picture at-ms]
   {:at       at-ms
-   :stats    (stats->wire stats)
-   :feeder   (feeder->wire feeder)
    :aircraft (mapv aircraft->wire (vals picture))})
+
+(defn stats-event->wire
+  "The session `stats` (adsb.stats, or nil) and the `feeder` health
+  (adsb.ingest.poll/status, or nil) as one `stats` event envelope, built
+  at `at-ms` — the ONLY payload either may ride (ns docstring). Both
+  projections are the allowlists above, so nothing receiver-relative and
+  no error prose can leave here either."
+  [stats feeder at-ms]
+  {:at     at-ms
+   :stats  (stats->wire stats)
+   :feeder (feeder->wire feeder)})
+
+(defn upsert->wire
+  "One aircraft's full merged state as an `aircraft` upsert envelope,
+  built at `at-ms` (ns docstring). The aircraft goes through the SAME
+  allowlist projection as a full-picture frame's entries, so the privacy
+  guarantees hold per event exactly as they hold per frame."
+  [aircraft at-ms]
+  {:at       at-ms
+   :aircraft (aircraft->wire aircraft)})
 
 (defn wire->aircraft
   "The inverse projection: one decoded wire aircraft (keywordized JSON)
@@ -189,6 +233,14 @@
           seen-at (assoc :aircraft/seen-at-ms seen-at)
           position-suspect (assoc :aircraft/position-suspect? true)
           mlat (assoc :aircraft/mlat? true)))
+
+(defn wire->upsert
+  "The inverse projection: a decoded upsert envelope back into the one
+  domain aircraft it carries — the same decode a full-picture entry gets,
+  so the browser merges it into its picture by :aircraft/icao with no
+  second vocabulary."
+  [{:keys [aircraft]}]
+  (wire->aircraft aircraft))
 
 (defn wire->stats
   "The inverse projection: a decoded envelope's `stats` map back into the

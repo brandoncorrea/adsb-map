@@ -105,6 +105,23 @@
                                plausibility/default-max-range-m)
       (state/apply-batch! (System/currentTimeMillis))))
 
+(defn- delta->stream!
+  "The streaming Sources' :on-delta hook body (adsb-jpf), run on the
+  ingest READER THREAD for every accumulated message: range-gate the one
+  merged aircraft against the receiver position — the same gate
+  ingest-batch! applies, so a spoofed impossible-range track is rejected
+  per delta exactly as it is per poll — then hand it to the
+  broadcaster's bounded queue (broadcast/offer-delta!), which never
+  blocks and drops under pressure. `fan-out` is nil for the first
+  instants of boot (the hook is constructed before the broadcaster
+  exists — see start!); a delta landing in that window is dropped, and
+  the connect-time snapshot covers it."
+  [{:keys [receiver-position broadcaster]} aircraft now-ms]
+  (when (and broadcaster
+             (seq (plausibility/gate-range [aircraft] receiver-position
+                                           plausibility/default-max-range-m)))
+    (broadcast/offer-delta! broadcaster aircraft now-ms)))
+
 (defn- ->stream-source
   "Construct a streaming Source (SBS or Beast) from ADSB_FEED_URL. `->source`
   is sbs/->source or beast-source/->source. A tcp:// feed uses the default
@@ -112,11 +129,13 @@
   via adsb.ingest.wss, presenting the CF-Access service token from
   ADSB_FEEDER_AUTH_ID/SECRET (both-or-neither — half a credential fails
   loudly). A missing or malformed ADSB_FEED_URL already failed in
-  config/parse-feed-url."
-  [->source {:keys [scheme uri host port]} env]
+  config/parse-feed-url. `on-delta` is the per-message hook
+  (delta->stream!) every streaming Source carries."
+  [->source {:keys [scheme uri host port]} env on-delta]
   (let [opts (case scheme
-               :tcp {}
-               :wss {:transport (wss/transport uri
+               :tcp {:on-delta on-delta}
+               :wss {:on-delta  on-delta
+                     :transport (wss/transport uri
                                                (config/feeder-auth-headers env))})]
     (->source host port opts)))
 
@@ -132,8 +151,11 @@
     :poll    live ultrafeeder over HTTP, ADSB_ULTRAFEEDER_URL validated
     :replay  the recorded fixture (adsb.ingest.replay), no feeder needed
     :sbs     the SBS stream (:30003) via ADSB_FEED_URL
-    :beast   the Beast stream (:30005) via ADSB_FEED_URL"
-  [{:keys [source ultrafeeder-url feed-url env]}]
+    :beast   the Beast stream (:30005) via ADSB_FEED_URL
+
+  Only the streaming Sources take `on-delta` (the per-message push hook,
+  adsb-jpf); poll and replay have no message-arrival instant to hook."
+  [{:keys [source ultrafeeder-url feed-url env]} on-delta]
   (case (config/source-kind source)
     :replay [(replay/->source) nil nil]
     :poll   (let [feeder-url (config/validate-feeder-url ultrafeeder-url)
@@ -142,9 +164,11 @@
                                      headers)
                feeder-url headers])
     :sbs    [(->stream-source sbs/->source
-                              (config/parse-feed-url feed-url) env) nil nil]
+                              (config/parse-feed-url feed-url) env on-delta)
+             nil nil]
     :beast  [(->stream-source beast-source/->source
-                              (config/parse-feed-url feed-url) env) nil nil]))
+                              (config/parse-feed-url feed-url) env on-delta)
+             nil nil]))
 
 (defn start!
   "Boot the backend from config and return the running system:
@@ -155,12 +179,17 @@
     2. resolve the receiver position once (env override, else the
        feeder's receiver.json, else nil — range gate disabled)
     3. poll the source at ~1 Hz through the range gate into the store
-    4. broadcast the picture over SSE; the broadcast tick doubles as
-       the age-out cadence (its picture fn is adsb.state/age-out!) and
-       computes the session stats (adsb.stats) from the receiver
-       position and the source's message-count side-channel. The feeder's
-       health (poll/status) rides every frame too, so a live stream over a
-       dead feeder cannot masquerade as healthy in the browser (adsb.wire)
+    4. broadcast over SSE. Aircraft data: a streaming Source (sbs/beast)
+       pushes every message the instant it lands — its :on-delta hook
+       (delta->stream!, adsb-jpf) feeds the broadcaster's per-aircraft
+       upsert path, and NO update tick runs; a poll source keeps the
+       ~1 Hz full-picture update tick, its cadence being inherent to
+       polling. Stats and feeder health ride a separate low-rate `stats`
+       event (adsb.stats computed there from the receiver position and
+       the source's message-count side-channel; poll/status alongside,
+       so a live stream over a dead feeder cannot masquerade as healthy
+       in the browser). The stats tick doubles as the age-out sweep's
+       floor (its picture fn is adsb.state/age-out!)
     5. serve HTTP with real feeder status on /healthz and the stream
        on /api/stream
 
@@ -195,7 +224,17 @@
                    "WebSockets (hot reload), style-src-attr allows "
                    "'unsafe-inline' (the dev HUD). This is for `bb dev` only — "
                    "it must NEVER be set in a deployed environment.")))
-  (let [[source feeder-url feeder-auth] (build-source! config)
+  (let [;; The delta hook is handed to the Source CONSTRUCTOR, but it
+        ;; targets the broadcaster and the receiver position, which do
+        ;; not exist yet — so it reads them through this late-bound atom
+        ;; (delta->stream! no-ops until it is filled in below). The
+        ;; reader thread must never block, so a promise is out.
+        !fan-out          (atom nil)
+        on-delta          (fn [aircraft now-ms]
+                            (delta->stream! @!fan-out aircraft now-ms))
+        [source feeder-url feeder-auth] (build-source! config on-delta)
+        streaming?        (contains? #{:sbs :beast}
+                                     (config/source-kind (:source config)))
         receiver-position (receiver/resolve-position! {:env      env
                                                        :base-url feeder-url
                                                        :headers  feeder-auth})
@@ -205,6 +244,11 @@
                              :on-batch! #(ingest-batch! receiver-position %)})
         broadcaster       (broadcast/start!
                             {:picture state/age-out!
+                             ;; nil DISABLES the update tick: a streaming
+                             ;; deployment's aircraft flow per delta
+                             ;; (adsb.stream.broadcast, adsb-jpf).
+                             :interval-ms (when-not streaming?
+                                            broadcast/default-interval-ms)
                              :stats   (fn [picture now-ms]
                                         (stats/compute!
                                           accumulator
@@ -222,6 +266,11 @@
                              :feeder-status  #(poll/status poller)
                              :stream-connect #(broadcast/connect!
                                                 broadcaster %)})]
+    ;; Arm the delta hook (see !fan-out above). From here every message a
+    ;; streaming Source accumulates is range-gated and pushed to the SSE
+    ;; clients the instant it lands.
+    (reset! !fan-out {:receiver-position receiver-position
+                      :broadcaster       broadcaster})
     (when-not (broadcast/trusts-forwarded-for? broadcaster)
       ;; Same silent-failure family as the two warnings above. A per-IP cap
       ;; keyed on the socket peer does not error or degrade visibly — it just

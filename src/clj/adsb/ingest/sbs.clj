@@ -38,8 +38,7 @@
   its own as the silence lengthens. The reader reconnects on its own after
   a drop, so a transient outage self-heals into a fetch! that stops
   throwing."
-  (:require [adsb.accumulator :as accumulator]
-            [adsb.ingest.source :as source]
+  (:require [adsb.ingest.source :as source]
             [adsb.ingest.tcp :as tcp]
             [adsb.schema :as schema]
             [clojure.string :as str]
@@ -212,20 +211,21 @@
 ;; (plain socket or websocket) hands it.
 
 (defn- consume-line!
-  "Fold one line's delta into the picture at its arrival instant, or do
-  nothing when the line yields no delta."
-  [picture clock line]
+  "Fold one line's delta into the picture at its arrival instant —
+  notifying the optional :on-delta hook with the merged aircraft
+  (tcp/accumulate!) — or do nothing when the line yields no delta."
+  [{:keys [clock] :as state} line]
   (when-let [delta (line->delta line)]
-    (swap! picture accumulator/accumulate delta (clock))))
+    (tcp/accumulate! state delta (clock))))
 
 (defn- read-lines!
   "Read and consume lines until EOF, the socket closes, or the Source
   stops. Returns on any of those; tcp reconnects if still running."
-  [^BufferedReader reader picture clock running?]
+  [^BufferedReader reader {:keys [running?] :as state}]
   (loop []
     (when @running?
       (when-let [line (.readLine reader)]
-        (consume-line! picture clock line)
+        (consume-line! state line)
         (recur)))))
 
 (defn- consume!
@@ -233,16 +233,16 @@
   until the connection ends. tcp/serve-connection! owns closing the stream,
   so a read that throws (a drop, or the SO_TIMEOUT stall signal) unwinds
   straight to reconnect."
-  [^InputStream in {:keys [picture clock running?]}]
+  [^InputStream in state]
   (let [reader (BufferedReader.
                 (InputStreamReader. in StandardCharsets/US_ASCII))]
-    (read-lines! reader picture clock running?)))
+    (read-lines! reader state)))
 
 ;; ---------------------------------------------------------------------
 ;; The Source
 
 (defrecord SbsSource [host port transport connect-timeout-ms idle-timeout-ms
-                      reconnect-ms clock consume! thread-name
+                      reconnect-ms clock on-delta consume! thread-name
                       picture running? connected? last-error connection
                       reader-thread]
   source/Source
@@ -260,8 +260,9 @@
   and the URL-to-transport wiring live in adsb.main / adsb.ingest.config.
   Options are adsb.ingest.tcp/reader-state's: :transport (default the
   plain-socket transport; adsb.ingest.wss/transport for the tunnel),
-  :connect-timeout-ms, :idle-timeout-ms, :reconnect-ms, and the injectable
-  :clock."
+  :connect-timeout-ms, :idle-timeout-ms, :reconnect-ms, the injectable
+  :clock, and the optional :on-delta hook fired with each message's
+  merged aircraft (adsb-jpf; see adsb.ingest.tcp)."
   ([host port] (->source host port {}))
   ([host port opts]
    (map->SbsSource

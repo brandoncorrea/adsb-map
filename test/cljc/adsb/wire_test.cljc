@@ -103,10 +103,15 @@
 
   (testing "the whole cast, through the real pipeline, emits only
             allowlisted keys"
-    (let [{:keys [aircraft]} (wire/picture->wire picture server-stats
-                                                 server-feeder captured-at-ms)]
+    (let [{:keys [aircraft]} (wire/picture->wire picture captured-at-ms)]
       (is (seq aircraft))
-      (is (every? wire-keys (mapcat keys aircraft))))))
+      (is (every? wire-keys (mapcat keys aircraft)))))
+
+  (testing "an upsert envelope is held to the same allowlist"
+    (let [poisoned (assoc fixtures/ups-2717 :aircraft/r-dst 12.3)]
+      (is (every? wire-keys
+                  (keys (:aircraft (wire/upsert->wire poisoned
+                                                      captured-at-ms))))))))
 
 (deftest stats->wire-allowlist
   (testing "only the two documented scalars survive — counts and any
@@ -165,19 +170,29 @@
     (is (= {} (wire/wire->feeder {})))))
 
 (deftest picture->wire-envelope
-  (testing "the frame envelope carries the build instant, the stats map, the
-            feeder map, and every aircraft in the picture"
-    (let [{:keys [at stats feeder aircraft]}
-          (wire/picture->wire picture server-stats server-feeder
-                              captured-at-ms)]
+  (testing "the frame envelope carries the build instant and every aircraft
+            in the picture — and NOTHING else: aircraft data and stats never
+            share a payload (adsb-jpf)"
+    (let [{:keys [at aircraft] :as envelope}
+          (wire/picture->wire picture captured-at-ms)]
+      (is (= captured-at-ms at))
+      (is (= (count picture) (count aircraft)))
+      (is (= #{:at :aircraft} (set (keys envelope)))
+          "no stats, no feeder — they ride the stats event alone"))))
+
+(deftest stats-event->wire-envelope
+  (testing "the stats envelope carries the build instant, the stats map, and
+            the feeder map — and NO aircraft data"
+    (let [{:keys [at stats feeder] :as envelope}
+          (wire/stats-event->wire server-stats server-feeder captured-at-ms)]
       (is (= captured-at-ms at))
       (is (= {:max-range-km 312 :message-rate 148} stats))
       (is (= {:status "down" :last-success 1720713599000} feeder))
-      (is (= (count picture) (count aircraft)))))
+      (is (= #{:at :stats :feeder} (set (keys envelope))))))
 
   (testing "nil stats and nil feeder arguments each yield an empty map"
-    (let [{:keys [stats feeder]} (wire/picture->wire picture nil nil
-                                                     captured-at-ms)]
+    (let [{:keys [stats feeder]} (wire/stats-event->wire nil nil
+                                                         captured-at-ms)]
       (is (= {} stats))
       (is (= {} feeder)))))
 
@@ -191,33 +206,41 @@
 
   (testing "a decoded frame envelope becomes the picture again, keyed
             by icao"
-    (let [envelope (wire/picture->wire picture server-stats server-feeder
-                                       captured-at-ms)]
+    (let [envelope (wire/picture->wire picture captured-at-ms)]
       (is (= (update-vals picture #(dissoc % :aircraft/rssi))
              (wire/wire->picture envelope)))))
 
+  (testing "an upsert envelope decodes back into its one domain aircraft —
+            the same decode a full-picture entry gets, so the browser needs
+            no second vocabulary (adsb-jpf)"
+    (doseq [[icao domain-aircraft] picture]
+      (is (= (dissoc domain-aircraft :aircraft/rssi)
+             (wire/wire->upsert (wire/upsert->wire domain-aircraft
+                                                   captured-at-ms)))
+          icao)))
+
   (testing "the stats scalars survive the round trip, minus the counts
             and receiver-relative fields the wire never carried"
-    (let [envelope (wire/picture->wire picture server-stats server-feeder
-                                       captured-at-ms)]
+    (let [envelope (wire/stats-event->wire server-stats server-feeder
+                                           captured-at-ms)]
       (is (= (select-keys server-stats
                           [:stats/max-range-km :stats/message-rate])
              (wire/wire->stats envelope)))))
 
   (testing "an envelope with no stats decodes to an empty stats map"
-    (is (= {} (wire/wire->stats (wire/picture->wire picture nil nil
-                                                    captured-at-ms))))
+    (is (= {} (wire/wire->stats (wire/stats-event->wire nil nil
+                                                        captured-at-ms))))
     (is (= {} (wire/wire->stats {}))))
 
   (testing "the feeder status survives the round trip, minus the error string
             the wire never carried"
-    (let [envelope (wire/picture->wire picture server-stats server-feeder
-                                       captured-at-ms)]
+    (let [envelope (wire/stats-event->wire server-stats server-feeder
+                                           captured-at-ms)]
       (is (= {:feeder/status          :down
               :feeder/last-success-ms 1720713599000}
              (wire/wire->feeder envelope)))))
 
   (testing "an envelope with no feeder decodes to an empty feeder map"
-    (is (= {} (wire/wire->feeder (wire/picture->wire picture nil nil
-                                                     captured-at-ms))))
+    (is (= {} (wire/wire->feeder (wire/stats-event->wire nil nil
+                                                         captured-at-ms))))
     (is (= {} (wire/wire->feeder {})))))

@@ -3,15 +3,27 @@
   adsb.stream.source seam, decodes each frame with the shared adsb.wire
   codec, and lands two things in app-db —
 
-    :aircraft/picture    icao -> domain aircraft, the current sky. Every
-                         `snapshot` and `update` frame is the FULL picture
-                         (adsb.wire), so each one WHOLESALE REPLACES this
-                         key — never a merge. An aircraft absent from the
-                         newest frame is gone. The imperative map layer
-                         (adsb-2yu.4) reads this key OUTSIDE React, via the
+    :aircraft/picture    icao -> domain aircraft, the current sky, fed by
+                         two kinds of frame (adsb.wire). A `snapshot` or
+                         `update` frame is the FULL picture and WHOLESALE
+                         REPLACES this key — an aircraft absent from it is
+                         gone. An `aircraft` frame (adsb-jpf) is ONE
+                         aircraft's full merged state, pushed the instant
+                         the server heard it, and MERGES into the picture
+                         by icao — idempotent, so a missed one heals on
+                         that aircraft's next message. On a streaming
+                         deployment there are NO recurring full-picture
+                         frames, so removals converge by CLIENT-SIDE
+                         AGE-OUT: each `stats` frame prunes aircraft past
+                         the shared adsb.aircraft threshold (time enters
+                         as an event argument, stamped at the callback
+                         edge). The imperative map layer (adsb-2yu.4)
+                         reads this key OUTSIDE React, via the
                          :aircraft/picture subscription, and pushes it
                          straight into a MapLibre GeoJSON source; it never
-                         mounts a component per aircraft.
+                         mounts a component per aircraft — and it renders
+                         each upsert as it comes, with NO smoothing or
+                         prediction (owner decision, adsb-a4g).
 
     :stream/connection   :connecting | :live | :reconnecting | :down — the
                          honest health of the stream, surfaced by the
@@ -21,21 +33,26 @@
                          NOT :reconnecting, which claims a failure that has
                          not happened.
 
-    :stats/session       the session stats decoded from the envelope's
-                         `stats` map (adsb.wire) — the scalar max range and
-                         message rate the server computed. {} before the
-                         first frame and whenever a scalar is unknown; the
-                         :stats/session subscription feeds the numbers-only
-                         readout (adsb.ui.stats), which dashes absent
-                         scalars. Never a position — see adsb.wire.
+    :stats/session       the session stats decoded from the dedicated
+                         `stats` event (adsb.wire) — the scalar max range
+                         and message rate the server computed. Stats and
+                         aircraft data NEVER share a frame (owner decision,
+                         adsb-jpf): the server sends stats on a low ~10 s
+                         cadence, plus once right after the snapshot. {}
+                         before the first stats frame and whenever a scalar
+                         is unknown; the :stats/session subscription feeds
+                         the numbers-only readout (adsb.ui.stats), which
+                         dashes absent scalars. Never a position — see
+                         adsb.wire.
 
     :feeder/status       the feeder's health as the server last reported it
-                         (adsb.wire feeder field): :ok | :down | :starting,
-                         or nil before the first frame or when the server
-                         named no status. This is the RAW server claim; the
-                         header's feeder chip reads the DERIVED :feeder/health
-                         sub (adsb.subs), which additionally knows the claim
-                         is only trustworthy while THIS stream is live.
+                         (adsb.wire, riding the `stats` event): :ok | :down
+                         | :starting, or nil before the first stats frame
+                         or when the server named no status. This is the
+                         RAW server claim; the header's feeder chip reads
+                         the DERIVED :feeder/health sub (adsb.subs), which
+                         additionally knows the claim is only trustworthy
+                         while THIS stream is live.
 
   ## Connection state, honestly (the adsb-2yu.2 mandate)
 
@@ -53,13 +70,16 @@
   the connection keyword. Time (the backoff timer) enters through the
   `schedule-reconnect!`/`clear-timer!` fns, which tests redef so the state
   machine can be driven synchronously."
-  (:require [adsb.stream.source :as source]
+  (:require [adsb.aircraft :as aircraft]
+            [adsb.stream.source :as source]
             [adsb.wire :as wire]
             [clojure.math :as math]
             [re-frame.core :as rf]))
 
 (def ^:const stream-url
-  "The SSE endpoint (adsb-kbm.2): snapshot-then-updates at ~1 Hz."
+  "The SSE endpoint (adsb-kbm.2): a snapshot on connect, then
+  per-aircraft upserts (streaming) or ~1 Hz full-picture updates (poll),
+  with stats on their own low-rate event (adsb.wire)."
   "/api/stream")
 
 ;; ---------------------------------------------------------------------
@@ -86,19 +106,41 @@
   (if (> attempts down-after-attempts) :down :reconnecting))
 
 ;; ---------------------------------------------------------------------
-;; Decode
+;; Decode — one fn per SSE event kind, all through the shared adsb.wire
+;; codec. Absent facts stay absent — the codec omits them, it does not
+;; default them.
 
-(defn data->frame
-  "Decode one SSE frame's `data` string (a JSON envelope on the adsb.wire
-  format) into the things app-db holds: {:picture icao -> aircraft, :stats
-  session stats, :feeder feeder status}. Absent facts stay absent — the
-  codec omits them, it does not default them."
+(defn- data->envelope [data]
+  (-> (.parse js/JSON data)
+      (js->clj :keywordize-keys true)))
+
+(defn data->picture
+  "Decode a full-picture frame's `data` string (`snapshot`/`update`)
+  into the picture app-db holds: icao -> domain aircraft."
   [data]
-  (let [envelope (-> (.parse js/JSON data)
-                     (js->clj :keywordize-keys true))]
-    {:picture (wire/wire->picture envelope)
-     :stats   (wire/wire->stats envelope)
-     :feeder  (wire/wire->feeder envelope)}))
+  (wire/wire->picture (data->envelope data)))
+
+(defn data->upsert
+  "Decode an `aircraft` frame's `data` string into the one full merged
+  domain aircraft it carries (adsb-jpf)."
+  [data]
+  (wire/wire->upsert (data->envelope data)))
+
+(defn data->stats
+  "Decode a `stats` frame's `data` string into {:stats session stats,
+  :feeder feeder status}."
+  [data]
+  (let [envelope (data->envelope data)]
+    {:stats  (wire/wire->stats envelope)
+     :feeder (wire/wire->feeder envelope)}))
+
+(defn now-ms
+  "The frame's arrival instant, read where the stream touches the world
+  (the source callbacks) and passed INTO events as an argument — the
+  same discipline as adsb.map.aircraft-layer/now-ms. Redef-able so tests
+  drive client-side age-out with a literal clock."
+  []
+  (.now js/Date))
 
 ;; ---------------------------------------------------------------------
 ;; The connection manager. A stateful JS resource, so it lives outside
@@ -124,9 +166,11 @@
   (some-> (:connection @!conn) source/close!)
   (let [c (source/connect!
             stream-url
-            {:on-open  #(rf/dispatch [:stream/opened])
-             :on-frame #(rf/dispatch [:stream/received %])
-             :on-error #(rf/dispatch [:stream/error %])})]
+            {:on-open     #(rf/dispatch [:stream/opened])
+             :on-frame    #(rf/dispatch [:stream/received %])
+             :on-aircraft #(rf/dispatch [:stream/upsert %])
+             :on-stats    #(rf/dispatch [:stream/stats % (now-ms)])
+             :on-error    #(rf/dispatch [:stream/error %])})]
     (swap! !conn assoc :connection c)))
 
 (defn schedule-reconnect!
@@ -178,8 +222,10 @@
      :stream/clear-timer! nil}))
 
 (def ^:const silent-after-frames
-  "How many consecutive frames of ZERO message rate before we are willing to
-  call the feeder silent (~1 Hz, so ~10 seconds).
+  "How many consecutive STATS frames of ZERO message rate before we are
+  willing to call the feeder silent. Stats frames arrive every ~10 s
+  (adsb.wire — the rate moved off the 1 Hz picture frames and onto the
+  dedicated stats event), so three of them is ~30 seconds.
 
   There is a threshold at all because the light must not flicker. The server
   rounds the rate to a whole number, so a genuinely dribbling feeder samples as
@@ -188,9 +234,11 @@
   ignore the one signal that must never be ignored.
 
   It is small because the fact is urgent: a dead SDR behind a healthy container
-  is exactly the failure that LOOKS like a calm sky, and ten seconds of provable
-  silence is already a strange thing for a working antenna."
-  10)
+  is exactly the failure that LOOKS like a calm sky, and half a minute of
+  provable silence is already a strange thing for a working antenna. (Each
+  sample now spans ~10 s of the feeder's counter, too — stronger evidence per
+  frame than the old per-second samples, which is why fewer are needed.)"
+  3)
 
 (defn silent-frames
   "How many frames in a row the feeder has reported no messages at all.
@@ -208,26 +256,58 @@
     (pos? message-rate)  0
     :else                (inc (or previous 0))))
 
-;; A full-picture frame arrived: wholesale-replace the picture and the session
-;; stats. Receiving a frame is itself proof we are live.
-;;
-;; :feeder/silent-frames is the count of consecutive frames carrying no
-;; messages. The FEEDER'S OWN STATUS CANNOT SEE THIS: the server sets :ok on a
-;; successful poll of aircraft.json, which says the container is up and serving
-;; — not that the radio behind it is hearing anything. An SDR can die behind a
-;; perfectly healthy container, and the picture just quietly ages out. This
-;; counter is what the derived :feeder/health (adsb.subs) reads to catch it.
+;; A full-picture frame arrived (`snapshot`, or a poll deployment's
+;; `update`): wholesale-replace the picture. Aircraft data ONLY — stats
+;; travel on their own event (ns docstring). Receiving a frame is itself
+;; proof we are live.
 (rf/reg-event-db
   :stream/received
   (fn [db [_ data]]
-    (let [{:keys [picture stats feeder]} (data->frame data)]
-      (assoc db
-        :aircraft/picture picture
-        :stats/session stats
-        :feeder/status (:feeder/status feeder)
-        :feeder/silent-frames (silent-frames (:feeder/silent-frames db)
-                                             (:stats/message-rate stats))
-        :stream/connection :live))))
+    (assoc db
+      :aircraft/picture (data->picture data)
+      :stream/connection :live)))
+
+;; A single-aircraft upsert arrived (adsb-jpf): merge it into the picture
+;; by icao — the aircraft is its full merged state, so assoc IS the merge
+;; — and let the layer's subscription push it to the map as-is. No
+;; smoothing, no prediction, no batching: rendering each event the moment
+;; it arrives is the point (owner decision, adsb-a4g).
+(rf/reg-event-db
+  :stream/upsert
+  (fn [db [_ data]]
+    (let [aircraft (data->upsert data)]
+      (-> db
+          (assoc-in [:aircraft/picture (:aircraft/icao aircraft)] aircraft)
+          (assoc :stream/connection :live)))))
+
+;; A stats frame arrived: land the session stats and the feeder claim, and
+;; PRUNE the picture of aircraft past the shared age-out threshold —
+;; client-side age-out, the removal mechanism on a streaming deployment,
+;; where no recurring full-picture frame exists to drop silent aircraft
+;; (ns docstring). `at-ms` is stamped at the callback edge (now-ms); the
+;; handler stays a pure fn of its arguments. On a poll deployment the
+;; prune is a no-op in practice — every update frame already replaced the
+;; picture wholesale.
+;;
+;; :feeder/silent-frames is the count of consecutive stats frames carrying
+;; no messages. The FEEDER'S OWN STATUS CANNOT SEE THIS: the server sets
+;; :ok on a successful poll of aircraft.json, which says the container is
+;; up and serving — not that the radio behind it is hearing anything. An
+;; SDR can die behind a perfectly healthy container, and the picture just
+;; quietly ages out. This counter is what the derived :feeder/health
+;; (adsb.subs) reads to catch it.
+(rf/reg-event-db
+  :stream/stats
+  (fn [db [_ data at-ms]]
+    (let [{:keys [stats feeder]} (data->stats data)]
+      (-> db
+          (update :aircraft/picture aircraft/age-out at-ms)
+          (assoc
+            :stats/session stats
+            :feeder/status (:feeder/status feeder)
+            :feeder/silent-frames (silent-frames (:feeder/silent-frames db)
+                                                 (:stats/message-rate stats))
+            :stream/connection :live)))))
 
 ;; An EventSource error. If the browser is still CONNECTING it owns the
 ;; retry — we just reflect :reconnecting. If it is CLOSED the source is dead:

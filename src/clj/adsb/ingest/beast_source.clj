@@ -38,8 +38,7 @@
   close! stops it. The transport (plain socket or, through the tunnel,
   adsb.ingest.wss), stall detection, and the unreachable-vs-quiet fetch!
   contract are all adsb.ingest.tcp's."
-  (:require [adsb.accumulator :as accumulator]
-            [adsb.ingest.beast :as beast]
+  (:require [adsb.ingest.beast :as beast]
             [adsb.ingest.mode-s :as mode-s]
             [adsb.ingest.source :as source]
             [adsb.ingest.tcp :as tcp])
@@ -62,23 +61,24 @@
 
 (defn- consume-frame!
   "Decode one long frame's payload at its arrival instant and fold a
-  trustworthy delta into the picture. Returns the threaded cpr-state — nil
-  delta (failed parity, out-of-scope DF, garbage) folds nothing but still
-  advances the CPR pairing/pruning state."
-  [picture clock frame cpr-state]
+  trustworthy delta into the picture — notifying the optional :on-delta
+  hook with the merged aircraft (tcp/accumulate!). Returns the threaded
+  cpr-state — nil delta (failed parity, out-of-scope DF, garbage) folds
+  nothing but still advances the CPR pairing/pruning state."
+  [{:keys [clock] :as state} frame cpr-state]
   (let [now-ms (clock)
         {:keys [delta cpr-state]} (mode-s/decode (:beast/payload frame)
                                                  now-ms cpr-state)]
     (when delta
-      (swap! picture accumulator/accumulate delta now-ms))
+      (tcp/accumulate! state delta now-ms))
     cpr-state))
 
 (defn- fold-frames!
   "Fold every long frame in one read's batch into the picture, threading
   cpr-state across them. Returns the new cpr-state."
-  [picture clock frames cpr-state]
+  [state frames cpr-state]
   (reduce (fn [cpr-state frame]
-            (consume-frame! picture clock frame cpr-state))
+            (consume-frame! state frame cpr-state))
           cpr-state
           (filter long-frame? frames)))
 
@@ -87,7 +87,7 @@
   threading Beast :carry across reads and CPR state across frames, folding
   each trustworthy long-frame delta into the picture at its arrival
   instant. Returns on any stop; tcp reconnects if still running."
-  [^InputStream in picture clock running?]
+  [^InputStream in {:keys [running?] :as state}]
   (let [buffer (byte-array read-buffer-size)]
     (loop [carry     nil
            cpr-state nil]
@@ -97,21 +97,21 @@
             (let [chunk (Arrays/copyOfRange buffer 0 (int n))
                   {:keys [frames carry]} (beast/frames chunk carry)]
               (recur carry
-                     (fold-frames! picture clock frames cpr-state)))))))))
+                     (fold-frames! state frames cpr-state)))))))))
 
 (defn- consume!
   "The tcp reader seam: pump the connection's Beast byte stream into the
   picture until the connection ends. tcp/serve-connection! owns closing the
   stream, so a read that throws (a drop, or the idle-timeout stall signal)
   unwinds straight to reconnect."
-  [^InputStream in {:keys [picture clock running?]}]
-  (read-frames! in picture clock running?))
+  [^InputStream in state]
+  (read-frames! in state))
 
 ;; ---------------------------------------------------------------------
 ;; The Source
 
 (defrecord BeastSource [host port transport connect-timeout-ms idle-timeout-ms
-                        reconnect-ms clock consume! thread-name
+                        reconnect-ms clock on-delta consume! thread-name
                         picture running? connected? last-error connection
                         reader-thread]
   source/Source
@@ -130,7 +130,8 @@
   adsb.ingest.config. Options are adsb.ingest.tcp/reader-state's:
   :transport (default the plain-socket transport; adsb.ingest.wss/transport
   for the tunnel), :connect-timeout-ms, :idle-timeout-ms, :reconnect-ms,
-  and the injectable :clock."
+  the injectable :clock, and the optional :on-delta hook fired with each
+  message's merged aircraft (adsb-jpf; see adsb.ingest.tcp)."
   ([host port] (->source host port {}))
   ([host port opts]
    (map->BeastSource

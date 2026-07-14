@@ -8,6 +8,7 @@
   docs/testing-setup.md, \"The Map Seam\" — this is the same idea for the
   stream."
   (:require
+    [adsb.aircraft :as aircraft]
     [adsb.fixtures :as fixtures]
     [adsb.stream :as stream]
     [adsb.stream.source :as source]
@@ -16,16 +17,28 @@
     [day8.re-frame.test :as rf-test]
     [re-frame.core :as rf]))
 
+(def ^:const at-ms 1720713600000)
+
 (defn- frame
-  "One SSE frame's `data` string: the full picture built from a list of
-  domain aircraft, serialized exactly as the server would (adsb.wire ->
-  JSON)."
-  ([aircraft] (frame aircraft nil nil))
-  ([aircraft stats] (frame aircraft stats nil))
-  ([aircraft stats feeder]
-   (let [picture (into {} (map (juxt :aircraft/icao identity)) aircraft)]
-     (js/JSON.stringify
-       (clj->js (wire/picture->wire picture stats feeder 1720713600000))))))
+  "One full-picture SSE frame's `data` string (`snapshot`/`update`): the
+  picture built from a list of domain aircraft, serialized exactly as the
+  server would (adsb.wire -> JSON)."
+  [aircraft]
+  (let [picture (into {} (map (juxt :aircraft/icao identity)) aircraft)]
+    (js/JSON.stringify (clj->js (wire/picture->wire picture at-ms)))))
+
+(defn- stats-frame
+  "One `stats` SSE frame's `data` string — stats and feeder health,
+  never aircraft data (adsb.wire)."
+  ([stats] (stats-frame stats nil))
+  ([stats feeder]
+   (js/JSON.stringify (clj->js (wire/stats-event->wire stats feeder at-ms)))))
+
+(defn- upsert-frame
+  "One `aircraft` SSE frame's `data` string — one full merged aircraft
+  (adsb-jpf)."
+  [one-aircraft]
+  (js/JSON.stringify (clj->js (wire/upsert->wire one-aircraft at-ms))))
 
 (defn- fake-connection []
   (reify source/Connection
@@ -53,46 +66,45 @@
                 "position round-trips through the shared wire codec")))))))
 
 (deftest stats-land-in-app-db
-  (testing "the envelope's stats scalars decode onto :stats/session, and
+  (testing "the stats event's scalars decode onto :stats/session, and
             an absent scalar stays absent"
     (rf-test/run-test-sync
       (let [!cbs (atom nil)]
         (with-redefs [source/connect! (fn [_url cbs] (reset! !cbs cbs) (fake-connection))
                       stream/schedule-reconnect! (fn [_ms] nil)]
           (rf/dispatch [:stream/start])
-          ((:on-frame @!cbs)
-           (frame [fixtures/ups-2717] {:stats/max-range-km 312
-                                       :stats/message-rate 148}))
+          ((:on-stats @!cbs)
+           (stats-frame {:stats/max-range-km 312
+                         :stats/message-rate 148}))
           (is (= {:stats/max-range-km 312 :stats/message-rate 148}
                  @(rf/subscribe [:stats/session]))
               "both scalars land, namespaced")
 
           ;; A later frame with no max range (receiver position gone):
           ;; the scalar drops out, never zeroes.
-          ((:on-frame @!cbs)
-           (frame [fixtures/ups-2717] {:stats/message-rate 90}))
+          ((:on-stats @!cbs) (stats-frame {:stats/message-rate 90}))
           (is (= {:stats/message-rate 90} @(rf/subscribe [:stats/session]))
               "absent max range is omitted, not defaulted"))))))
 
 (deftest feeder-status-lands-in-app-db
-  (testing "the envelope's feeder status decodes onto :feeder/status, and an
-            absent status stays nil (unknown)"
+  (testing "the stats event's feeder status decodes onto :feeder/status, and
+            an absent status stays nil (unknown)"
     (rf-test/run-test-sync
       (let [!cbs (atom nil)]
         (with-redefs [source/connect! (fn [_url cbs] (reset! !cbs cbs) (fake-connection))
                       stream/schedule-reconnect! (fn [_ms] nil)]
           (rf/dispatch [:stream/start])
-          ((:on-frame @!cbs)
-           (frame [fixtures/ups-2717] nil {:feeder/status          :ok
-                                           :feeder/last-success-ms 1720713599000}))
+          ((:on-stats @!cbs)
+           (stats-frame nil {:feeder/status          :ok
+                             :feeder/last-success-ms 1720713599000}))
           (is (= :ok @(rf/subscribe [:feeder/status]))
               "the reported status lands, as a keyword")
           (is (= :ok @(rf/subscribe [:feeder/health]))
               "and the derived health agrees while the stream is live")
 
-          ;; A later frame the server sends with no named status: the raw
-          ;; status drops to nil and the derived health goes :unknown.
-          ((:on-frame @!cbs) (frame [fixtures/ups-2717]))
+          ;; A later stats frame the server sends with no named status: the
+          ;; raw status drops to nil and the derived health goes :unknown.
+          ((:on-stats @!cbs) (stats-frame nil))
           (is (nil? @(rf/subscribe [:feeder/status]))
               "an absent status is nil, never a stale keyword")
           (is (= :unknown @(rf/subscribe [:feeder/health]))))))))
@@ -107,7 +119,7 @@
                       stream/schedule-reconnect! (fn [_ms] nil)]
           (rf/dispatch [:stream/start])
           ((:on-open @!cbs))
-          ((:on-frame @!cbs) (frame [fixtures/ups-2717] nil {:feeder/status :ok}))
+          ((:on-stats @!cbs) (stats-frame nil {:feeder/status :ok}))
           (is (= :ok @(rf/subscribe [:feeder/health])) "live: the claim stands")
 
           ;; The stream drops repeatedly and goes :down; the last feeder claim
@@ -131,6 +143,65 @@
           (is (= #{(:aircraft/icao fixtures/ups-2717)}
                  (set (keys @(rf/subscribe [:aircraft/picture]))))
               "the aircraft absent from the newest frame is gone"))))))
+
+(deftest upsert-merges-into-the-picture
+  (testing "an `aircraft` event merges its one full merged aircraft into the
+            picture by icao — updating the aircraft it names, touching no
+            other, and adding one not yet seen (adsb-jpf)"
+    (rf-test/run-test-sync
+      (let [!cbs (atom nil)]
+        (with-redefs [source/connect! (fn [_url cbs] (reset! !cbs cbs) (fake-connection))
+                      stream/schedule-reconnect! (fn [_ms] nil)]
+          (rf/dispatch [:stream/start])
+          ((:on-frame @!cbs) (frame [fixtures/ups-2717
+                                     fixtures/squawking-7700]))
+
+          ;; The server heard UPS2717 again, 1000 ft lower: the upsert
+          ;; replaces that aircraft's entry wholesale (it IS the full
+          ;; merged state) and leaves the other aircraft alone.
+          (let [icao   (:aircraft/icao fixtures/ups-2717)
+                moved  (assoc fixtures/ups-2717 :aircraft/altitude-ft 33775)]
+            ((:on-aircraft @!cbs) (upsert-frame moved))
+            (let [pic @(rf/subscribe [:aircraft/picture])]
+              (is (= 33775 (get-in pic [icao :aircraft/altitude-ft]))
+                  "the upsert's state replaces the aircraft's entry")
+              (is (contains? pic (:aircraft/icao fixtures/squawking-7700))
+                  "an upsert is a merge, never a picture replacement")))
+
+          ;; An upsert for an unheard aircraft adds it.
+          ((:on-aircraft @!cbs) (upsert-frame fixtures/on-the-ground))
+          (is (contains? @(rf/subscribe [:aircraft/picture])
+                         (:aircraft/icao fixtures/on-the-ground))
+              "a first-heard aircraft joins the picture")
+
+          (is (= :live @(rf/subscribe [:stream/connection]))
+              "receiving an upsert is itself proof we are live"))))))
+
+(deftest stats-frames-prune-aged-out-aircraft
+  (testing "each stats frame ages the picture out on the client's own clock
+            (the shared adsb.aircraft threshold) — the removal mechanism on
+            a streaming deployment, where no recurring full-picture frame
+            exists to drop a silent aircraft (adsb-jpf)"
+    (rf-test/run-test-sync
+      (let [!cbs (atom nil)
+            t0   1720713600000]
+        (with-redefs [source/connect! (fn [_url cbs] (reset! !cbs cbs) (fake-connection))
+                      stream/schedule-reconnect! (fn [_ms] nil)
+                      stream/now-ms (constantly
+                                      (+ t0 aircraft/age-out-threshold-ms 1))]
+          (rf/dispatch [:stream/start])
+          (let [silent (assoc fixtures/ups-2717 :aircraft/seen-at-ms t0)
+                fresh  (assoc fixtures/squawking-7700
+                              :aircraft/seen-at-ms
+                              (+ t0 aircraft/age-out-threshold-ms))]
+            ((:on-frame @!cbs) (frame [silent fresh]))
+            (is (= 2 (count @(rf/subscribe [:aircraft/picture]))))
+
+            ((:on-stats @!cbs) (stats-frame {:stats/message-rate 90}))
+            (is (= #{(:aircraft/icao fresh)}
+                   (set (keys @(rf/subscribe [:aircraft/picture]))))
+                "the aircraft silent past the threshold is pruned; the
+                 fresh one stays")))))))
 
 (deftest connection-state-tracks-reality
   (testing ":live on open, :reconnecting while the browser retries, :down after repeated failure, healing on recovery"
@@ -188,10 +259,12 @@
         "an unknown rate must never accuse a working antenna"))
 
   (testing "the threshold is small, because the fact is urgent — but it exists,
-            because the light must not blink"
+            because the light must not blink. Stats frames arrive every ~10 s,
+            so each unit here is ~10 s of wall clock"
     (is (pos? stream/silent-after-frames))
-    (is (<= stream/silent-after-frames 30)
-        "a dead SDR must not take half a minute to admit it")))
+    (is (<= stream/silent-after-frames 6)
+        "a dead SDR must not take more than a minute of stats frames to
+         admit it")))
 
 (deftest backoff-grows
   (testing "each consecutive CLOSED error schedules a longer reconnect"

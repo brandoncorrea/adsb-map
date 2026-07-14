@@ -35,22 +35,32 @@
   "The seam. Open an EventSource to `url` and wire its signals to the
   supplied callbacks, returning a `Connection`.
 
-    :on-open   (fn [])            the stream (re)connected
-    :on-frame  (fn [data-string]) a `snapshot` or `update` event arrived;
-                                  both are full pictures, handled alike
-    :on-error  (fn [ready-state]) an error fired; ready-state is
-                                  :connecting (the browser is auto-retrying)
-                                  or :closed (the source is dead — ours to
-                                  reconnect)
+    :on-open     (fn [])            the stream (re)connected
+    :on-frame    (fn [data-string]) a `snapshot` or `update` event
+                                    arrived; both are full pictures,
+                                    handled alike
+    :on-aircraft (fn [data-string]) an `aircraft` event arrived — one
+                                    aircraft's full merged state, merged
+                                    into the picture by icao (adsb-jpf)
+    :on-stats    (fn [data-string]) a `stats` event arrived — session
+                                    stats and feeder health, never
+                                    aircraft data
+    :on-error    (fn [ready-state]) an error fired; ready-state is
+                                    :connecting (the browser is
+                                    auto-retrying) or :closed (the source
+                                    is dead — ours to reconnect)
 
   Tests redef this to capture the callbacks and return a fake `Connection`;
   it therefore holds no logic worth testing itself."
-  [url {:keys [on-open on-frame on-error]}]
+  [url {:keys [on-open on-frame on-aircraft on-stats on-error]}]
   (let [es (js/EventSource. url)
-        frame (fn [^js e] (on-frame (.-data e)))]
+        data-> (fn [callback] (fn [^js e] (callback (.-data e))))
+        frame (data-> on-frame)]
     (set! (.-onopen es) (fn [_] (on-open)))
     (.addEventListener es "snapshot" frame)
     (.addEventListener es "update" frame)
+    (.addEventListener es "aircraft" (data-> on-aircraft))
+    (.addEventListener es "stats" (data-> on-stats))
     (set! (.-onerror es) (fn [_] (on-error (ready-state-kw es))))
     (reify Connection
       (close! [_] (.close es)))))
