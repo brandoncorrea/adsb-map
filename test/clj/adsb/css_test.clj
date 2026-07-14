@@ -49,15 +49,16 @@
   ;; adsb.css.app and the smallest labels silently stop printing in Grotesk.
   (testing "the caption rule is emitted after every block whose labels it claims"
     ;; The anchor is the claimed list itself, joined — not a hand-copied prefix
-    ;; of it. Two selectors have now left this group (the corner legend's
-    ;; .adsb-count-unit, then the header stats' .adsb-stats-label), and each
-    ;; time a hand-copied anchor went stale it took the whole deftest down with
-    ;; a nil. Both the anchor and the per-selector lookups are checked for
+    ;; of it. Three selectors have now left this group (the corner legend's
+    ;; .adsb-count-unit, then the header stats' .adsb-stats-label, then the
+    ;; roster's .adsb-roster-search-label — visually hidden once the magnifier
+    ;; made the word redundant, and a clipped 1px box has no typography), and
+    ;; each time a hand-copied anchor went stale it took the whole deftest down
+    ;; with a nil. Both the anchor and the per-selector lookups are checked for
     ;; presence before they are compared, so a changed claim reports itself as
     ;; ONE named missing selector instead of a pile of NullPointerExceptions.
     (let [claimed [".adsb-fact-label" ".adsb-mayday-label"
-                   ".adsb-roster-search-label" ".adsb-roster-cols"
-                   ".adsb-flight-label"]
+                   ".adsb-roster-cols" ".adsb-flight-label"]
           caption (str/index-of @css (str (str/join ", " claimed) " {"))]
       (is (some? caption)
           "the grouped caption rule is in the stylesheet, claiming exactly these

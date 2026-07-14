@@ -201,12 +201,12 @@
    [:.adsb-roster-search
     (decl :display "flex" :flex-direction "column" :gap "var(--s1)")]
 
-   [:.adsb-roster-search-label
-    (decl :font-size      "var(--t-2)"
-          :font-weight    700
-          :letter-spacing "0.12em"
-          :text-transform "uppercase"
-          :color          "var(--faded-ink)")]
+   ;; No .adsb-roster-search-label rule, and that is deliberate. The FIND stamp
+   ;; is `adsb-vh` now (adsb.ui.roster): the magnifier and the box say what the
+   ;; field is, so the word is noise TO THE EYE and goes — but it stays in the
+   ;; accessibility tree, because an aria-hidden icon names nothing and a
+   ;; placeholder is a hint, not a name. A clipped 1px box has no typography, so
+   ;; it left the caption voice too (adsb.css.captions).
 
    ;; The box the magnifier sits INSIDE. The icon is taken out of flow and the
    ;; input's left padding is opened up to make room for it, so the caret never

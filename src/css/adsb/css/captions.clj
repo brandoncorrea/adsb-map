@@ -14,7 +14,6 @@
 (def styles
   [[:.adsb-fact-label
     :.adsb-mayday-label
-    :.adsb-roster-search-label
     :.adsb-roster-cols
     :.adsb-flight-label
     (decl :font-family    "\"Space Grotesk\", system-ui, sans-serif"

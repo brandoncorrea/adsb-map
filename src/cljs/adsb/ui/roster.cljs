@@ -631,11 +631,16 @@
   [:div.adsb-roster-body
    [:div.adsb-roster-toolbar
     [:div.adsb-roster-search
-     ;; The magnifier is DECORATION and the label is the name (adsb.ui.icon
-     ;; renders it aria-hidden). A search field whose only label is a picture
-     ;; is a field a screen reader announces as "edit text, blank" — the FIND
-     ;; stamp stays, and the icon sits inside the box where the eye expects it.
-     [:label.adsb-roster-search-label {:for "adsb-roster-search"} "Find"]
+     ;; THE LABEL IS NOT DELETED, IT IS MOVED (adsb-33i's bargain, and the same
+     ;; one the feeder chip strikes at :ok — adsb.ui.health). The magnifier and
+     ;; the box make the field self-evident TO THE EYE, so the FIND stamp is
+     ;; noise on screen and it goes. It cannot go from the accessibility tree:
+     ;; the icon is aria-hidden decoration and cannot name anything, and a
+     ;; placeholder is not a name — it is a hint, and it evaporates on the first
+     ;; keystroke. Drop the element and the field announces as "search, blank".
+     ;; So `adsb-vh` — off the screen, still spoken.
+     [:label.adsb-roster-search-label.adsb-vh
+      {:for "adsb-roster-search"} "Find"]
      [:div.adsb-roster-search-field
       [icon :magnifying-glass]
       [:input#adsb-roster-search.adsb-roster-search-input
