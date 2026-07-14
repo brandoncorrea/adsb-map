@@ -34,6 +34,14 @@
 (defn- fresh-db! []
   (rf/dispatch-sync [:app/initialize-db]))
 
+;; The dock now OPENS CLOSED (roster/default-sheet) — the map is the
+;; product and gets the viewport until the reader asks for the roster. The
+;; body, and so every row and the search field, renders only when open. So
+;; a test that is about ROWS says so out loud and opens the sheet first;
+;; the default itself is pinned once, in the-dock-opens-closed.
+(defn- open-roster! []
+  (rf/dispatch-sync [:roster/set-sheet :half]))
+
 (deftest matches-query-is-blank-friendly
   (is (true? (roster/matches-query? ups "")))
   (is (true? (roster/matches-query? ups "UPS")))
@@ -89,9 +97,25 @@
       (is (= "3 aircraft · expand" (roster/handle-label :half 3 3 "")))
       (is (= "3 aircraft · hide" (roster/handle-label :full 3 3 ""))))))
 
+(deftest the-dock-opens-closed
+  (rf-test/run-test-sync
+    (rf/dispatch [:app/initialize-db])
+    (rf/dispatch [:test/set-picture (picture)])
+    (render-roster!)
+    (let [dock (.getByTestId rtl/screen "roster")]
+      (is (= "false" (.getAttribute dock "data-open")))
+      (is (= "closed" (.getAttribute dock "data-sheet"))))
+    (testing "the body is not rendered at all — no rows, no search field"
+      (is (nil? (.queryByTestId rtl/screen "roster-search")))
+      (is (nil? (.queryByTestId rtl/screen (str "roster-row:" ups-icao)))))
+    (testing "but the rail is on screen and says how to open it — a closed
+              drawer the reader cannot find is a deleted feature"
+      (is (some? (.getByTestId rtl/screen "roster-toggle"))))))
+
 (deftest the-roster-renders-the-picture
   (rf-test/run-test-sync
     (rf/dispatch [:test/set-picture (picture)])
+    (open-roster!)
     (render-roster!)
     (is (some? (.getByTestId rtl/screen "roster")))
     (is (some? (.getByTestId rtl/screen "roster-search")))
@@ -103,6 +127,7 @@
   (async done
     (fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
+    (open-roster!)
     (render-roster!)
     (rf/dispatch-sync [:roster/set-query "UPS"])
     (r/flush)
@@ -122,8 +147,9 @@
   (async done
     (fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
+    (open-roster!)
     (render-roster!)
-    ;; Default is :half (open). Binary toggle closes in one step.
+    ;; Opened above; the binary toggle closes it in one step.
     (rf/dispatch-sync [:roster/toggle])
     (r/flush)
     (-> (rtl/waitFor
@@ -151,6 +177,9 @@
     (fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
     (render-roster!)
+    ;; From the CLOSED default, the cycle now walks the full ring in one
+    ;; test: closed -> half -> full -> closed.
+    (rf/dispatch-sync [:roster/cycle]) ; closed → half
     (rf/dispatch-sync [:roster/cycle]) ; half → full
     (r/flush)
     (-> (rtl/waitFor
@@ -179,6 +208,10 @@
   (async done
     (fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
+    ;; The sheet must be OPEN: scrolling a row into view inside a shut
+    ;; drawer would be a no-op with nothing to scroll (roster/default-sheet
+    ;; is :closed, and the scroll track guards on sheet-open?).
+    (open-roster!)
     (let [!scrolled (atom nil)]
       (with-redefs [roster/scroll-row-into-view! #(reset! !scrolled %)]
         (render-roster!)

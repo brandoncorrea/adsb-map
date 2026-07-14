@@ -94,7 +94,10 @@
 ;; edge itself, and it is the only chrome the arrow must clear up there.
 (def ^:const notam-strip-px 36)    ; one NOTAM row, on the top edge
 ;; Roster dock width (desktop) / collapsed drawer height (phone). Matches
-;; --roster-w in adsb.css.tokens / adsb.css.phone (adsb-66h).
+;; --roster-w in adsb.css.tokens / adsb.css.phone (adsb-66h). A FALLBACK
+;; only — roster-width-px measures the rail as it is actually rendered,
+;; because the dock is 300px open but 40px shut (adsb.css.roster), and the
+;; dock now opens SHUT (adsb.ui.roster/default-sheet).
 (def ^:const roster-px 300)
 (def ^:const roster-phone-rail-px 48)
 (def ^:const arrow-half-width-px 80)
@@ -322,12 +325,26 @@
         n   (when (seq raw) (js/parseFloat raw))]
     (if (js/isFinite n) n 0)))
 
+(defn- roster-width-px
+  "The desktop roster dock's width AS RENDERED — 300px open, 40px shut
+  (adsb.css.roster). Measured rather than assumed: the dock now opens SHUT
+  (adsb.ui.roster/default-sheet), so a hardcoded 300 would inset the edge
+  arrow 260px into empty map on every load, holding the arrow well clear of
+  chrome that is not there. Falls back to the constant when the rail is not
+  in the DOM — a test harness, or the instant before first paint."
+  []
+  (or (some-> (.querySelector js/document ".adsb-roster") .-offsetWidth)
+      roster-px))
+
 (defn- chrome-insets-px
   "How far, in px, the arrow's centre must sit from each viewport edge
   to clear the frame, the chrome on it, the device safe area, and its
   own extent. The map is full-viewport (adsb.map.view), so the window
   size IS the canvas size — the one pixel fact this namespace allows
-  itself to read."
+  itself to read.
+
+  Re-read on every sync (a moveend, or a picture change at ~1 Hz), so the
+  arrow follows the dock open and shut without needing to hear about it."
   []
   (let [phone? (<= (.-innerWidth js/window) phone-max-width-px)
         safe-t (css-px "--safe-top")
@@ -335,7 +352,11 @@
         safe-b (css-px "--safe-bottom")
         safe-l (css-px "--safe-left")]
     {:top    (+ safe-t notam-strip-px arrow-half-height-px edge-air-px)
-     :right  (+ safe-r (if phone? 0 roster-px) arrow-half-width-px edge-air-px)
+     ;; Phone puts the roster on the BOTTOM edge, so it costs :bottom, not
+     ;; :right — and its width is the whole viewport, which is why the
+     ;; measurement is desktop-only.
+     :right  (+ safe-r (if phone? 0 (roster-width-px))
+                arrow-half-width-px edge-air-px)
      :bottom (+ safe-b (if phone? roster-phone-rail-px 0) arrow-half-height-px edge-air-px)
      :left   (+ safe-l arrow-half-width-px edge-air-px)}))
 

@@ -175,25 +175,44 @@
 ;; View state — sheet snap + find query. Properties of the VIEW, not of
 ;; the sky, so they live beside the surface that owns them.
 
+(def ^:const default-sheet
+  "The sheet the app OPENS on: closed. The map is the product, and it gets
+  the whole viewport until the reader asks for the roster — one tap on the
+  rail, which is always on screen and says what it does.
+
+  Named once and read everywhere (the sub and both toggles default through
+  it), because the previous shape — `:half` repeated as a `get` fallback in
+  three places — is the kind that gets changed in two of them."
+  :closed)
+
+(def ^:const default-open-sheet
+  "Where the sheet lands when it is OPENED without a height being named —
+  the binary desktop toggle, and a nil :roster/set-sheet. Half, not full:
+  opening the roster should not bury the map behind it. Distinct from
+  `default-sheet`, which is where the app STARTS; conflating the two is
+  what makes a drawer that cannot be shut."
+  :half)
+
 (rf/reg-event-db
   :roster/set-sheet
   (fn [db [_ sheet]]
-    (assoc db :roster/sheet (or sheet :half))))
+    (assoc db :roster/sheet (or sheet default-open-sheet))))
 
-;; Binary open/closed. Open settles on :half (the default reading height).
-;; Phone tap-to-cycle uses :roster/cycle so a dock click is still one step
-;; to hide.
+;; Binary open/closed. Open settles on :half (default-open-sheet). Phone
+;; tap-to-cycle uses :roster/cycle so a dock click is still one step to hide.
 (rf/reg-event-db
   :roster/toggle
   (fn [db _]
-    (let [sheet (get db :roster/sheet :half)]
-      (assoc db :roster/sheet (if (sheet-open? sheet) :closed :half)))))
+    (let [sheet (get db :roster/sheet default-sheet)]
+      (assoc db :roster/sheet
+             (if (sheet-open? sheet) :closed default-open-sheet)))))
 
 ;; Phone handle tap: closed → half → full → closed.
 (rf/reg-event-db
   :roster/cycle
   (fn [db _]
-    (assoc db :roster/sheet (next-sheet (get db :roster/sheet :half)))))
+    (assoc db :roster/sheet
+           (next-sheet (get db :roster/sheet default-sheet)))))
 
 (rf/reg-event-db
   :roster/set-query
@@ -203,9 +222,7 @@
 (rf/reg-sub
   :roster/sheet
   (fn [db _]
-    ;; Default half — the dock is the product chrome, not a drawer you must
-    ;; discover. Phone users can collapse or expand to full for map room.
-    (get db :roster/sheet :half)))
+    (get db :roster/sheet default-sheet)))
 
 (rf/reg-sub
   :roster/open?
