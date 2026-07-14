@@ -1,5 +1,6 @@
 (ns adsb.http.routes-test
   (:require
+    [adsb.http.assets :as assets]
     [adsb.http.routes :as routes]
     [clojure.test :refer [deftest testing is]]
     [muuntaja.core :as muuntaja]))
@@ -86,32 +87,31 @@
       (is (= 404 (:status response))))))
 
 ;; ---------------------------------------------------------------------
-;; Static asset caching (adsb-8cb).
+;; Static assets, as wired into the route table (adsb-8cb). The caching
+;; POLICY is asserted in adsb.http.assets-test; what matters here is that
+;; the assembled handler routes to it — and that it never reaches the
+;; stream.
 
-(defn- static-request
-  "A GET for a static asset, with whatever conditional headers are given."
-  [uri headers]
-  {:request-method :get
-   :uri            uri
-   :headers        headers})
+(defn- static-request [uri headers]
+  {:request-method :get :uri uri :headers headers})
 
-(deftest static-assets-are-cacheable
-  (testing "a static response says how it may be cached — a response that
-            declines to say gets Cache-Control: private stamped on it by
-            DigitalOcean's router, and is then cached by nobody"
-    (let [response (empty-handler (static-request "/js/main.js" {}))]
+(deftest fingerprinted-assets-are-served
+  (testing "the versioned URL index.html points at actually resolves"
+    (let [uri      (assets/asset-url (assets/version) "js/main.js")
+          response (empty-handler (static-request uri {}))]
       (is (= 200 (:status response)))
-      (is (= routes/static-cache-control
+      (is (= assets/immutable-cache-control
              (get-in response [:headers "Cache-Control"])))))
-  (testing "and it says WHEN it last changed, which is what makes the
-            revalidation below cheap"
-    (let [response (empty-handler (static-request "/js/main.js" {}))]
-      (is (some? (get-in response [:headers "Last-Modified"]))))))
+  (testing "and the bare, unversioned path still serves — a client holding
+            an old document is slow, never broken"
+    (is (= 200 (:status (empty-handler (static-request "/js/main.js" {})))))))
 
 (deftest revalidation-costs-no-body
-  (testing "a conditional GET for an unchanged asset is a 304 with NO body
-            — without this the origin re-ships the whole ~1.2 MB bundle to
-            a browser that already has it, just to say it is current"
+  (testing "a conditional GET for an unchanged asset is a 304 with NO body.
+            No conditional request survives the production edge (measured),
+            so this is not what makes the DEPLOYMENT fast — but it is right
+            for any client that speaks to this container directly, and it is
+            nearly free"
     (let [warm     (empty-handler (static-request "/js/main.js" {}))
           modified (get-in warm [:headers "Last-Modified"])
           response (empty-handler
@@ -119,15 +119,6 @@
                                      {"if-modified-since" modified}))]
       (is (= 304 (:status response)))
       (is (nil? (:body response)))))
-  (testing "the 304 carries the caching header too — a 304 that omits it
-            leaves a cache to fall back on its own heuristics"
-    (let [warm     (empty-handler (static-request "/js/main.js" {}))
-          modified (get-in warm [:headers "Last-Modified"])
-          response (empty-handler
-                     (static-request "/js/main.js"
-                                     {"if-modified-since" modified}))]
-      (is (= routes/static-cache-control
-             (get-in response [:headers "Cache-Control"])))))
   (testing "a stale conditional GET still gets the full body — the point is
             to skip transfers, never to withhold a bundle that CHANGED"
     (let [response (empty-handler
@@ -138,10 +129,10 @@
       (is (some? (:body response))))))
 
 (deftest caching-never-touches-the-stream
-  (testing "the SSE response gets no Cache-Control from the static branch.
-            An event-stream is not a document: it has no Last-Modified, it
-            is never complete, and a 304 against it is a category error.
-            The caching middleware wraps the resource handler ONLY"
+  (testing "the SSE response gets no caching header. An event-stream is not
+            a document: it has no Last-Modified, it is never complete, and a
+            304 against it is a category error. The asset handler is not on
+            its path at all"
     (let [handler  (routes/handler
                      {:stream-connect (constantly {:status  200
                                                    :headers {}
@@ -163,11 +154,7 @@
       (is (= ::channel (:body response))))))
 
 (deftest a-missing-asset-still-404s
-  (testing "the caching middleware passes a resource MISS through as nil so
-            the 404 default handler downstream still runs — wrapping it in
-            a response here would shadow the 404"
-    (let [response (empty-handler
-                     (static-request "/no/such/path"
-                                     {"if-modified-since"
-                                      "Tue, 01 Jan 2019 00:00:00 GMT"}))]
+  (testing "the asset handler passes a resource MISS through as nil so the
+            404 default handler downstream still runs"
+    (let [response (empty-handler (static-request "/no/such/path" {}))]
       (is (= 404 (:status response))))))
