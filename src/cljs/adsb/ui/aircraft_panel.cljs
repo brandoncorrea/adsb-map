@@ -16,7 +16,7 @@
   reported 0 is shown; only true absence dashes.
 
   ESC clears the selection and closes this panel (adsb-rsm) — same intent
-  as the ×. Wired once for the app lifetime via `start-keyboard!`.
+  as the close mark. Wired once for the app lifetime via `start-keyboard!`.
 
   Styling is a NEUTRAL PLACEHOLDER: class names are the re-skin hooks and the
   visual pass is bead adsb-dgb.5. This namespace commits to structure, not a
@@ -24,14 +24,13 @@
   (:require [adsb.aircraft :as aircraft]
             [adsb.enrich :as enrich]
             [adsb.ui.alert :as alert]
+            [adsb.ui.icon :refer [icon]]
             [adsb.ui.units :as units]
             [clojure.string :as str]
             [re-frame.core :as rf]))
 
 ;; The em-dash stands in for every fact the sky never reported.
 (def ^:const em-dash "—")
-;; The close glyph — a multiplication sign, distinct from the em-dash.
-(def ^:const close-glyph "×")
 (def ^:const clock-interval-ms 1000)
 
 ;; ---------------------------------------------------------------------
@@ -154,8 +153,8 @@
 (defn- panel-body
   "The panel for one selected aircraft. Collapsible: expanded = full fact
   sheet; collapsed = a chip with callsign + altitude so the map can breathe.
-  × deselects; the chevron only collapses (adsb-66h). Free/Follow lives on
-  the map chrome (adsb.ui.follow), not here."
+  The close mark deselects; the chevron only collapses (adsb-66h). Free/Follow
+  lives on the map chrome (adsb.ui.follow), not here."
   [aircraft now-ms enrichment expanded?]
   (let [{:aircraft/keys [icao callsign ground-speed-kt track-deg squawk
                          baro-rate-fpm position-suspect? mlat?]} aircraft
@@ -177,14 +176,18 @@
         :aria-label    (if expanded? "Collapse detail" "Expand detail")
         :data-testid   "panel-toggle"
         :on-click      toggle-expand!}
-       [:span.adsb-panel-chevron {:aria-hidden true} (if expanded? "▾" "▸")]
+       ;; A MATCHED PAIR, which the ▾/▸ these replace were not: two unrelated
+       ;; geometric characters, different optical weights, different vertical
+       ;; centring — the control twitched every time it toggled.
+       [:span.adsb-panel-chevron
+        [icon (if expanded? :chevron-down :chevron-right)]]
        [:span.adsb-panel-title {:data-testid "panel-title"} title]
        (when-not expanded?
          [:span.adsb-panel-chip-meta (altitude-chip aircraft)])]
       [:button.adsb-panel-close
        {:type "button" :aria-label "Close" :data-testid "panel-close"
         :on-click close!}
-       close-glyph]]
+       [icon :xmark]]]
      (when expanded?
        [:<>
         (when (or emergency-kind position-suspect? mlat?)

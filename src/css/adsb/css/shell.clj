@@ -63,6 +63,11 @@
           :color           "var(--faded-ink)"
           :box-shadow      "0 0 0 2px rgba(0, 0, 0, 0.1)"
           :cursor          "pointer"
+          ;; The reticle is an icon now (adsb.css.icon): 1em square, inked with
+          ;; currentColor. So this font-size IS the glyph's size — 16px, the
+          ;; same 16 the hand-rolled svg hard-coded — and the :hover and
+          ;; .is-active colours below now reach it without knowing it exists.
+          :font-size       "16px"
           :line-height     0)]
 
    [:.adsb-follow-control:hover
@@ -75,11 +80,6 @@
    [:.adsb-follow-control:focus-visible
     (decl :outline        "2px solid var(--magenta)"
           :outline-offset "2px")]
-
-   [:.adsb-follow-glyph
-    (decl :display "block"
-          :width   "16px"
-          :height  "16px")]
 
    ;; Taken out of the visual channel, left in the accessible one. The feeder's
    ;; healthy state wears this: the eye gets a green dot, a screen reader still

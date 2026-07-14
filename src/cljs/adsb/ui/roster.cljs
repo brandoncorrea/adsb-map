@@ -26,6 +26,7 @@
     [adsb.map.style :as style]
     [adsb.map.theme :as theme]
     [adsb.ui.health :as health]
+    [adsb.ui.icon :refer [icon]]
     [adsb.ui.units :as units]
     [clojure.string :as str]
     [re-frame.core :as rf]
@@ -630,15 +631,21 @@
   [:div.adsb-roster-body
    [:div.adsb-roster-toolbar
     [:div.adsb-roster-search
+     ;; The magnifier is DECORATION and the label is the name (adsb.ui.icon
+     ;; renders it aria-hidden). A search field whose only label is a picture
+     ;; is a field a screen reader announces as "edit text, blank" — the FIND
+     ;; stamp stays, and the icon sits inside the box where the eye expects it.
      [:label.adsb-roster-search-label {:for "adsb-roster-search"} "Find"]
-     [:input#adsb-roster-search.adsb-roster-search-input
-      {:type          "search"
-       :placeholder   "Callsign or ICAO…"
-       :value         q
-       :auto-complete "off"
-       :spell-check   false
-       :data-testid   "roster-search"
-       :on-change     #(rf/dispatch [:roster/set-query (.. % -target -value)])}]]
+     [:div.adsb-roster-search-field
+      [icon :magnifying-glass]
+      [:input#adsb-roster-search.adsb-roster-search-input
+       {:type          "search"
+        :placeholder   "Callsign or ICAO…"
+        :value         q
+        :auto-complete "off"
+        :spell-check   false
+        :data-testid   "roster-search"
+        :on-change     #(rf/dispatch [:roster/set-query (.. % -target -value)])}]]]
     [altitude-key]
     [:div.adsb-roster-cols {:aria-hidden true}
      [:span "Callsign"]

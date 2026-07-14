@@ -208,10 +208,27 @@
           :text-transform "uppercase"
           :color          "var(--faded-ink)")]
 
+   ;; The box the magnifier sits INSIDE. The icon is taken out of flow and the
+   ;; input's left padding is opened up to make room for it, so the caret never
+   ;; lands under the glyph and a long callsign never runs beneath it.
+   [:.adsb-roster-search-field
+    (decl :position    "relative"
+          :display     "flex"
+          :align-items "center")]
+
+   [".adsb-roster-search-field .adsb-icon"
+    (decl :position       "absolute"
+          :left           "var(--s3)"
+          :font-size      "var(--t0)"          ; = the input's own size; 1em of it
+          :color          "var(--faded-ink)"
+          ;; A click on the glyph is a click on the field, not on nothing.
+          :pointer-events "none")]
+
    [:.adsb-roster-search-input
     (decl :width           "100%"
           :box-sizing      "border-box"
-          :padding         "var(--s3) var(--s3)"
+          ;; Left padding clears the glyph: the gutter, the 1em icon, the gap.
+          :padding         "var(--s3) var(--s3) var(--s3) calc(var(--s3) + 1em + var(--s2))"
           :font            "inherit"
           :font-size       "var(--t0)"
           :font-weight     700
@@ -456,6 +473,12 @@
      ;; type scale, and a token would invite someone to "fix the outlier"
      ;; back down to 13px and quietly restore the bug.
      [:.adsb-roster-search-input
+      (decl :font-size "16px")]
+
+     ;; The magnifier follows the field up. The input's left padding is written
+     ;; in `1em`, so it already tracks that 16px on its own — leave the icon at
+     ;; --t0 and the glyph shrinks away from a gutter cut for something bigger.
+     [".adsb-roster-search-field .adsb-icon"
       (decl :font-size "16px")]
 
      ;; ONE HANDLE, IN EVERY STATE. The rail and its handle are the same
