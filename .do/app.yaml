@@ -191,6 +191,36 @@ services:
         type: SECRET
         value: REPLACE_ME
 
+      # The privacy crop (adsb.ingest.crop, adsb-au5). Hiding the receiver
+      # FIELDS above is not enough: publish every aircraft the antenna hears and
+      # the union of those positions is a disc centred on the antenna — hull it,
+      # take the centroid, and you have the roof. So we publish only what falls
+      # inside a disc we DECLARED, and the boundary of the feed reveals that
+      # choice instead of the horizon.
+      #
+      # NOT SECRET, deliberately — this centre is meant to be public, and it is
+      # the one coordinate in this file that must NOT be the receiver's. Pick an
+      # arbitrary public point (a city, an airport). Two rules:
+      #
+      #   1. Never derive it from ADSB_RECEIVER_LAT/LON above.
+      #   2. The disc must sit strictly INSIDE real coverage in EVERY bearing —
+      #      a crop that pokes past the true envelope somewhere leaks the
+      #      shortfall in the weakest bearing and the geometry comes straight
+      #      back. Measure coverage per altitude band before choosing the radius.
+      #
+      # All three or none: a partial crop FAILS THE BOOT rather than silently
+      # publishing everything while looking configured. Unset = disabled, and
+      # the app warns loudly at startup.
+      - key: ADSB_CROP_LAT
+        scope: RUN_TIME
+        value: REPLACE_ME
+      - key: ADSB_CROP_LON
+        scope: RUN_TIME
+        value: REPLACE_ME
+      - key: ADSB_CROP_RADIUS_KM
+        scope: RUN_TIME
+        value: REPLACE_ME
+
       # ── Smoke test ──────────────────────────────────────────────────────────
       # Set to "replay" to serve the recorded fixture with NO feeder required.
       # This is how to prove the deployment — and, more to the point, whether SSE

@@ -3,9 +3,14 @@
   Production (-main, the uberjar's Main-Class) and `bb dev` (the :dev
   alias) both boot through start!, so there is exactly one wiring path:
 
-    ultrafeeder Source -> poll loop -> range gate -> adsb.state
-                                                       |-> SSE broadcast
-                                                       '-> HTTP API
+    ultrafeeder Source -> poll loop -> range gate -> privacy crop -> adsb.state
+                                                                       |-> SSE broadcast
+                                                                       '-> HTTP API
+
+  Both gates run before anything enters adsb.state (see `admit`): the
+  range gate rejects what this antenna cannot physically have heard, the
+  crop withholds what falls outside the disc we publicly declared. The
+  second is why the feed does not draw a picture of the antenna.
 
   Config comes from the environment; the feeder URL is validated before
   anything starts, so a misconfigured boot dies loudly on line one
@@ -22,6 +27,7 @@
             [adsb.http.server :as server]
             [adsb.ingest.beast-source :as beast-source]
             [adsb.ingest.config :as config]
+            [adsb.ingest.crop :as crop]
             [adsb.ingest.plausibility :as plausibility]
             [adsb.ingest.poll :as poll]
             [adsb.ingest.receiver :as receiver]
@@ -93,33 +99,65 @@
    :origin-token    (origin-token env)
    :env             env})
 
-(defn- ingest-batch!
-  "The poll loop's on-batch! seam: range-gate the batch against the
-  receiver position — resolved once at boot, never per poll — then
-  merge it into the state store, stamping capture time here at the
-  edge (the domain takes time as an argument). Jump flagging needs no
-  wiring; it is composed into adsb.state/apply-batch!."
-  [receiver-position batch]
+(defn- admit
+  "The two gates every aircraft passes before it may enter the picture,
+  in order. Both take the whole batch; either may empty it.
+
+    1. RANGE GATE (adsb.ingest.plausibility) — receiver-centred,
+       generous, ANTI-SPOOFING. Drops what cannot have come from this
+       antenna's sky. Disabled by a nil receiver-position.
+
+    2. PRIVACY CROP (adsb.ingest.crop, adsb-au5) — decoy-centred, tight,
+       PRIVACY. Drops what falls outside the disc we declared, so that
+       the boundary of the published set is one we CHOSE rather than the
+       antenna's horizon, whose centroid is the antenna. Disabled by a
+       nil crop, which start! warns about loudly.
+
+  Two gates, two concerns; neither substitutes for the other. Applied
+  here at INGEST rather than at the wire (adsb.wire) on purpose: an
+  aircraft that never enters adsb.state cannot leak through a future
+  endpoint, through the stats, or through the connect-time snapshot. The
+  crop is a property of the system, not of one serializer."
+  [batch receiver-position crop]
   (-> batch
       (plausibility/gate-range receiver-position
                                plausibility/default-max-range-m)
+      (crop/gate-crop crop)))
+
+(defn- ingest-batch!
+  "The poll loop's on-batch! seam: put the batch through both gates
+  (admit) — the receiver position and the crop are resolved once at
+  boot, never per poll — then merge what survives into the state store,
+  stamping capture time here at the edge (the domain takes time as an
+  argument). Jump flagging needs no wiring; it is composed into
+  adsb.state/apply-batch!."
+  [receiver-position crop batch]
+  (-> batch
+      (admit receiver-position crop)
       (state/apply-batch! (System/currentTimeMillis))))
 
 (defn- delta->stream!
   "The streaming Sources' :on-delta hook body (adsb-jpf), run on the
-  ingest READER THREAD for every accumulated message: range-gate the one
-  merged aircraft against the receiver position — the same gate
-  ingest-batch! applies, so a spoofed impossible-range track is rejected
-  per delta exactly as it is per poll — then hand it to the
-  broadcaster's bounded queue (broadcast/offer-delta!), which never
-  blocks and drops under pressure. `fan-out` is nil for the first
-  instants of boot (the hook is constructed before the broadcaster
-  exists — see start!); a delta landing in that window is dropped, and
-  the connect-time snapshot covers it."
-  [{:keys [receiver-position broadcaster]} aircraft now-ms]
+  ingest READER THREAD for every accumulated message: put the one merged
+  aircraft through the same two gates the poll path applies (admit), so
+  a spoofed impossible-range track is rejected — and an aircraft outside
+  the declared crop is withheld — per delta exactly as per poll. What
+  survives goes to the broadcaster's bounded queue
+  (broadcast/offer-delta!), which never blocks and drops under pressure.
+
+  The aircraft arrives MERGED, which is what makes the crop's
+  drop-the-position-less rule safe here: an altitude-only or
+  velocity-only message from an in-crop aircraft carries the position it
+  inherited from the picture, so it is not position-less and is not
+  dropped (adsb.ingest.crop/outside-crop?).
+
+  `fan-out` is nil for the first instants of boot (the hook is
+  constructed before the broadcaster exists — see start!); a delta
+  landing in that window is dropped, and the connect-time snapshot
+  covers it."
+  [{:keys [receiver-position crop broadcaster]} aircraft now-ms]
   (when (and broadcaster
-             (seq (plausibility/gate-range [aircraft] receiver-position
-                                           plausibility/default-max-range-m)))
+             (seq (admit [aircraft] receiver-position crop)))
     (broadcast/offer-delta! broadcaster aircraft now-ms)))
 
 (defn- ->stream-source
@@ -177,8 +215,10 @@
        ADSB_ULTRAFEEDER_URL, which throws before anything starts) or the
        fixture-replay Source when ADSB_SOURCE=replay
     2. resolve the receiver position once (env override, else the
-       feeder's receiver.json, else nil — range gate disabled)
-    3. poll the source at ~1 Hz through the range gate into the store
+       feeder's receiver.json, else nil — range gate disabled) and the
+       privacy crop once (ADSB_CROP_LAT/LON/RADIUS_KM, else nil — crop
+       disabled and loudly warned; a PARTIAL crop throws)
+    3. poll the source at ~1 Hz through both gates (admit) into the store
     4. broadcast over SSE. Aircraft data: a streaming Source (sbs/beast)
        pushes every message the instant it lands — its :on-delta hook
        (delta->stream!, adsb-jpf) feeds the broadcaster's per-aircraft
@@ -238,10 +278,15 @@
         receiver-position (receiver/resolve-position! {:env      env
                                                        :base-url feeder-url
                                                        :headers  feeder-auth})
+        ;; Throws on a partial or unparseable crop — a privacy control
+        ;; that looks on and is off is worse than one nobody configured
+        ;; (adsb.ingest.crop/env-crop).
+        crop              (crop/env-crop env)
         accumulator       (stats/create)
         poller            (poll/start!
                             {:source    source
-                             :on-batch! #(ingest-batch! receiver-position %)})
+                             :on-batch! #(ingest-batch! receiver-position
+                                                        crop %)})
         broadcaster       (broadcast/start!
                             {:picture state/age-out!
                              ;; nil DISABLES the update tick: a streaming
@@ -267,10 +312,28 @@
                              :stream-connect #(broadcast/connect!
                                                 broadcaster %)})]
     ;; Arm the delta hook (see !fan-out above). From here every message a
-    ;; streaming Source accumulates is range-gated and pushed to the SSE
-    ;; clients the instant it lands.
+    ;; streaming Source accumulates goes through both gates (admit) and is
+    ;; pushed to the SSE clients the instant it lands.
     (reset! !fan-out {:receiver-position receiver-position
+                      :crop              crop
                       :broadcaster       broadcaster})
+    (when-not crop
+      ;; The third of the silent-failure warnings, and the one with the
+      ;; longest fuse. Nothing errors, nothing degrades, the map looks
+      ;; perfect — we simply publish every aircraft the antenna can hear,
+      ;; and the union of those positions is a disc centred on the roof.
+      ;; Whoever wants the antenna does not need to attack anything; they
+      ;; need to collect the feed for an afternoon and take a centroid
+      ;; (adsb.ingest.crop, adsb-au5). Expected under `bb dev` against a
+      ;; fixture; in a public deployment this line is the incident.
+      (log/warn (str "PRIVACY CROP DISABLED (" crop/crop-lat-env "/"
+                     crop/crop-lon-env "/" crop/crop-radius-km-env
+                     " unset): this process publishes EVERY aircraft it "
+                     "receives, so the boundary of the published set is the "
+                     "antenna's own horizon and its centroid is the antenna. "
+                     "Fine on a laptop against a fixture; if this is a "
+                     "public deployment, the receiver's location is "
+                     "recoverable from the feed.")))
     (when-not (broadcast/trusts-forwarded-for? broadcaster)
       ;; Same silent-failure family as the two warnings above. A per-IP cap
       ;; keyed on the socket peer does not error or degrade visibly — it just

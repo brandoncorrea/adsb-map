@@ -239,6 +239,9 @@ All configuration is via environment variables (read once at boot,
 | `ADSB_SOURCE` | no | live feeder | Set to `replay` to serve the recorded fixture — **no feeder needed**. Any other value (or unset) uses the live ultrafeeder. |
 | `ADSB_RECEIVER_LAT` | no | feeder's `receiver.json`, else off | Receiver latitude for the range gate and max-range stat. |
 | `ADSB_RECEIVER_LON` | no | feeder's `receiver.json`, else off | Receiver longitude, paired with the above. |
+| `ADSB_CROP_LAT` | no³ | off (warns) | **Privacy crop** centre latitude — the disc this app publishes. A *public, arbitrary* point; **never** the receiver's. See [Hiding the antenna](#hiding-the-antenna). |
+| `ADSB_CROP_LON` | no³ | off (warns) | Crop centre longitude, paired with the above. |
+| `ADSB_CROP_RADIUS_KM` | no³ | off (warns) | Crop radius in km, `0 < r ≤ 400`. Must sit strictly inside real coverage in **every** bearing. |
 | `ADSB_FEEDER_AUTH_ID` | no² | — | Cloudflare Access service-token **Client ID**, sent as the `CF-Access-Client-Id` header on every feeder request. |
 | `ADSB_FEEDER_AUTH_SECRET` | no² | — | The service-token **Client Secret** (`CF-Access-Client-Secret`). Never logged. |
 | `ADSB_SSE_MAX_CLIENTS` | no | `100` | Cap on concurrent SSE stream clients. At the cap a new connect gets `503` + `Retry-After`. |
@@ -253,9 +256,53 @@ All configuration is via environment variables (read once at boot,
 ² Optional, but **both or neither** — supplying only one fails the boot loudly.
 Required when the feeder tunnel is gated by a Cloudflare Access policy (the cloud
 deployment); omit both for a trusted-LAN feeder.
+³ **All three or none.** A partial crop *fails the boot* — a privacy control that
+silently degrades to "publish everything" while looking configured is worse than
+one nobody set up. All three unset disables the crop and warns loudly at startup.
 ⁴ Not required to *boot* — the app warns loudly and runs unlocked, because refusing
 to start is an outage. It **is** required for the per-IP cap to mean anything in a
 deployment.
+
+### Hiding the antenna
+
+The receiver's position is a home address, so the wire never carries it: no
+receiver coordinates, no `r_dst`/`r_dir`, no per-aircraft RSSI, no range ring, and
+a map default-centre that is deliberately not the antenna (`adsb.wire`,
+`adsb.ingest.receiver`).
+
+**That is not enough on its own,** and the reason is worth understanding before you
+deploy. The leak that survives a field allowlist is not in any field — it is in the
+*shape of the observation set*. Publish every aircraft the antenna hears, and after
+a few hours the union of those positions is a disc centred on the antenna: take the
+hull, take the centroid, and you have the roof. Low altitude sharpens it (radio
+horizon runs about `1.23·√(feet)` nautical miles, so the low traffic you can see
+forms a small disc tight around you), and terrain and building shadows carve
+persistent notches on fixed bearings that act as a fingerprint.
+
+The fix is `ADSB_CROP_*`: publish only the aircraft inside a disc **you declared**,
+so the boundary of the feed reveals your published choice rather than your horizon.
+Two rules make it real rather than decorative:
+
+1. **The centre is not the receiver** and is never derived from it. Use an
+   arbitrary public point — a city, an airport.
+2. **The disc sits strictly inside true coverage in every bearing.** If the crop
+   pokes outside the real envelope anywhere, the shortfall in your weakest bearing
+   re-reveals the geometry. Radius and altitude trade off through that radio
+   horizon: a wide crop needs a high altitude floor before coverage is uniform
+   across it, while a tight crop keeps the low traffic. Measure your real coverage
+   polygon per altitude band before picking a radius.
+
+The crop runs at *ingest* (`adsb.ingest.crop`, via `adsb.main/admit`), not at the
+serializer — an aircraft outside it never enters `adsb.state`, so it cannot leak
+through the stats, the connect-time snapshot, or a future endpoint. It is a
+separate concern from the receiver-centred range gate in
+`adsb.ingest.plausibility`, which stays: that one is anti-spoofing (reject what
+this antenna cannot physically have heard), this one is privacy. Both run.
+
+One thing the crop cannot help with: if you feed a public aggregator —
+FlightAware, ADSBexchange, anything doing MLAT, which *requires* an accurate
+position — your station's location is already semi-public on their site, and all of
+the above is moot.
 
 There is no TLS or domain configuration here: App Platform terminates TLS and
 owns the certificate, so the app never sees one.
