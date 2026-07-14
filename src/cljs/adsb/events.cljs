@@ -35,13 +35,33 @@
   :aircraft/select
   (fn [db [_ icao]]
     (if (= icao (:aircraft/selected-icao db))
-      (dissoc db :aircraft/selected-icao)
-      (assoc db :aircraft/selected-icao icao))))
+      ;; Deselect: drop selection AND hover. On mobile a tap has no
+      ;; mouseleave, so a leftover :aircraft/hovered-icao would keep the
+      ;; callsign label pinned after the ring is gone (adsb-oi8). Expand
+      ;; state stays so the next pick keeps the reader's collapse choice
+      ;; (adsb-4ca).
+      (dissoc db :aircraft/selected-icao :aircraft/hovered-icao)
+      ;; New pick keeps panel/expanded? as the reader left it — collapsed
+      ;; stays collapsed when switching flights; default true (sub) only
+      ;; applies before the first explicit expand/collapse. Hover is
+      ;; cleared so a prior touch-hover does not outlive the new pick.
+      (-> db
+          (assoc :aircraft/selected-icao icao)
+          (dissoc :aircraft/hovered-icao)))))
 
 (rf/reg-event-db
   :aircraft/clear-selection
   (fn [db _]
-    (dissoc db :aircraft/selected-icao)))
+    ;; Drop selection and hover together (Escape / × — same sticky-label
+    ;; trap as toggle-deselect on touch). Expand/collapse is view
+    ;; preference and survives across picks (adsb-4ca).
+    (dissoc db :aircraft/selected-icao :aircraft/hovered-icao)))
+
+;; Detail card expand/collapse. View state of the panel, not of the sky.
+(rf/reg-event-db
+  :panel/toggle-expanded
+  (fn [db _]
+    (update db :panel/expanded? #(if (nil? %) false (not %)))))
 
 ;; FOCUS = SELECT, AND TAKE THE CHART THERE.
 ;;
@@ -74,15 +94,14 @@
 ;; Aircraft hover — selection's transient sibling.
 ;;
 ;; Same trick, lighter lifecycle: an ICAO STRING under :aircraft/hovered-icao
-;; while the pointer rests on an aircraft's tick in the Stack (adsb.ui.stack),
-;; cleared the moment it leaves. Unlike selection it is never pruned by
-;; :ui/tick — mouse-out clears it, and every reader joins it against the live
-;; picture anyway, so a dangling hover resolves to nothing rather than a lie.
+;; while the pointer rests on a roster row or map glyph, cleared the moment
+;; it leaves. Unlike selection it is never pruned by :ui/tick — mouse-out
+;; clears it, and every reader joins it against the live picture anyway, so
+;; a dangling hover resolves to nothing rather than a lie.
 ;;
-;; The map layer does not consume this yet: highlighting the hovered aircraft
-;; ON the map (feature-state or a highlight property) is a later wave — the
-;; state and the contract land here first so that wave has something settled
-;; to read. See the follow-up note on bead adsb-dgb.9.
+;; The map consumes this for the callsign label under a hovered plane
+;; (adsb.map.selection, adsb-xgg). Roster rows and the aircraft layer both
+;; write the same channel.
 
 (rf/reg-event-db
   :aircraft/hover

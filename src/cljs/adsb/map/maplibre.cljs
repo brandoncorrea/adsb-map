@@ -42,18 +42,20 @@
     js->clj'd at this edge — when a feature in `layer-id` is clicked. The
     only inbound seam crossing: MapLibre's event and JS props become
     Clojure data here so the layer's click contract stays in Clojure.")
-  (on-layer-hover-cursor! [this layer-id]
-    "Show a pointer cursor while the mouse is over a feature in
-    `layer-id`, and restore the default on the way out — the affordance
-    that says these planes are clickable. Self-contained in the seam;
-    tests need only know it was wired.")
+  (on-layer-hover! [this layer-id on-enter on-leave]
+    "While the pointer rests on a feature in `layer-id`: show a pointer
+    cursor and call `on-enter` with the feature's PROPERTIES (Clojure map,
+    js->clj'd here). On leave, restore the cursor and call `on-leave`.
+    The aircraft layer uses this for both the click affordance and the
+    hover label channel (adsb-xgg).")
   (add-marker! [this element lng-lat]
     "Pin DOM `element` to the map at `lng-lat` ([lng lat]) so it rides
-    the chart through pans and zooms. Returns a marker handle for
-    `move-marker!`/`remove-marker!`. The selection ring (adsb.map.selection)
-    is the one client: a single low-churn marker, never the aircraft —
-    hundreds of DOM markers at 1 Hz would be the crawl the GeoJSON layer
-    exists to avoid.")
+    the chart through pans and zooms. Anchor is always the element's
+    centre (the selection ring must sit ON the plane, not above it —
+    adsb-rg1). Returns a marker handle for `move-marker!`/`remove-marker!`.
+    The selection ring (adsb.map.selection) is the main client: a single
+    low-churn marker, never the aircraft — hundreds of DOM markers at 1 Hz
+    would be the crawl the GeoJSON layer exists to avoid.")
   (move-marker! [this marker lng-lat]
     "Move `marker` (an `add-marker!` handle) to `lng-lat` ([lng lat]).")
   (remove-marker! [this marker]
@@ -116,14 +118,28 @@
                ;; data before it ever reaches the app.
                (f (js->clj (.-properties (aget features 0))
                            :keywordize-keys true)))))))
-  (on-layer-hover-cursor! [_ layer-id]
+  (on-layer-hover! [_ layer-id on-enter on-leave]
     (let [canvas-style (.-style (.getCanvas gl-map))]
       (.on gl-map "mouseenter" layer-id
-           (fn [_e] (set! (.-cursor canvas-style) "pointer")))
+           (fn [e]
+             (set! (.-cursor canvas-style) "pointer")
+             (when on-enter
+               (let [features (.-features e)]
+                 (when (and features (pos? (.-length features)))
+                   (on-enter (js->clj (.-properties (aget features 0))
+                                      :keywordize-keys true)))))))
       (.on gl-map "mouseleave" layer-id
-           (fn [_e] (set! (.-cursor canvas-style) "")))))
+           (fn [_e]
+             (set! (.-cursor canvas-style) "")
+             (when on-leave (on-leave))))))
   (add-marker! [_ element lng-lat]
-    (-> (maplibre/Marker. #js {:element element})
+    ;; Explicit center anchor: MapLibre's default is center, but a custom
+    ;; element whose box is not yet laid out can still pin wrong if the
+    ;; options omit it. The ring's layout box is the SVG only; the label
+    ;; is absolute and must not pull the anchor (adsb-rg1).
+    (-> (maplibre/Marker. #js {:element element
+                               :anchor  "center"
+                               :offset  #js [0 0]})
         (.setLngLat (clj->js lng-lat))
         (.addTo gl-map)))
   (move-marker! [_ marker lng-lat]

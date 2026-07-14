@@ -134,7 +134,7 @@ actually produces:**
 | `on-the-ground` | `alt_baro` is the **string** `"ground"` | The coercion trap. Altitude isn't always a number. |
 | `never-positioned` | Heard on the radio, no `lat`/`lon` ever | Kept, with no `:aircraft/position` — in the sidebar, never on the map (adsb-bvi.3). Most common real-world case. |
 | `squawking-7700` | Squawk `7700`, general emergency | The alerting path. |
-| `long-silent` | `seen` 300 seconds ago | Must age out of the map. |
+| `long-silent` | `seen` 300 seconds ago | Must age out of the map (past the 2 min age-out line). |
 | `mlat-derived` | Position from multilateration, not ADS-B | Lower confidence; flagged differently. |
 
 ### Guidelines

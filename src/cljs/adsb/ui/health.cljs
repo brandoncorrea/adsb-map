@@ -4,10 +4,10 @@
   THERE IS NO HEADER ANY MORE (adsb-sod). It began as a chart title block, and
   one by one everything in it either moved to where it belonged or turned out
   not to be needed: the title (a chart with no filing cabinet needs no title
-  block), the counts (a census of the sky — they went to the Stack), RNG and MSG
-  (a brag stat, and a rate that should have been a state), the clock. What was
-  left was a 36px band holding two glyphs, and a band that holds two glyphs is
-  not a band. These signals now ride the Stack's caption row, which is where the
+  block), the counts (a census of the sky — they went to the roster), RNG and
+  MSG (a brag stat, and a rate that should have been a state), the clock. What
+  was left was a 36px band holding two glyphs, and a band that holds two glyphs
+  is not a band. These signals now ride the roster rail, which is where the
   reader already looks to ask the chart a question.
 
   Reagent chrome, and genuinely React territory: it changes when a health signal
@@ -18,9 +18,9 @@
   \"Live\" beside a chip reading \"Feeder OK\", every second of every healthy
   session. Silence means healthy now.
 
-  THE APPARATUS IS ONE DOT NOW. It sits at the end of the Stack's caption row,
-  beside the sky's own counts but not among them: `PLOTTED 72/78` says what is
-  out there, and this says whether we can still hear it.
+  THE APPARATUS IS ONE DOT NOW. It sits on the roster rail, beside the sky's
+  own counts but not among them: the list says what is out there, and this
+  says whether we can still hear it.
 
   THE READOUTS ARE GONE, AND THE DOT ABSORBED THE ONE THAT MATTERED. `RNG` was
   the session's max range: a brag stat, and one that stops meaning anything the
@@ -152,8 +152,8 @@
 ;; ---------------------------------------------------------------------
 
 (defn health
-  "The two health signals, as a group — mounted in the Stack's caption row
-  (adsb.ui.stack). A form-2 component: subscribe once, deref per render, so it
+  "The two health signals, as a group — mounted on the roster rail
+  (adsb.ui.roster). A form-2 component: subscribe once, deref per render, so it
   re-renders when a signal flips and never more often.
 
   Renders an EMPTY group when all is well and the stream is quiet, which is the

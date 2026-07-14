@@ -6,9 +6,9 @@
   left for somewhere they belonged or for nowhere at all, and a 36px band
   holding two glyphs is not a band. The chart runs edge to edge.
 
-  What is left of the apparatus is one dot, and it rides the Stack's caption row
-  (adsb.ui.health). Its rules stay here — they are chrome, not the Stack's own
-  bounded section, and the Stack merely gives them a seat."
+  What is left of the apparatus is one dot, and it rides the roster rail
+  (adsb.ui.health). Its rules stay here — they are chrome, not the roster's
+  own section, and the roster merely gives them a seat."
   (:require
     [adsb.css.decl :refer [decl]]))
 
@@ -74,8 +74,8 @@
           :font-size      "var(--t-1)"
           :letter-spacing "0.04em")]
 
-   ;; The group, at the end of the Stack's caption row. It collapses to nothing
-   ;; when every signal is quiet — which is the common case, and the point.
+   ;; The group, on the roster rail. It collapses to nothing when every
+   ;; signal is quiet — which is the common case, and the point.
    [:.adsb-health
     (decl :display     "flex"
           :align-items "center"

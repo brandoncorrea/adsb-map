@@ -1,16 +1,9 @@
 (ns adsb.css.phone
   "Phone (Q9c: a designed stance, not a degradation).
 
-  The header holds its 36px: the clock and the counts' unit words step aside
-  (the numbers stay), the chips keep their labels. The NOTAM strip spans the
-  full width (the Stack is on the bottom edge now); the index card spans the
-  width under the header.
-
-  There is no margin column any more (adsb-sod): the stats went to the header
-  and the map key went onto the Stack, and the corner went back to the map.
-
-  The Stack's own phone geometry is NOT here — it stays inside its bounded
-  section, adsb.css.stack. This namespace is the chrome's phone stance.
+  The NOTAM strip spans the full width (the roster is a bottom drawer now);
+  the index card sits under the strip. The roster's own phone geometry lives
+  in adsb.css.roster — this namespace is the rest of the chrome's phone stance.
 
   ORDER-CRITICAL: these are overrides, and they must be emitted last."
   (:require
@@ -19,14 +12,12 @@
 
 (def styles
   (at-media {:max-width "640px"}
-    ;; The Stack's footprint, re-pinned for the recumbent stance: the bar
-    ;; spends --stack-w as its HEIGHT, and a caption line plus the ruler
-    ;; fits in 76px. The desktop's 96px is the standing COLUMN's width
-    ;; (adsb.css.tokens) — inherited here, it would swell the bar for
-    ;; nothing. Every surface that clears the Stack by this token (the
-    ;; ribbon, the drawer, the attribution) follows automatically.
+    ;; Collapsed drawer height — NOTAM and edge arrows clear the bottom rail
+    ;; when the sheet is closed. Open snaps lift attribution via
+    ;; adsb.css.roster's .is-sheet-* rules (adsb-xgg).
     [":root"
-     (decl :--stack-w "76px")]
+     ;; Matches --roster-rail-h on the phone drawer (adsb.css.roster).
+     (decl :--roster-w "48px")]
 
     [:.adsb-alerts
      (decl :right 0)]
@@ -34,4 +25,11 @@
     [:.adsb-panel
      (decl :left  "var(--s3)"
            :right "var(--s3)"
-           :width "auto")]))
+           :width "auto"
+           ;; Under the roster drawer (adsb-4ca): a full sheet must cover
+           ;; the card so find/list stay reachable; the chip is still on
+           ;; the map when the drawer is half/closed.
+           :z-index 3)]
+
+    [".adsb-panel.is-collapsed"
+     (decl :right "auto" :width "auto")]))

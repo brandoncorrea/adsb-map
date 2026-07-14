@@ -84,10 +84,11 @@
 (def squawking-7700 (coerce/->aircraft squawking-7700-raw))
 
 ;; ---------------------------------------------------------------------
-;; long-silent — last heard 300 seconds ago. Must age out of the map.
-;; `seen` is a relative age in seconds carried by the feeder, so this
-;; fixture reads no clock: staleness is decided by the caller against a
-;; `now` it supplies, never by an ambient clock in cljc.
+;; long-silent — last heard 300 seconds ago. Well past the age-out line
+;; (2 min, adsb-rg1); must leave the map. `seen` is a relative age in
+;; seconds carried by the feeder, so this fixture reads no clock:
+;; staleness is decided by the caller against a `now` it supplies, never
+;; by an ambient clock in cljc.
 
 (def long-silent-raw
   {:hex "a2b3a2" :type "adsb_icao" :flight "SWA2857 "

@@ -16,9 +16,9 @@
     (:aircraft/selected-icao db)))
 
 ;; The hovered aircraft's icao, or nil — set while the pointer rests on a
-;; tick in the Stack (adsb.ui.stack), cleared on mouse-out. Stored as an
-;; identity for the same reason selection is. The map layer will consume
-;; this in a later wave to light the hovered aircraft on the chart.
+;; roster row or a plane on the chart, cleared on mouse-out. Stored as an
+;; identity for the same reason selection is. adsb.map.selection pins a
+;; callsign label for the hovered track (adsb-xgg).
 (rf/reg-sub
   :aircraft/hovered-icao
   (fn [db _]
@@ -42,6 +42,14 @@
   (fn [[picture icao] _]
     (when icao
       (get picture icao))))
+
+;; Detail card expanded? Default true until the reader collapses it.
+;; Collapsing to a chip frees the map (adsb-66h); switching flights keeps
+;; that choice — a minimized panel stays minimized (adsb-4ca).
+(rf/reg-sub
+  :panel/expanded?
+  (fn [db _]
+    (get db :panel/expanded? true)))
 
 ;; The feeder chip's presentation health — distinct from the stream chip's.
 ;; The server reports the feeder as :ok/:down/:starting on every frame

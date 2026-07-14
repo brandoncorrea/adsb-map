@@ -34,8 +34,10 @@ But amended, in three ways that are the whole job:
    The paper is calm; the sky on it is alive.
 3. **It is quiet on the surface and deep on the axis.** No always-on
    annotation blocks — glyphs only, callsign on hover/tap. There is **no
-   sidebar**; the list's job moves to **the Stack** (§9), a live altitude
-   ruler on the map's edge.
+   sidebar table**; the list's job is **Search + Sheet** (adsb-66h) — a
+   find field over a ranked roster in a side dock (desktop) or bottom
+   drawer (phone). The Stack (§9) was the earlier invention; the hybrid
+   replaced it as product chrome after the structural gallery.
 
 It is an **up-close, lean-in app** (Q15c). Across-the-room glanceability is
 explicitly not a goal; optimize for arm's length and for pleasure on close
@@ -74,8 +76,8 @@ properties — one table, three media, change them together.
 | Emergency red | `#CE2029` | `#FF5A4D` |
 
 *The magenta and aero rows were re-inked 2026-07-12 by the §5 pick — the
-"wine pen" accent variation (bead `adsb-dgb.10`, chosen live in
-`#/preview`). The relationships stand; only the pen pressed deeper. The
+"wine pen" accent variation (bead `adsb-dgb.10`). The relationships stand;
+only the pen pressed deeper. The
 night-edition proof above predates the re-ink and is unaffected: the pen
 rows are chrome accents, not the plate.*
 
@@ -281,29 +283,27 @@ altitude size as a ×0.78 factor rather than colliding with it.
 Altitude now sings in three-part harmony: **color for precision, size for
 instinct, the Stack (§9) for the profile.**
 
-## 9. Invention II — the Stack *(prototype before load-bearing)*
+## 9. Invention II — the Stack → Search + Sheet *(shipped hybrid, adsb-66h)*
 
-There is no sidebar. The aircraft list, the altitude legend, and the altitude
-scale are **one object**: a live flight-level ruler on the map's edge —
-a profile view of the sky beside the plan view of it.
+There is no sidebar table. The list job is **find + browse on one surface**:
 
-- The ruler's fill *is* the §2 altitude gradient — it is its own legend.
-- Every aircraft is a **tick at its true altitude**, drifting as it climbs or
-  descends. Approach stacking and departures read as motion, not re-sorting.
-- Hover a tick → its aircraft lights on the map; click → select. And the
-  reverse: hover a plane, its tick lights.
-- Ground/unknown targets collect in a shelf at the ruler's foot.
-- **Desktop:** vertical, right edge. **Phone:** the ruler lies down along the
-  bottom edge, same semantics (Q9c — genuinely equal, neither stage may
-  degrade).
-- Emergency tick: red, hatched, prominent (§7).
-- An ATC flight-progress-strip rack was considered and rejected as the list,
-  but may return as the *selection detail* surface.
+- A **ranked roster** (urgency → altitude → name) in a **desktop side dock**
+  or **phone bottom drawer**.
+- A **find field** filters the roster in place; empty query = full list.
+- A thin **altitude key** (same ramp the map paints) sits in the dock toolbar
+  — legend only, not a scrubber.
+- **Detail card is collapsible** — full fact sheet or a callsign chip — so
+  the map can breathe.
+- Click a row → select + fly-to when positioned; hover → map highlight channel.
+- Health signals ride the dock rail (apparatus, not sky census).
+
+**The Stack** (live flight-level ruler) was the earlier §9 invention; it is
+retired. Product chrome is Search + Sheet.
 
 ## 10. Stances & standing constraints
 
 - **Phone and desktop are equals** (Q9c). Every surface has a designed stance
-  in both; the Stack rotates rather than degrades.
+  in both; the roster re-pins rather than degrades.
 - **The map is the product; chrome defers to it.** Header is a thin chart
   title block; panels are marginalia that never crowd the plot.
 - **The receiver location is never shown** — no antenna marker, no range

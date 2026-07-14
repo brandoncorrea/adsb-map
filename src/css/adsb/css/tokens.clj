@@ -13,8 +13,7 @@
   purpose. The cascade resolves them at RUNTIME: one stylesheet carries both
   editions and the browser picks. Baking them here would bake one edition.
 
-  Typography & scale — SETTLED (§5, adsb-dgb.10). The crowned mix, promoted
-  verbatim from the #/preview fitting room:
+  Typography & scale — SETTLED (§5, adsb-dgb.10). The crowned mix:
 
     typography  THE ANNOTATION — one hand for everything written on the
                 chart, the plotter's: Space Mono (OFL, self-hosted below;
@@ -77,13 +76,10 @@
     :--s4       "12px"
     :--s5       "16px"
 
-    ;; The Stack's footprint on the map edge — the ribbon, the index card and
-    ;; the attribution all clear it by this. 96px is the STANDING column's
-    ;; width: room for every census caption to print `LABEL n` on one line
-    ;; (76px wrapped them raggedly — adsb-lak). The phone re-pins it to 76px
-    ;; (adsb.css.phone): the recumbent bar spends this token as its HEIGHT,
-    ;; and a caption line plus the ruler never needed more.
-    :--stack-w "96px"
+    ;; The roster dock's footprint on the map edge (adsb-66h). The ribbon,
+    ;; the index card and the attribution all clear it by this. Phone re-pins
+    ;; --roster-w for the bottom drawer (adsb.css.phone).
+    :--roster-w "300px"
 
     :--paper        "#F5EFDF"                   ; map paper (also the pre-tile backdrop)
     :--paper-chrome "#FBF6E8"                   ; panels, header — a lighter leaf
@@ -104,9 +100,7 @@
     :--rule-strong  "rgba(44, 42, 36, 0.5)"
     :--rule-faint   "rgba(44, 42, 36, 0.08)"
 
-    ;; One hand (§5): every family variable is the plotter's mono. The three
-    ;; names survive for the #/preview fitting room, which re-points them
-    ;; per candidate.
+    ;; One hand (§5): every family variable is the plotter's mono.
     :--mono  "\"Space Mono\", ui-monospace, Menlo, Consolas, monospace"
     :--serif "var(--mono)"
     :--sans  "var(--mono)"))

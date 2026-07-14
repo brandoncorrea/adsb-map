@@ -7,6 +7,7 @@
   buffer latest-wins until the map loads, disposal stops the pushes, and
   — the centerpiece — N picture updates cost ZERO Reagent re-renders."
   (:require
+    [adsb.aircraft :as aircraft]
     [adsb.fixtures :as fixtures]
     [adsb.map.aircraft-layer :as layer]
     [adsb.map.maplibre :as maplibre]
@@ -51,7 +52,7 @@
               (swap! !rec update :images conj {:id id :image image :opts opts}))
             (on-layer-click! [_ _layer-id f]
               (swap! !rec assoc :on-layer-click f))
-            (on-layer-hover-cursor! [_ layer-id]
+            (on-layer-hover! [_ layer-id _on-enter _on-leave]
               (swap! !rec update :hover-layers conj layer-id))
             ;; The shell-mounting proofs attach the emergency annotations
             ;; too (adsb.map.emergency); their fixtures squawk nothing, so
@@ -308,15 +309,16 @@
             (is (= 70 (age-of))))
 
           (testing "with no new frame, the tick re-pushes the SAME picture
-                    aged further — the fade progresses on the clock alone"
-            (with-redefs [layer/now-ms (constantly 200000)]
+                    aged further — the fade progresses on the clock alone
+                    (still under the age-out line — adsb-rg1: 2 min)"
+            (with-redefs [layer/now-ms (constantly 100000)]
               (@!tick))
-            (is (= 200 (age-of)))
-            (is (> 200 70) "the opacity-relevant age grew across the tick"))
+            (is (= 100 (age-of)))
+            (is (> 100 70) "the opacity-relevant age grew across the tick"))
 
           (testing "past the age-out line the tick drops the aircraft from
                     the setData payload entirely — it disappears"
-            (with-redefs [layer/now-ms (constantly 400000)]
+            (with-redefs [layer/now-ms (constantly (inc aircraft/age-out-threshold-ms))]
               (@!tick))
             (is (empty? (last-features fake))))
 
@@ -424,7 +426,7 @@
                                     [:geometry :coordinates])))))
           (testing "a tick past the age-out line drops the aircraft AND its
                     trail in the same push — the ribbon never outlives the plane"
-            (with-redefs [layer/now-ms (constantly 400000)]
+            (with-redefs [layer/now-ms (constantly (inc aircraft/age-out-threshold-ms))]
               (@!tick))
             (is (empty? (last-features fake)))
             (is (empty? (last-trail-features fake))))

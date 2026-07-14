@@ -130,8 +130,16 @@
 (deftest age-out
   (let [picture (aircraft/merge-batch {} [fixtures/ups-2717
                                           fixtures/long-silent]
-                                      captured-at-ms)]
-    (testing "the long-silent aircraft ages out of the picture"
+                                      captured-at-ms)
+        ;; A plane stamped at exactly the age-out line (adsb-rg1: 2 min).
+        at-line (aircraft/merge-batch
+                  {}
+                  [(assoc fixtures/ups-2717
+                          :aircraft/icao "aaedge"
+                          :aircraft/seen-s
+                          (/ aircraft/age-out-threshold-ms 1000.0))]
+                  captured-at-ms)]
+    (testing "the long-silent aircraft (well past the line) ages out"
       (let [aged (aircraft/age-out picture (inc captured-at-ms))]
         (is (not (contains? aged long-silent-icao)))))
 
@@ -140,6 +148,9 @@
         (is (contains? aged ups-icao))))
 
     (testing "silence exactly at the threshold does not yet age out"
-      ;; long-silent's silence equals the threshold at capture time.
-      (let [aged (aircraft/age-out picture captured-at-ms)]
-        (is (contains? aged long-silent-icao))))))
+      (let [aged (aircraft/age-out at-line captured-at-ms)]
+        (is (contains? aged "aaedge"))))
+
+    (testing "one millisecond past the threshold ages out"
+      (let [aged (aircraft/age-out at-line (inc captured-at-ms))]
+        (is (not (contains? aged "aaedge")))))))

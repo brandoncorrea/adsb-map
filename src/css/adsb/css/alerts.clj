@@ -12,7 +12,7 @@
     (decl :position      "absolute"
           :top           0                 ; the top edge is the map's; there is no header
           :left          0
-          :right         "var(--stack-w)"  ; clear of the Stack on the right edge
+          :right         "var(--roster-w)" ; clear of the roster dock on the right edge
           :z-index       3                 ; above the map, the panel, the Stack
           :display       "flex"
           :align-items   "stretch"

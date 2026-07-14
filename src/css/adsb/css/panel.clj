@@ -3,9 +3,9 @@
   selection mark that answers it on the chart.
 
   Chart marginalia for one selected aircraft: a paper card under the header,
-  clear of the Stack — ink rule under the title, caption-voice fact labels,
-  mono data, em-dashes for facts the sky never reported. It settles in (§6);
-  it never crowds the plot.
+  clear of the roster dock — ink rule under the title, caption-voice fact
+  labels, mono data, em-dashes for facts the sky never reported. It settles
+  in (§6); it never crowds the plot.
 
   The card's FACE lives in adsb.css.card, shared with the drawer (adsb-l4m):
   two surfaces floating over one chart must read as two of the same thing.
@@ -18,19 +18,72 @@
     card/face
     (decl :position "absolute"
           :top      "var(--s3)"        ; no header to clear
-          :right    "calc(var(--stack-w) + var(--s3))"
+          :left     "var(--s3)"        ; map-left; roster owns the right edge
           :z-index  2
           :width    "288px")]
 
-   ;; The shared card header and title stamp (adsb.css.card).
-   [:.adsb-panel-header card/head]
+   [".adsb-panel.is-collapsed"
+    (decl :width     "auto"
+          :min-width "0"
+          :max-width "min(280px, calc(100% - 24px))"
+          :box-shadow "1px 1px 0 var(--rule-faint), 0 4px 12px var(--rule-faint)")]
+
+   ;; The shared card header and title stamp (adsb.css.card), plus collapse.
+   ;; Vertical center for chevron / title / chip / close (adsb-rsm) — the
+   ;; shared head defaults to baseline for multi-line drawer titles; the
+   ;; panel's single line wants the optical middle.
+   [:.adsb-panel-header
+    card/head
+    (decl :align-items     "center"
+          :padding-top     "var(--s3)"
+          :padding-bottom  "var(--s3)")]
+
+   [".adsb-panel.is-collapsed .adsb-panel-header"
+    (decl :border-bottom "none"
+          :padding       "var(--s3) var(--s3)")]
+
+   [:.adsb-panel-toggle
+    (decl :display     "flex"
+          :align-items "center"
+          :gap         "var(--s2)"
+          :flex        1
+          :min-width   0
+          :background  "none"
+          :border      "none"
+          :padding     0
+          :margin      0
+          :font        "inherit"
+          :color       "inherit"
+          :cursor      "pointer"
+          :text-align  "left"
+          :line-height 1.2)]
+
+   [".adsb-panel-toggle:hover .adsb-panel-title"
+    (decl :color "var(--magenta)")]
+
+   [:.adsb-panel-chevron
+    (decl :flex        "none"
+          :width       "12px"
+          :font-size   "var(--t-1)"
+          :color       "var(--faded-ink)"
+          :line-height 1)]
 
    [:.adsb-panel-title card/title]
+
+   [".adsb-panel.is-collapsed .adsb-panel-title"
+    (decl :font-size "var(--t0)")]
+
+   [:.adsb-panel-chip-meta
+    (decl :flex                 "none"
+          :font-size            "var(--t-1)"
+          :font-weight          700
+          :font-variant-numeric "tabular-nums"
+          :color                "var(--faded-ink)")]
 
    ;; The shared close voice (adsb.css.card), plus this card's own geometry.
    [:.adsb-panel-close
     card/close
-    (decl :padding "0 var(--s1)")]
+    (decl :padding "0 var(--s1)" :flex "none")]
 
    [:.adsb-panel-close:hover
     {:color "var(--ink)"}]
@@ -38,6 +91,12 @@
    [:.adsb-panel-close:focus-visible
     (decl :outline        "2px solid var(--magenta)"
           :outline-offset "1px")]
+
+   [".adsb-panel.is-emergency.is-collapsed"
+    (decl :border-color "var(--emergency)")]
+
+   [".adsb-panel.is-emergency.is-collapsed .adsb-panel-title"
+    (decl :color "var(--emergency)")]
 
    [:.adsb-panel-badges
     (decl :display   "flex"
@@ -92,22 +151,31 @@
           :letter-spacing "0.03em")]])
 
 (def selection-ring
-  "The selection mark — the compass-pencil ring (§4).
+  "The selection mark — the compass-pencil ring (§4) and the callsign
+  label beneath selected / hovered aircraft (adsb-xgg).
 
   A dashed magenta ring around the selected aircraft, drawn as a map marker
   (adsb.map.selection) so it rides the chart, not the screen. It draws itself
-  in once per selection and then holds still."
+  in once per selection and then holds still. The label is the same marker
+  family: a paper chip under the plane, pointer-events none so the glyph
+  stays clickable."
   [[:.adsb-selection-ring
-    {:width          "44px"
-     :height         "44px"
-     ;; the plane beneath stays clickable
-     :pointer-events "none"}]
+    (decl :position        "relative"
+          :box-sizing      "border-box"
+          :width           "44px"
+          :height          "44px"
+          :margin          0
+          :padding         0
+          :overflow        "visible"
+          ;; the plane beneath stays clickable
+          :pointer-events  "none")]
 
    [".adsb-selection-ring svg"
-    {:display  "block"
-     :width    "100%"
-     :height   "100%"
-     :overflow "visible"}]
+    (decl :display  "block"
+          :width    "44px"
+          :height   "44px"
+          :margin   0
+          :overflow "visible")]
 
    [".adsb-selection-ring circle"
     (decl :fill             "none"
@@ -116,7 +184,42 @@
           :stroke-linecap   "round"
           ;; of pathLength 70 — ten pencil dashes
           :stroke-dasharray "3.2 3.8"
-          :animation        "adsb-ring-draw 420ms ease-out")]])
+          :animation        "adsb-ring-draw 420ms ease-out")]
+
+   ;; Hover-only pin: no ring, just the label centred on the aircraft.
+   ;; 0×0 box so MapLibre's centre anchor is exactly the lat/lon.
+   [:.adsb-hover-pin
+    (decl :position       "relative"
+          :box-sizing     "border-box"
+          :width          "0"
+          :height         "0"
+          :overflow       "visible"
+          :pointer-events "none")]
+
+   ;; Callsign chip under selected / hovered planes. Absolutely positioned
+   ;; so it never grows the marker box (a taller box would lift the ring
+   ;; off the plane under MapLibre's centre-anchor transform — adsb-rg1).
+   [:.adsb-flight-label
+    (decl :position       "absolute"
+          :left           "50%"
+          :top            "100%"
+          :margin-top     "6px"
+          :transform      "translateX(-50%)"
+          :white-space    "nowrap"
+          :background     "var(--paper-chrome)"
+          :border         "1px solid var(--rule)"
+          :padding        "1px 6px"
+          :font-size      "var(--t-1)"
+          :font-weight    700
+          :letter-spacing "0.03em"
+          :color          "var(--ink)"
+          :pointer-events "none"
+          :box-shadow     "1px 1px 0 var(--rule-faint)"
+          :z-index        1)]
+
+   [".adsb-hover-pin .adsb-flight-label"
+    (decl :top        "10px"
+          :margin-top 0)]])
 
 (def styles
   [card badges selection-ring])

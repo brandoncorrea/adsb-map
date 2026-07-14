@@ -56,7 +56,8 @@
     ;; presence before they are compared, so a changed claim reports itself as
     ;; ONE named missing selector instead of a pile of NullPointerExceptions.
     (let [claimed [".adsb-fact-label" ".adsb-mayday-label"
-                   ".adsb-stack-shelf-label"]
+                   ".adsb-roster-search-label" ".adsb-roster-cols"
+                   ".adsb-flight-label"]
           caption (str/index-of @css (str (str/join ", " claimed) " {"))]
       (is (some? caption)
           "the grouped caption rule is in the stylesheet, claiming exactly these
@@ -91,41 +92,21 @@
     (doseq [motion ["animation: adsb-settle"
                     "animation: adsb-breathe"
                     "animation: adsb-ring-draw"
-                    "transition: bottom"]]
+                    "transition: width"
+                    "transition: height"]]
       (is (< (str/last-index-of @css motion) reduce-at)
           (str "every `" motion "` must be emitted before the block that
                disables it, or the block loses the tie and the motion plays")))))
 
-(deftest the-census-count-prints-in-both-stances
-  ;; EMG never draws a dot cluster and PLOTTED's whole fact is its fraction:
-  ;; a display:none outside the phone block rendered both as bare words on a
-  ;; desktop, and EMG's stated zero was stated invisibly (adsb-be2). A stance
-  ;; may re-justify the count; none may hide it.
-  (let [blocks (blocks-for @css ".adsb-stack-shelf-count")]
-    (is (seq blocks) "the count is styled at all")
-    (doseq [b blocks]
-      (is (not (str/includes? b "display"))
-          "no stance hides (or needs to un-hide) the count"))))
-
-(deftest the-drawer-is-a-card-on-desktop-and-a-sheet-on-phone
-  ;; adsb-l4m: two surfaces floating over one chart must read as two of the
-  ;; same thing. The drawer's base stance is the index card's own face; the
-  ;; phone block re-pins it flush into the corner it slides from.
-  (let [[base phone & extra] (blocks-for @css ".adsb-stack-drawer")]
-    (is (some? base) "the drawer has a base rule")
-    (is (str/includes? base "top: var(--s3)") "the card floats clear of the corner")
-    (is (str/includes? base "border-radius: 2px") "with the card's corners")
-    (is (str/includes? base "background: var(--paper-veil)") "on the card's paper")
-    (is (str/includes? base "animation: adsb-settle") "settling in like one")
-    (is (some? phone) "and the phone stance re-pins it")
-    (is (str/includes? phone "top: auto") "unpinned from the panel's corner")
-    (is (str/includes? phone "bottom: calc(var(--stack-w)")
-        "a sheet standing on the recumbent Stack — it rises from the bar
-        that holds the caption the finger tapped (adsb-88m)")
-    (is (str/includes? phone "border-radius: 0") "square again")
-    (is (str/includes? phone "animation: adsb-settle-up")
-        "and it settles UP out of the bar, not down out of the sky")
-    (is (empty? extra) "two stances, two rules, nothing else claiming it")))
+(deftest the-roster-dock-clears-the-map-edge
+  ;; Search + Sheet (adsb-66h): the dock owns the right edge; the NOTAM strip
+  ;; and attribution must clear it by the same token.
+  (let [roster-blocks (blocks-for @css ".adsb-roster")
+        alerts-right  (index-of-decl @css ".adsb-alerts" "right")]
+    (is (seq roster-blocks) "the roster is styled")
+    (is (some? alerts-right) "the NOTAM strip declares a right edge")
+    (is (str/includes? (first roster-blocks) "var(--roster-w)")
+        "the dock's width is the shared roster token")))
 
 (deftest the-watch-reloads-our-tree-and-only-ours-in-dependency-order
   ;; The watch must NEVER reload garden itself: re-evaluating garden.types
@@ -148,8 +129,8 @@
         very loop it is running")
     (is (< (at "decl.clj") (at "tokens.clj")) "decl loads before its users")
     (is (< (at "card.clj") (at "panel.clj")) "the shared card face precedes the panel")
-    (is (< (at "card.clj") (at "stack.clj")) "and the stack")
-    (is (< (at "stack.clj") (at "app.clj")) "the cascade assembles last")))
+    (is (< (at "roster.clj") (at "app.clj")) "the roster joins the cascade")
+    (is (< (at "app.clj") (count ordered)) "the cascade assembles")))
 
 (deftest the-night-edition-only-repoints-the-day
   ;; The two editions are one mechanism (adsb-dgb.7). A variable that exists

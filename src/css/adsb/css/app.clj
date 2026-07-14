@@ -10,7 +10,7 @@
     phone     is nothing but overrides. It comes after everything it
               overrides.
     reduced   motion's prefers-reduced-motion block disables animations that
-              shell, panel and stack SET, at equal specificity — emitted any
+              shell, panel and roster SET, at equal specificity — emitted any
               earlier it loses every tie and the motion plays anyway
               (adsb-b1j). It is last of all.
 
@@ -26,8 +26,8 @@
             [adsb.css.motion :as motion]
             [adsb.css.panel :as panel]
             [adsb.css.phone :as phone]
+            [adsb.css.roster :as roster]
             [adsb.css.shell :as shell]
-            [adsb.css.stack :as stack]
             [adsb.css.tokens :as tokens]))
 
 (def stylesheet
@@ -37,7 +37,7 @@
    alerts/styles                                            ; §7 — the NOTAM strip
    panel/styles                                             ; §4 — the index card and its ring
    emergency/styles                                         ; §7 — the map's own annotations
-   stack/styles                                             ; §9 — the flight-level ruler
+   roster/styles                                            ; adsb-66h — Search + Sheet
 
    ;; ORDER-CRITICAL from here down. See the namespace docstring.
    captions/styles                                          ; §5 — the printed caption voice

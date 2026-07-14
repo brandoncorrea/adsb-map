@@ -14,8 +14,12 @@
 
 (def ^:const age-out-threshold-ms
   "Silence past this removes an aircraft from the picture entirely —
-  the long-silent cast member's fate (docs/testing-standards.md)."
-  300000)
+  the long-silent cast member's fate (docs/testing-standards.md).
+
+  2 minutes (adsb-rg1). Was 5 minutes; that left ghost tracks hanging long
+  after the radio went quiet. Stale fade still begins at 60 s, so the last
+  minute is a visible fade-out rather than a sudden pop."
+  120000)
 
 (defn positioned?
   "True when the aircraft has ever reported a position. Position-less

@@ -338,15 +338,21 @@
 ;; through the real boundary rather than hand-write the receive time.
 
 (deftest aged-out-aircraft-produce-no-feature
+  ;; Stamp a plane at the age-out line via the real merge boundary, then
+  ;; judge features at that same instant and one ms past it (adsb-rg1:
+  ;; threshold is 2 min; long-silent's 300 s is well past and still ages out).
   (let [captured 1720713600000
-        picture  (aircraft/merge-batch {} [fixtures/long-silent] captured)
-        planes   (vals picture)]
-    (testing "at the age-out line the long-silent aircraft still renders —
-              faded, not gone: 300 s of silence, exactly the threshold"
+        at-line  (assoc fixtures/ups-2717
+                        :aircraft/seen-s
+                        (/ aircraft/age-out-threshold-ms 1000))
+        picture  (aircraft/merge-batch {} [at-line] captured)
+        planes   (vals picture)
+        threshold-s (quot aircraft/age-out-threshold-ms 1000)]
+    (testing "at the age-out line the aircraft still renders — faded, not gone"
       (let [coll     (geo/aircraft-picture->feature-collection planes captured)
             features (:features coll)]
         (is (= 1 (count features)))
-        (is (= 300 (:age-s (:properties (first features))))
+        (is (= threshold-s (:age-s (:properties (first features))))
             "aged to the age-out line, where the fade bottoms out")))
 
     (testing "one millisecond past the age-out line it produces no feature —
@@ -354,6 +360,11 @@
       (is (empty? (:features
                     (geo/aircraft-picture->feature-collection
                       planes (inc captured))))))
+
+    (testing "long-silent (well past the line) produces no feature at capture"
+      (let [silent (vals (aircraft/merge-batch {} [fixtures/long-silent] captured))]
+        (is (empty? (:features
+                      (geo/aircraft-picture->feature-collection silent captured))))))
 
     (testing "an un-timed aircraft is never spuriously aged out — with no
               receive time there is nothing to judge silent"

@@ -5,6 +5,7 @@
   velocity messages. Plus the untrusted-boundary cases: corrupted
   parity, garbage of every shape, and the CPR timing rules."
   (:require
+    [adsb.aircraft :as aircraft]
     [adsb.ingest.mode-s :as mode-s]
     [adsb.schema :as schema]
     [malli.core :as m]
@@ -230,7 +231,7 @@
                             {:cpr/position {:geo/lat 52.258
                                             :geo/lon 3.918}
                              :cpr/heard-at-ms 0}}}
-          stale-at (+ 1 300000)
+          stale-at (+ 1 aircraft/age-out-threshold-ms)
           delta    (decode-delta even-position-payload stale-at seeded)]
       (is (not (contains? delta :aircraft/position)))))
 

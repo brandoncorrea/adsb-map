@@ -20,7 +20,7 @@
   - SEEN ages ACCRUE, at a fraction of the replay clock, so aircraft
     drift toward and across the 60 s stale line — staleness is genuinely
     exercised — while the per-lap reset refreshes them well before the
-    300 s age-out, so the picture never empties.
+    age-out line (2 min, adsb-rg1), so the picture never empties.
 
   Everything is a pure function of an injected clock (time is an
   argument), so a fake clock replays the exact same sky deterministically
@@ -38,9 +38,9 @@
 (def ^:const default-loop-ms
   "One replay lap. Positions and seen ages advance across a lap, then
   reset — long enough that dead-reckoning stays in the local area and
-  no aircraft reaches the 300 s age-out, short enough that the loop is
-  visible."
-  240000)
+  no aircraft reaches the age-out line (with age-rate < 1), short enough
+  that the loop is visible."
+  90000)
 
 (def ^:const default-age-rate
   "Seen-seconds accrued per replay second. Below 1 for two reasons: the

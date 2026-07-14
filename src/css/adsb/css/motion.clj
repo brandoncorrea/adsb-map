@@ -66,7 +66,7 @@
   (adsb-b1j). adsb.css.app holds the order; adsb.css-test pins it."
   (at-media {:prefers-reduced-motion :reduce}
     [:.adsb-panel
-     :.adsb-stack-drawer
+     :.adsb-roster
      ".adsb-selection-ring circle"
      ".adsb-conn-live .adsb-conn-dot"
      ".adsb-feeder-ok .adsb-feeder-dot"
@@ -78,7 +78,7 @@
     [".adsb-mayday ellipse"
      (decl :animation-name [["none" "!important"]])]
 
-    [:.adsb-stack-tick
+    [:.adsb-roster
      (decl :transition "none")]))
 
 (def styles

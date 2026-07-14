@@ -15,12 +15,16 @@
   never a fabricated 0, which would draw a 747 parked at sea level. A genuine
   reported 0 is shown; only true absence dashes.
 
+  ESC clears the selection and closes this panel (adsb-rsm) — same intent
+  as the ×. Wired once for the app lifetime via `start-keyboard!`.
+
   Styling is a NEUTRAL PLACEHOLDER: class names are the re-skin hooks and the
   visual pass is bead adsb-dgb.5. This namespace commits to structure, not a
   look."
   (:require [adsb.aircraft :as aircraft]
             [adsb.enrich :as enrich]
             [adsb.ui.alert :as alert]
+            [clojure.string :as str]
             [re-frame.core :as rf]))
 
 ;; The em-dash stands in for every fact the sky never reported.
@@ -49,6 +53,39 @@
                             clock-interval-ms))))
 
 ;; ---------------------------------------------------------------------
+;; Escape — deselect. Document-level so it works whether focus is on the
+;; map canvas, the roster, or nowhere in particular. Skips when the user
+;; is typing in a field (search) so Escape can still mean "clear the
+;; field" to the browser first; a second Escape with an empty field (or
+;; focus elsewhere) then closes the panel.
+
+(defonce ^:private !keyboard (atom nil))
+
+(defn escape-deselect?
+  "True when this key event should clear the selection. Pure of re-frame
+  so tests can pin the guard without a document listener."
+  [^js e]
+  (and (= "Escape" (.-key e))
+       (let [t (.-target e)
+             tag (some-> t .-tagName str/lower-case)]
+         (not (or (= tag "input")
+                  (= tag "textarea")
+                  (= tag "select")
+                  (and t (.-isContentEditable t)))))))
+
+(defn- on-document-key!
+  [^js e]
+  (when (escape-deselect? e)
+    (rf/dispatch [:aircraft/clear-selection])))
+
+(defn start-keyboard!
+  "Listen for Escape → clear selection. Idempotent under hot reload."
+  []
+  (when (nil? @!keyboard)
+    (.addEventListener js/document "keydown" on-document-key!)
+    (reset! !keyboard true)))
+
+;; ---------------------------------------------------------------------
 ;; Presentation — pure. Absent (nil) becomes the em-dash; everything else
 ;; is stringified and handed to hiccup, which escapes it.
 
@@ -75,6 +112,10 @@
   [_event]
   (rf/dispatch [:aircraft/clear-selection]))
 
+(defn- toggle-expand!
+  [_event]
+  (rf/dispatch [:panel/toggle-expanded]))
+
 (defn- fact
   "One labelled fact row. A nil value renders as the em-dash; any other
   value is stringified and escaped as hiccup text. The value carries a
@@ -100,45 +141,67 @@
   (or (enrich/type-desc enrichment)
       (enrich/type-code enrichment)))
 
+(defn- altitude-chip
+  "Collapsed-card meta: altitude in a short form, or the em-dash."
+  [aircraft]
+  (let [v (altitude-display aircraft)]
+    (cond
+      (nil? v)     em-dash
+      (= v "ground") "GND"
+      :else        (str v " ft"))))
+
 (defn- panel-body
-  "The panel for one selected aircraft. Every string here is feeder-origin
-  and rendered as escaped text (Boundary 4); the enrichment rows are
-  third-party reference data (adsb.enrich) and dash when the database is
-  missing or does not know this hex."
-  [aircraft now-ms enrichment]
+  "The panel for one selected aircraft. Collapsible: expanded = full fact
+  sheet; collapsed = a chip with callsign + altitude so the map can breathe.
+  × deselects; the chevron only collapses (adsb-66h)."
+  [aircraft now-ms enrichment expanded?]
   (let [{:aircraft/keys [icao callsign ground-speed-kt track-deg squawk
                          baro-rate-fpm position-suspect? mlat?]} aircraft
         seen           (seen-age-s aircraft now-ms)
-        emergency-kind (aircraft/emergency-kind aircraft)]
-    [:aside.adsb-panel {:role "complementary" :aria-label "Aircraft detail"}
+        emergency-kind (aircraft/emergency-kind aircraft)
+        title          (or callsign icao)]
+    [:aside.adsb-panel
+     {:role          "complementary"
+      :aria-label    "Aircraft detail"
+      :data-testid   "aircraft-panel"
+      :data-expanded (if expanded? "true" "false")
+      :class         [(when expanded? "is-expanded")
+                      (when-not expanded? "is-collapsed")
+                      (when emergency-kind "is-emergency")]}
      [:div.adsb-panel-header
-      ;; Callsign when the sky gave one, otherwise the bare icao — never blank.
-      [:span.adsb-panel-title {:data-testid "panel-title"}
-       (or callsign icao)]
+      [:button.adsb-panel-toggle
+       {:type          "button"
+        :aria-expanded (boolean expanded?)
+        :aria-label    (if expanded? "Collapse detail" "Expand detail")
+        :data-testid   "panel-toggle"
+        :on-click      toggle-expand!}
+       [:span.adsb-panel-chevron {:aria-hidden true} (if expanded? "▾" "▸")]
+       [:span.adsb-panel-title {:data-testid "panel-title"} title]
+       (when-not expanded?
+         [:span.adsb-panel-chip-meta (altitude-chip aircraft)])]
       [:button.adsb-panel-close
-       {:type "button" :aria-label "Close" :on-click close!}
+       {:type "button" :aria-label "Close" :data-testid "panel-close"
+        :on-click close!}
        close-glyph]]
-     ;; Emergency leads the badges and names the MEANING in words (shared with
-     ;; the ribbon and sidebar), not just the raw squawk shown in the facts.
-     (when (or emergency-kind position-suspect? mlat?)
-       [:div.adsb-panel-badges
-        (when emergency-kind
-          [badge "emergency" (alert/emergency-words emergency-kind)])
-        (when position-suspect? [badge "suspect" "position suspect"])
-        (when mlat? [badge "mlat" "MLAT"])])
-     [:div.adsb-panel-facts
-      [fact "ICAO" icao]
-      ;; Airframe reference data (adsb.enrich). Dashes when the static
-      ;; database is absent or does not know this hex — absent, never invented.
-      [fact "Type" (type-display enrichment)]
-      [fact "Registration" (enrich/registration enrichment)]
-      [fact "Operator" (enrich/operator enrichment)]
-      [fact "Altitude" (altitude-display aircraft)]
-      [fact "Ground speed" ground-speed-kt]
-      [fact "Track" track-deg]
-      [fact "Squawk" squawk]
-      [fact "Vertical rate" baro-rate-fpm]
-      [fact "Seen" (when seen (str seen "s ago"))]]]))
+     (when expanded?
+       [:<>
+        (when (or emergency-kind position-suspect? mlat?)
+          [:div.adsb-panel-badges
+           (when emergency-kind
+             [badge "emergency" (alert/emergency-words emergency-kind)])
+           (when position-suspect? [badge "suspect" "position suspect"])
+           (when mlat? [badge "mlat" "MLAT"])])
+        [:div.adsb-panel-facts
+         [fact "ICAO" icao]
+         [fact "Type" (type-display enrichment)]
+         [fact "Registration" (enrich/registration enrichment)]
+         [fact "Operator" (enrich/operator enrichment)]
+         [fact "Altitude" (altitude-display aircraft)]
+         [fact "Ground speed" ground-speed-kt]
+         [fact "Track" track-deg]
+         [fact "Squawk" squawk]
+         [fact "Vertical rate" baro-rate-fpm]
+         [fact "Seen" (when seen (str seen "s ago"))]]])]))
 
 (defn aircraft-panel
   "The detail panel, mounted permanently in the app root. Renders nothing
@@ -147,8 +210,9 @@
   panel closes the instant its subject ages out of the sky. A form-2
   component: subscribe once, deref per render."
   []
-  (let [selected (rf/subscribe [:aircraft/selected])
-        now      (rf/subscribe [:ui/now-ms])]
+  (let [selected  (rf/subscribe [:aircraft/selected])
+        now       (rf/subscribe [:ui/now-ms])
+        expanded? (rf/subscribe [:panel/expanded?])]
     (fn []
       (when-let [aircraft @selected]
         (let [icao (:aircraft/icao aircraft)]
@@ -158,4 +222,6 @@
           ;; in a beat later when the shard resolves; until then it is nil and
           ;; the rows dash.
           (rf/dispatch [:enrich/ensure icao])
-          (panel-body aircraft @now @(rf/subscribe [:enrich/record icao])))))))
+          (panel-body aircraft @now
+                      @(rf/subscribe [:enrich/record icao])
+                      @expanded?))))))

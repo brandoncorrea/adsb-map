@@ -148,16 +148,23 @@
 ;; y increasing downward — right half only, nose and tail-tip on the
 ;; axis. DATA: the shape is visual design and re-skins here. The left
 ;; half is mirrored at draw time, so the plane is always symmetric.
+;;
+;; The area centroid sits on the canvas centre (0.5, 0.5), not the
+;; bounding-box centre. An earlier outline put the wings low so most of
+;; the ink sat below the MapLibre icon anchor — the selection ring
+;; (anchored on the same lat/lon) then looked like it sat above the
+;; plane (adsb-89w). Wings near mid-canvas keep the visual mass on the
+;; pin the ring shares.
 (def ^:private plane-half-outline
-  [[0.50 0.06]    ; nose (on axis)
-   [0.56 0.42]    ; wing root, leading edge
-   [0.96 0.64]    ; wingtip
-   [0.96 0.72]    ; wingtip, trailing
-   [0.56 0.56]    ; wing root, trailing edge
-   [0.55 0.84]    ; fuselage, before the tail
-   [0.74 0.95]    ; tailplane tip
-   [0.74 1.00]    ; tailplane tip, trailing
-   [0.50 0.92]])  ; tail centre (on axis)
+  [[0.50 0.04]    ; nose (on axis)
+   [0.55 0.33]    ; wing root, leading edge
+   [0.88 0.52]    ; wingtip
+   [0.88 0.58]    ; wingtip, trailing
+   [0.55 0.45]    ; wing root, trailing edge
+   [0.54 0.68]    ; fuselage, before the tail
+   [0.70 0.77]    ; tailplane tip
+   [0.70 0.81]    ; tailplane tip, trailing
+   [0.50 0.74]])  ; tail centre (on axis)
 
 (defn- draw-plane!
   "Trace the mirrored plane silhouette and fill it."
@@ -209,6 +216,17 @@
   event handler and the panel."
   [props]
   (rf/dispatch [:aircraft/select (:icao props)]))
+
+(defn- hover-enter!
+  "Map pointer over a plane → the same hover channel the roster rows use,
+  so the selection module can pin a callsign label (adsb-xgg)."
+  [props]
+  (when-let [icao (:icao props)]
+    (rf/dispatch [:aircraft/hover icao])))
+
+(defn- hover-leave!
+  []
+  (rf/dispatch [:aircraft/clear-hover]))
 
 (defn now-ms
   "The frame's arrival instant, read at the imperative edge — the ONE
@@ -294,9 +312,10 @@
           (maplibre/add-source! m source-id source-spec)
           (maplibre/add-layer! m (layer-spec theme))
           ;; The click contract and its hover affordance, through the
-          ;; seam. We fire `[:aircraft/select icao]`; adsb-dgb.1 handles it.
+          ;; seam. Select opens the panel; hover lights the callsign label
+          ;; (adsb.map.selection / adsb-xgg).
           (maplibre/on-layer-click! m layer-id select!)
-          (maplibre/on-layer-hover-cursor! m layer-id)
+          (maplibre/on-layer-hover! m layer-id hover-enter! hover-leave!)
           ;; The hot path: a reaction OUTSIDE any component. Its initial
           ;; run flushes whatever picture already arrived; each re-run is
           ;; one picture change -> one push (a trail + an aircraft setData).

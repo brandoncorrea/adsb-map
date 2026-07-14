@@ -93,7 +93,10 @@
 ;; There is no header any more (adsb-sod); the NOTAM strip sits on the top
 ;; edge itself, and it is the only chrome the arrow must clear up there.
 (def ^:const notam-strip-px 36)    ; one NOTAM row, on the top edge
-(def ^:const stack-px 76)          ; --stack-w
+;; Roster dock width (desktop) / collapsed drawer height (phone). Matches
+;; --roster-w in adsb.css.tokens / adsb.css.phone (adsb-66h).
+(def ^:const roster-px 300)
+(def ^:const roster-phone-rail-px 48)
 (def ^:const arrow-half-width-px 80)
 (def ^:const arrow-half-height-px 18)
 (def ^:const edge-air-px 8)
@@ -314,8 +317,8 @@
   []
   (let [phone? (<= (.-innerWidth js/window) phone-max-width-px)]
     {:top    (+ notam-strip-px arrow-half-height-px edge-air-px)
-     :right  (+ (if phone? 0 stack-px) arrow-half-width-px edge-air-px)
-     :bottom (+ (if phone? stack-px 0) arrow-half-height-px edge-air-px)
+     :right  (+ (if phone? 0 roster-px) arrow-half-width-px edge-air-px)
+     :bottom (+ (if phone? roster-phone-rail-px 0) arrow-half-height-px edge-air-px)
      :left   (+ arrow-half-width-px edge-air-px)}))
 
 (defn- edge->lng-lat
