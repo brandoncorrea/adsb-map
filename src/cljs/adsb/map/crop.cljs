@@ -115,10 +115,20 @@
   The reaction runs once on attach — flushing whatever the config event
   already delivered — and again only if the declared crop itself changes,
   which nothing but a reconnect onto a differently-configured process can
-  cause."
+  cause.
+
+  `opts` may carry `:framed?` — seed the frame-once latch as ALREADY SPENT,
+  so this attach never pulls the camera onto the boundary. The map view
+  passes it on a theme re-print (adsb.map.view/reprint!), which builds a
+  brand-new map carrying the dying one's camera: the chart the reader is
+  looking at is the same chart, so an opening frame is not owed a second
+  time. Without it the latch — which is per-attach state — would come up
+  fresh on the new map and fit-bounds! would yank the reader back to the
+  boundary mid-session, the exact thing `frame-once!` forswears."
   ([m] (attach! m @theme/!theme))
-  ([m theme]
-   (let [!state (atom {:disposed? false :track nil :framed? false})]
+  ([m theme] (attach! m theme nil))
+  ([m theme {:keys [framed?]}]
+   (let [!state (atom {:disposed? false :track nil :framed? (boolean framed?)})]
      (maplibre/on-load!
        m
        (fn []

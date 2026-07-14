@@ -8,6 +8,7 @@
   theme flips. See docs/testing-setup.md."
   (:require
     [adsb.map.basemap :as basemap]
+    [adsb.map.crop :as crop]
     [adsb.map.maplibre :as maplibre]
     [adsb.map.theme :as theme]
     [adsb.map.view :as view]
@@ -52,29 +53,47 @@
 
 (defn- stub-load-style! [_url cb] (cb raw-style))
 
+;; What a reader who has gone somewhere looks like: panned off the boot
+;; centre and zoomed in to inspect distance. A theme flip must leave this
+;; exactly where it is (adsb-1rg).
+(def ^:private readers-camera
+  {:center [-82.53 27.97] :zoom 12 :bearing 30 :pitch 0})
+
 (defn- fake-map
-  "A `Map` that records only its destruction but satisfies the full
-  protocol, so a mount can create and later destroy it without touching
-  WebGL. The load event never fires here, so the aircraft layer stays
-  dormant — its behavior is adsb.map.aircraft-layer-test's business."
-  [!destroyed]
-  (reify maplibre/Map
-    (destroy! [_] (swap! !destroyed inc))
-    (on-load! [_ _f] nil)
-    (add-source! [_ _id _source] nil)
-    (add-layer! [_ _layer] nil)
-    (set-source-data! [_ _id _data] nil)
-    (add-image! [_ _id _image _opts] nil)
-    (on-layer-click! [_ _layer-id _f] nil)
-    (on-layer-hover! [_ _layer-id _on-enter _on-leave] nil)
-    (add-marker! [_ _element _lng-lat] nil)
-    (move-marker! [_ _marker _lng-lat] nil)
-    (remove-marker! [_ _marker] nil)
-    ;; A calm sky never reads bounds, but the protocol must be whole.
-    (bounds [_] {:geo/min-lat 27.0 :geo/max-lat 29.0
-                 :geo/min-lon -83.0 :geo/max-lon -81.0})
-    (on-move! [_ _f] nil)
-    (fit-bounds! [_ _bounds _padding] nil)))
+  "A `Map` that records its destruction, reports a camera, and records any
+  fit-bounds — otherwise inert, but satisfying the full protocol, so a
+  mount can create and later destroy it without touching WebGL. The load
+  event never fires here, so the aircraft layer stays dormant — its
+  behavior is adsb.map.aircraft-layer-test's business.
+
+  `camera` is what this map says the reader is looking at; the theme flip
+  test hands the first map a moved camera and then asserts the second map
+  was created on it."
+  ([!destroyed] (fake-map !destroyed nil nil))
+  ([!destroyed camera !fits]
+   (reify maplibre/Map
+     (destroy! [_] (swap! !destroyed inc))
+     (camera [_] camera)
+     (fit-bounds! [_ bounds padding]
+       (when !fits (swap! !fits conj {:bounds bounds :padding padding})))
+     (on-load! [_ _f] nil)
+     (add-source! [_ _id _source] nil)
+     (add-layer! [_ _layer] nil)
+     (set-source-data! [_ _id _data] nil)
+     (add-image! [_ _id _image _opts] nil)
+     (on-layer-click! [_ _layer-id _f] nil)
+     (on-layer-dblclick! [_ _layer-id _f] nil)
+     (on-layer-hover! [_ _layer-id _on-enter _on-leave] nil)
+     (add-marker! [_ _element _lng-lat] nil)
+     (move-marker! [_ _marker _lng-lat] nil)
+     (remove-marker! [_ _marker] nil)
+     ;; A calm sky never reads bounds, but the protocol must be whole.
+     (bounds [_] {:geo/min-lat 27.0 :geo/max-lat 29.0
+                  :geo/min-lon -83.0 :geo/max-lon -81.0})
+     (fly-to! [_ _lng-lat] nil)
+     (ease-to! [_ _lng-lat] nil)
+     (on-move! [_ _f] nil)
+     (on-drag-start! [_ _f] nil))))
 
 (deftest default-map-opts-privacy
   (testing "default center is a fixed, whole-degree regional point — never a receiver"
@@ -198,3 +217,55 @@
           (reset! !root nil) ;; torn down here; the fixture must not do it twice
           (is (= 1 @!unwatched))
           (is (= 2 @!destroyed)))))))
+
+(deftest a-theme-flip-keeps-the-readers-place
+  ;; One mount, one flip, and everything the reader owns must survive it: the
+  ;; camera, and the fact that the chart's opening frame is already behind
+  ;; them. The crop is faked here — this asserts the WIRING; that a seeded
+  ;; latch actually fires no fit-bounds is adsb.map.crop-test's proof.
+  (let [calls      (atom [])
+        !destroyed (atom 0)
+        !fits      (atom [])
+        !flip      (atom nil)
+        !crop-opts (atom [])]
+    (with-redefs [maplibre/create!    (fn [_container opts]
+                                        (swap! calls conj opts)
+                                        ;; Every map this test builds reports a
+                                        ;; reader who has gone somewhere.
+                                        (fake-map !destroyed readers-camera
+                                                  !fits))
+                  view/load-style!    stub-load-style!
+                  theme/system-theme  (constantly :day)
+                  theme/watch-system! (fn [f] (reset! !flip f) (fn []))
+                  crop/attach!        (fn
+                                        ([m] (crop/attach! m :day nil))
+                                        ([m th] (crop/attach! m th nil))
+                                        ([_m _th opts]
+                                         (swap! !crop-opts conj opts)
+                                         (atom {})))
+                  crop/detach!        (fn [_handle] nil)]
+      (mount-shell!)
+
+      (testing "the boot map still opens on the fixed regional fallback, with
+                the boundary's opening frame still owed"
+        (is (= view/default-center (:center (first @calls))))
+        (is (not (:framed? (first @!crop-opts)))))
+
+      (@!flip :night)
+
+      (testing "the night print is created ON the dying map's camera — dusk
+                changes the ink, not where the reader is looking (adsb-1rg)"
+        (let [opts (last @calls)]
+          (is (= 2 (count @calls)) "the map was re-printed")
+          (is (= (:center readers-camera) (:center opts))
+              "the reader's centre survived the re-print")
+          (is (= (:zoom readers-camera) (:zoom opts))
+              "and their zoom — no teleport back to the boot framing")
+          (is (= (:bearing readers-camera) (:bearing opts)))))
+
+      (testing "and the boundary comes up ALREADY framed, so nothing pulls the
+                chart back onto the crop mid-session"
+        (is (true? (:framed? (last @!crop-opts)))))
+
+      (testing "nothing framed anything, on either print"
+        (is (empty? @!fits))))))

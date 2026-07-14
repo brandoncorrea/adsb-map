@@ -172,7 +172,22 @@
         (fire-load! fake)
         (rf/dispatch [:stream/config (config-frame nil)])
         (r/flush)
-        (is (empty? (fits fake)))))))
+        (is (empty? (fits fake))))))
+
+  (testing "a SEEDED latch frames nothing either: this is the map a theme
+            re-print built under a reader who was already somewhere, and it
+            carries their camera — the boundary still draws, but pulling the
+            chart back onto it would be the mid-session yank (adsb-1rg)"
+    (rf-test/run-test-sync
+      (let [fake (recording-map)]
+        (crop/attach! (:m fake) :day {:framed? true})
+        (fire-load! fake)
+        (rf/dispatch [:stream/config (config-frame declared-crop)])
+        (r/flush)
+        (is (empty? (fits fake)) "no fit-bounds on the re-print")
+        (is (seq (last-features fake))
+            "the boundary is still drawn — it is the frame that is spent,
+             not the ring")))))
 
 (deftest crop-bounds-box
   (testing "the box is derived from the RING, so it is wider in longitude

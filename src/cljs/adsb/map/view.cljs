@@ -17,12 +17,18 @@
   and a clean re-print is honest about what it is — a different physical
   chart — where MapLibre's setStyle would silently drop our sources and
   layers and demand a re-wire anyway. The fetched JSON is cached in the
-  component, so a flip costs no network."
+  component, so a flip costs no network.
+
+  A new chart, but not a new reading: the camera is read off the dying map
+  and handed to the new one, and the boundary's opening frame is seeded as
+  already spent. The reader who has panned to an aircraft at zoom 12 sees
+  dusk change the ink, and nothing else (adsb-1rg)."
   (:require
     [adsb.map.aircraft-layer :as aircraft-layer]
     [adsb.map.basemap :as basemap]
     [adsb.map.crop :as crop]
     [adsb.map.emergency :as emergency]
+    [adsb.map.follow :as follow]
     [adsb.map.maplibre :as maplibre]
     [adsb.map.selection :as selection]
     [adsb.map.theme :as theme]
@@ -178,39 +184,56 @@
         !crop      (atom nil)
         !aircraft  (atom nil)
         !ring      (atom nil)
+        !follow    (atom nil)
         !emergency (atom nil)
         !raw-style (atom nil)
         !unwatch   (atom nil)
         !fold-timer (atom nil)
         !disposed  (atom false)]
-    (letfn [(mount-map! [th]
-              (let [style (basemap/edition-style @!raw-style th)
-                    m     (maplibre/create! @!container (default-map-opts style))]
-                (reset! !map m)
-                (reset! !live-map m)          ; the camera effect's handle
-                ;; The credit shows, and folds five seconds later — the timeout
-                ;; the OSMF guidelines name (see attribution-fold-ms). MapLibre
-                ;; folds it on the first pan or zoom too, which is the other
-                ;; permitted trigger; whichever comes first wins, and both leave
-                ;; the (i) button reachable forever after.
-                ;;
-                ;; Armed on every mount: a theme flip destroys and re-creates the
-                ;; map, and the new map arrives with a freshly opened credit.
-                (reset! !fold-timer
-                        (js/setTimeout #(when-not @!disposed
-                                          (collapse-attribution! @!container))
-                                       attribution-fold-ms))
-                ;; FIRST, so the published-coverage boundary sits UNDER
-                ;; everything in the sky — add order is z order, and the
-                ;; boundary is the paper, not a target (adsb.map.crop).
-                (reset! !crop (crop/attach! m th))
-                (reset! !aircraft (aircraft-layer/attach! m th))
-                ;; The selection ring rides the same lifecycle: ring and
-                ;; map are created and torn down together (adsb.map.selection).
-                (reset! !ring (selection/attach! m))
-                ;; So do the §7 emergency annotations — the red-pen
-                ;; ellipse, MAYDAY stamp, and edge arrow (adsb.map.emergency).
-                (reset! !emergency (emergency/attach! m))))
+    (letfn [(mount-map!
+              ;; `camera` is the dying map's camera on a re-print, nil on the
+              ;; first mount — see reprint!. Merged over the boot options: same
+              ;; keys, so the reader's own centre and zoom simply win over the
+              ;; opening frame's.
+              ([th] (mount-map! th nil))
+              ([th camera]
+               (let [style (basemap/edition-style @!raw-style th)
+                     m     (maplibre/create! @!container
+                                             (merge (default-map-opts style)
+                                                    camera))]
+                 (reset! !map m)
+                 (reset! !live-map m)          ; the camera effect's handle
+                 ;; The credit shows, and folds five seconds later — the timeout
+                 ;; the OSMF guidelines name (see attribution-fold-ms). MapLibre
+                 ;; folds it on the first pan or zoom too, which is the other
+                 ;; permitted trigger; whichever comes first wins, and both leave
+                 ;; the (i) button reachable forever after.
+                 ;;
+                 ;; Armed on every mount: a theme flip destroys and re-creates the
+                 ;; map, and the new map arrives with a freshly opened credit.
+                 (reset! !fold-timer
+                         (js/setTimeout #(when-not @!disposed
+                                           (collapse-attribution! @!container))
+                                        attribution-fold-ms))
+                 ;; FIRST, so the published-coverage boundary sits UNDER
+                 ;; everything in the sky — add order is z order, and the
+                 ;; boundary is the paper, not a target (adsb.map.crop).
+                 ;;
+                 ;; A carried camera means this map inherited a chart the reader
+                 ;; was already reading, so the boundary's opening frame is spent:
+                 ;; seed the latch, or the re-print re-frames and the reader loses
+                 ;; their place to a theme flip they did not ask for.
+                 (reset! !crop (crop/attach! m th {:framed? (some? camera)}))
+                 (reset! !aircraft (aircraft-layer/attach! m th))
+                 ;; The selection ring rides the same lifecycle: ring and
+                 ;; map are created and torn down together (adsb.map.selection).
+                 (reset! !ring (selection/attach! m))
+                 ;; Free/Follow camera — same track! shape as selection
+                 ;; (adsb.map.follow, adsb-jg4).
+                 (reset! !follow (follow/attach! m))
+                 ;; So do the §7 emergency annotations — the red-pen
+                 ;; ellipse, MAYDAY stamp, and edge arrow (adsb.map.emergency).
+                 (reset! !emergency (emergency/attach! m)))))
             (unmount-map! []
               ;; A pending fold belongs to the map being torn down; left armed,
               ;; it would fire into the next one's DOM (or none at all).
@@ -220,6 +243,9 @@
               (when-let [annotations @!emergency]
                 (emergency/detach! @!map annotations)
                 (reset! !emergency nil))
+              (when-let [cam @!follow]
+                (follow/detach! cam)
+                (reset! !follow nil))
               (when-let [ring @!ring]
                 (selection/detach! @!map ring)
                 (reset! !ring nil))
@@ -238,10 +264,17 @@
               ;; edition on the table. Only once the plate is fetched and
               ;; we are still alive — a flip before the style arrives is
               ;; covered by mount-map! reading the fresh !theme.
+              ;;
+              ;; A re-print is a new physical chart, but it is NOT a new
+              ;; reading: the camera comes off the dying map and onto the new
+              ;; one, so dusk sliding the OS to dark leaves the reader looking
+              ;; at exactly what they were looking at (adsb-1rg). Nothing to
+              ;; read if the map never got made — then the boot options stand.
               (theme/set-theme! th)
               (when (and @!raw-style (not @!disposed))
-                (unmount-map!)
-                (mount-map! th)))]
+                (let [camera (some-> @!map maplibre/camera)]
+                  (unmount-map!)
+                  (mount-map! th camera))))]
       (r/create-class
         {:display-name "adsb-map"
 
