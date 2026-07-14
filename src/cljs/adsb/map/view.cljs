@@ -21,6 +21,7 @@
   (:require
     [adsb.map.aircraft-layer :as aircraft-layer]
     [adsb.map.basemap :as basemap]
+    [adsb.map.crop :as crop]
     [adsb.map.emergency :as emergency]
     [adsb.map.maplibre :as maplibre]
     [adsb.map.selection :as selection]
@@ -49,10 +50,18 @@
 ;; See README "Basemap" and https://openfreemap.org for the fair-use terms.
 (def ^:const style-url "https://tiles.openfreemap.org/styles/liberty")
 
-;; PRIVACY — non-negotiable (adsb-2yu.1, per the Overseer). The default center
-;; is a FIXED, whole-degree-rounded point over the Tampa Bay / Florida Gulf
-;; coast coverage area. It MUST NEVER be set to the receiver's position: a
-;; rounded regional center reveals a region, not a rooftop.
+;; The chart's OPENING FRAME, and now only a fallback: when a privacy crop is
+;; declared, adsb.map.crop pulls the camera onto the boundary as soon as the
+;; `config` event lands (frame-once!), which is the first frame of the stream.
+;; This is what the reader sees until then — and forever, on a deployment
+;; running with the crop disabled.
+;;
+;; PRIVACY — non-negotiable (adsb-2yu.1, per the Overseer). It is a FIXED,
+;; whole-degree-rounded point over the Tampa Bay / Florida Gulf coast coverage
+;; area. It MUST NEVER be set to the receiver's position: a rounded regional
+;; center reveals a region, not a rooftop. The crop centre that supersedes it is
+;; safe for the same reason turned inside out — that one is a DECLARED decoy,
+;; public by construction (adsb.ingest.crop), never the antenna.
 ;; MapLibre wants [lon lat]; aviation reads lat,lon. Here: lat 28.0, lon -82.0.
 (def ^:const default-center [-82.0 28.0])
 (def ^:const default-zoom 7)
@@ -166,6 +175,7 @@
   []
   (let [!container (atom nil)
         !map       (atom nil)
+        !crop      (atom nil)
         !aircraft  (atom nil)
         !ring      (atom nil)
         !emergency (atom nil)
@@ -190,6 +200,10 @@
                         (js/setTimeout #(when-not @!disposed
                                           (collapse-attribution! @!container))
                                        attribution-fold-ms))
+                ;; FIRST, so the published-coverage boundary sits UNDER
+                ;; everything in the sky — add order is z order, and the
+                ;; boundary is the paper, not a target (adsb.map.crop).
+                (reset! !crop (crop/attach! m th))
                 (reset! !aircraft (aircraft-layer/attach! m th))
                 ;; The selection ring rides the same lifecycle: ring and
                 ;; map are created and torn down together (adsb.map.selection).
@@ -212,6 +226,9 @@
               (when-let [layer @!aircraft]
                 (aircraft-layer/detach! layer)
                 (reset! !aircraft nil))
+              (when-let [boundary @!crop]
+                (crop/detach! boundary)
+                (reset! !crop nil))
               (when-let [m @!map]
                 (maplibre/destroy! m)
                 (reset! !map nil)

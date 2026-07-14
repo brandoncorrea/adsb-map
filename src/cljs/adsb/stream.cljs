@@ -134,6 +134,14 @@
     {:stats  (wire/wire->stats envelope)
      :feeder (wire/wire->feeder envelope)}))
 
+(defn data->crop
+  "Decode the `config` frame's `data` string into the privacy crop the
+  server declared — {:crop/center {:geo/lat _ :geo/lon _} :crop/radius-m _}
+  — or nil when this deployment runs with the crop disabled and has no
+  declared boundary to draw (adsb.wire/wire->crop)."
+  [data]
+  (wire/wire->crop (data->envelope data)))
+
 (defn now-ms
   "The frame's arrival instant, read where the stream touches the world
   (the source callbacks) and passed INTO events as an argument — the
@@ -170,6 +178,7 @@
              :on-frame    #(rf/dispatch [:stream/received %])
              :on-aircraft #(rf/dispatch [:stream/upsert %])
              :on-stats    #(rf/dispatch [:stream/stats % (now-ms)])
+             :on-config   #(rf/dispatch [:stream/config %])
              :on-error    #(rf/dispatch [:stream/error %])})]
     (swap! !conn assoc :connection c)))
 
@@ -309,6 +318,16 @@
                                                  (:stats/message-rate stats))
             :stream/connection :live)))))
 
+;; The one `config` event, ahead of the snapshot. Static boot config: the
+;; privacy crop's declared boundary, or nil when this deployment publishes
+;; everything it hears and has no boundary to show. Latest-wins on
+;; reconnect, which is the only time it can legitimately differ — the
+;; process may have been replaced under us with a different crop.
+(rf/reg-event-db
+  :stream/config
+  (fn [db [_ data]]
+    (assoc db :crop/declared (data->crop data))))
+
 ;; An EventSource error. If the browser is still CONNECTING it owns the
 ;; retry — we just reflect :reconnecting. If it is CLOSED the source is dead:
 ;; we count the failure, surface :reconnecting/:down, and schedule our own
@@ -363,6 +382,16 @@
   :stats/session
   (fn [db _]
     (get db :stats/session {})))
+
+;; The privacy crop the server declared on connect (adsb.ingest.crop):
+;; {:crop/center {:geo/lat _ :geo/lon _} :crop/radius-m _}. nil before the
+;; config event lands, and nil FOREVER on a deployment running with the
+;; crop disabled — the map draws no boundary in either case, which is the
+;; honest rendering of "this app has not told you what it withholds".
+(rf/reg-sub
+  :crop/declared
+  (fn [db _]
+    (get db :crop/declared)))
 
 ;; ---------------------------------------------------------------------
 ;; Boot

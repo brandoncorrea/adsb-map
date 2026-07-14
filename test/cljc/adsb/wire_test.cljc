@@ -244,3 +244,34 @@
     (is (= {} (wire/wire->feeder (wire/stats-event->wire nil nil
                                                          captured-at-ms))))
     (is (= {} (wire/wire->feeder {})))))
+
+;; ---------------------------------------------------------------------
+;; The config event — the privacy crop's DECLARED boundary. The one
+;; coordinate the wire may carry, and only because it is the decoy centre
+;; rather than the antenna (adsb.wire/crop->wire, adsb.ingest.crop).
+
+(def ^:private declared-crop
+  {:crop/center {:geo/lat 27.9753 :geo/lon -82.5331}
+   :crop/radius-m 100000})
+
+(deftest config-event-round-trip
+  (testing "the declared crop survives the round trip, centre and radius"
+    (let [envelope (wire/config-event->wire declared-crop captured-at-ms)]
+      (is (= declared-crop (wire/wire->crop envelope)))))
+
+  (testing "the radius crosses as KILOMETRES and comes back as metres"
+    (is (= {:lat 27.9753 :lon -82.5331 :radius-km 100}
+           (:crop (wire/config-event->wire declared-crop captured-at-ms)))))
+
+  (testing "a DISABLED crop puts no crop key on the wire and decodes to nil —
+            no boundary is drawn, and nothing falls back to the receiver
+            position, which is the one coordinate that is not ours to publish"
+    (let [envelope (wire/config-event->wire nil captured-at-ms)]
+      (is (not (contains? envelope :crop)))
+      (is (nil? (wire/wire->crop envelope)))
+      (is (nil? (wire/wire->crop {})))))
+
+  (testing "a half-formed crop yields no boundary rather than a partial one"
+    (is (nil? (wire/crop->wire {:crop/center {:geo/lat 27.9 :geo/lon -82.4}})))
+    (is (nil? (wire/crop->wire {:crop/radius-m 100000})))
+    (is (nil? (wire/wire->crop {:crop {:lat 27.9 :lon -82.4}})))))

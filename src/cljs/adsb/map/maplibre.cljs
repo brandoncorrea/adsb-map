@@ -81,7 +81,19 @@
     annotations, which is settle-time work, not render-loop work. The
     handler lives as long as the map does; the map view tears clients
     down before it destroys the map, so clients guard with their own
-    disposed flag rather than unregistering."))
+    disposed flag rather than unregistering.")
+  (fit-bounds! [this bounds padding-px]
+    "Frame `bounds` — the adsb.geo box, {:geo/min-lat _ :geo/max-lat _
+    :geo/min-lon _ :geo/max-lon _} — in the viewport, with `padding-px`
+    of breathing room on every side. Centre AND zoom are derived from the
+    box and the viewport's own size, which is the point: a 60 km disc and
+    a 400 km disc both land framed, where a fixed zoom would show one as a
+    speck and crop the other.
+
+    NOT ANIMATED, unlike `fly-to!`. This is the chart's opening framing,
+    not a navigation — the reader has not asked to go anywhere, so there
+    is nothing to carry them across. A swoop on load would just be the map
+    showing off (adsb.map.crop frames the declared boundary this way)."))
 
 (def ^:const focus-zoom
   "The closest the chart will pull in when flying to an aircraft — and the
@@ -153,7 +165,14 @@
        :geo/min-lon (.getWest b)
        :geo/max-lon (.getEast b)}))
   (on-move! [_ f]
-    (.on gl-map "moveend" (fn [_e] (f)))))
+    (.on gl-map "moveend" (fn [_e] (f))))
+  (fit-bounds! [_ {:geo/keys [min-lat max-lat min-lon max-lon]} padding-px]
+    ;; MapLibre's LngLatBoundsLike as [[west south] [east north]] — [lon lat]
+    ;; corners, the transposition this codebase keeps making a point of.
+    (.fitBounds gl-map
+                #js [#js [min-lon min-lat] #js [max-lon max-lat]]
+                #js {:padding padding-px
+                     :animate false})))
 
 (defn create!
   "Construct a real MapLibre map inside `container` (a DOM node) with `opts`

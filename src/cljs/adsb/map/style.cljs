@@ -154,6 +154,23 @@
   ever gets. The direction caps it at 0.5 on paper (§2): history is a
   quiet ink echo, never a rival to the live target." 0.5)
 
+(def ^:const crop-width
+  "Stroke width of the published-coverage boundary, in px." 2.0)
+
+(def ^:const crop-opacity
+  "Alpha of the coverage boundary. Quieter than a trail: this is a
+  MARGIN NOTE, not a thing in the sky. It must be findable when looked
+  for and invisible when not." 0.30)
+
+(def ^:const crop-dasharray
+  "The boundary is DASHED, and that is semantic rather than decorative.
+  A solid line on a chart is a thing that exists — a coastline, an
+  airway. This is an editorial limit: the edge of what we chose to
+  publish (adsb.ingest.crop). Chart convention gives that a dashed rule,
+  and it also keeps the ring from reading as an airspace boundary, which
+  it emphatically is not."
+  [4 3])
+
 ;; ---------------------------------------------------------------------
 ;; The two editions. DATA: the whole aircraft palette re-skins here.
 ;; Same keys, same feet, same semantics in both — two prints of one
@@ -341,3 +358,27 @@
             :line-join "round"}
    :paint  {:line-width    trail-width
             :line-gradient (trail-gradient-expression theme)}})
+
+(defn crop-layer-spec
+  "The MapLibre LINE-layer spec for the published-coverage boundary on
+  `layer-id` over `source-id`, printed in `theme`'s edition: the edge of
+  the disc this deployment publishes (adsb.ingest.crop).
+
+  A LINE layer over a Polygon ring, not MapLibre's `circle` type, because
+  a circle layer's radius is in SCREEN PIXELS — it would swell and shrink
+  against the ground as the reader zooms, which is exactly wrong for a
+  boundary whose whole meaning is a fixed distance on the earth
+  (adsb.geo/circle builds the ring).
+
+  It goes in FIRST, below the trails and the targets: the boundary is the
+  paper the chart is printed on, and nothing in the sky should ever have
+  to compete with it."
+  [theme layer-id source-id]
+  {:id     layer-id
+   :type   "line"
+   :source source-id
+   :layout {:line-cap  "butt"
+            :line-join "round"}
+   :paint  {:line-width     crop-width
+            :line-color     (trail-rgba theme crop-opacity)
+            :line-dasharray crop-dasharray}})

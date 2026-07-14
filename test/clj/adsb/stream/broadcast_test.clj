@@ -45,11 +45,12 @@
   disables the update tick, the streaming deployment's shape. Limits
   are pinned explicitly so a stray ADSB_SSE_* in the environment cannot
   bend a test."
-  [{:keys [picture stats feeder interval-ms stats-interval-ms heartbeat-ms
+  [{:keys [picture stats feeder crop interval-ms stats-interval-ms heartbeat-ms
            max-clients max-per-ip trust-forwarded? trusted-proxy-hops]
     :or   {picture            (constantly cast-picture)
            stats              (constantly nil)
            feeder             (constantly nil)
+           crop               nil
            interval-ms        50
            stats-interval-ms  60000
            heartbeat-ms       60000
@@ -62,6 +63,7 @@
                       {:picture            picture
                        :stats              stats
                        :feeder             feeder
+                       :crop               crop
                        ;; honor an explicit nil (no update tick)
                        :interval-ms        (if (contains? opts :interval-ms)
                                              (:interval-ms opts)
@@ -134,6 +136,15 @@
 (defn- frame-event [frame]
   (some #(second (re-find #"^event: (.+)$" %)) frame))
 
+(defn- read-config!
+  "Consume the connect-time `config` frame — the FIRST frame of every
+  connection, ahead of the snapshot (adsb-au5). Every test that reads the
+  handshake positionally calls this first, so the `config` event is
+  asserted in exactly one place (config-event-leads-the-connection) and
+  merely stepped over everywhere else."
+  [^BufferedReader reader]
+  (read-frame! reader))
+
 (defn- frame-id [frame]
   (some #(some-> (re-find #"^id: (\d+)$" %) second parse-long) frame))
 
@@ -156,6 +167,60 @@
               (recur)))))))
 
 ;; ---------------------------------------------------------------------
+;; The config event — the declared boundary, once, ahead of everything
+
+(def ^:private declared-crop
+  "A crop centred on TPA. NOT the receiver — that is the whole contract
+  (adsb.ingest.crop): the centre is a public, arbitrary point, and the
+  fixture cast's own synthetic receiver sits elsewhere."
+  {:crop/center {:geo/lat 27.9753 :geo/lon -82.5331}
+   :crop/radius-m 100000})
+
+(deftest config-event-leads-the-connection
+  (testing "the FIRST frame of a connection is `config`, carrying the crop's
+            declared centre and radius — the map draws the edge of what this
+            app publishes before any aircraft land inside it"
+    (let [streaming (start-streaming-server! {:crop declared-crop})
+          reader    (open-stream! (:port streaming))]
+      (try
+        (let [config (read-frame! reader)]
+          (is (= "config" (frame-event config)))
+          (is (= {:lat 27.9753 :lon -82.5331 :radius-km 100}
+                 (:crop (frame-data config))))
+          (is (= "snapshot" (frame-event (read-frame! reader)))
+              "and the snapshot follows it"))
+        (finally
+          (.close reader)
+          (stop-streaming-server! streaming)))))
+
+  (testing "it is sent ONCE and never again — nothing on it can change while
+            the process lives, so it has no tick"
+    (let [streaming (start-streaming-server! {:crop declared-crop})
+          reader    (open-stream! (:port streaming))]
+      (try
+        (read-config! reader)
+        (dotimes [_ 5]
+          (is (not= "config" (frame-event (read-frame! reader)))
+              "no second config frame ever comes"))
+        (finally
+          (.close reader)
+          (stop-streaming-server! streaming)))))
+
+  (testing "a DISABLED crop still sends the config frame, but with no crop —
+            the browser draws no boundary, and NOTHING falls back to the
+            receiver position, which is the coordinate this whole feature
+            exists to protect"
+    (let [streaming (start-streaming-server! {:crop nil})
+          reader    (open-stream! (:port streaming))]
+      (try
+        (let [config (read-frame! reader)]
+          (is (= "config" (frame-event config)))
+          (is (not (contains? (frame-data config) :crop))))
+        (finally
+          (.close reader)
+          (stop-streaming-server! streaming))))))
+
+;; ---------------------------------------------------------------------
 ;; The stream's contract
 
 (deftest snapshot-then-stats-then-updates
@@ -165,6 +230,7 @@
     (let [streaming (start-streaming-server! {})
           reader    (open-stream! (:port streaming))]
       (try
+        (read-config! reader)
         (let [snapshot     (read-frame! reader)
               stats-frame  (read-frame! reader)
               update-frame (read-frame! reader)]
@@ -203,6 +269,7 @@
                                            :stats/aircraft-count 5})})
           reader    (open-stream! (:port streaming))]
       (try
+        (read-config! reader)
         (read-frame! reader)                       ; the snapshot
         (let [{:keys [stats]} (frame-data (read-frame! reader))]
           (is (= {:max-range-km 312 :message-rate 148} stats)
@@ -223,6 +290,7 @@
                                   "connect timed out: dietpi.local:8100"})})
           reader    (open-stream! (:port streaming))]
       (try
+        (read-config! reader)
         (read-frame! reader)                       ; the snapshot
         (let [stats-frame (read-frame! reader)]
           (is (= "stats" (frame-event stats-frame)))
@@ -245,6 +313,7 @@
         ;; The snapshot and its stats frame arrive on connect; with
         ;; updates and periodic stats effectively off, the next frame on
         ;; the wire must be the heartbeat.
+        (read-config! reader)
         (read-frame! reader)
         (read-frame! reader)
         (is (= [": hb"] (read-frame! reader)))
@@ -295,6 +364,7 @@
   (let [streaming (start-streaming-server! {:interval-ms nil})
         b         (:broadcaster streaming)
         reader    (doto (open-stream! (:port streaming))
+                    (read-config!)    ; the connect-time config frame
                     (read-frame!)     ; the snapshot
                     (read-frame!))]   ; the connect-time stats frame
     (try
@@ -324,6 +394,7 @@
                                               :heartbeat-ms 100})
           reader    (open-stream! (:port streaming))]
       (try
+        (read-config! reader)
         (is (= "snapshot" (frame-event (read-frame! reader))))
         (is (= "stats" (frame-event (read-frame! reader))))
         (is (= [": hb"] (read-frame! reader))
@@ -399,12 +470,13 @@
 ;; internet-facing, so admission is bounded in the registry itself.
 
 (defn- open-admitted!
-  "Open a stream and consume its snapshot and connect-time stats frame,
-  so the client is admitted, ready, and receiving ticks. Returns the
-  reader; the caller closes."
+  "Open a stream and consume its config, snapshot, and connect-time stats
+  frames, so the client is admitted, ready, and receiving ticks. Returns
+  the reader; the caller closes."
   (^BufferedReader [port] (open-admitted! port {}))
   (^BufferedReader [port headers]
    (doto (open-stream! port headers)
+     (read-config!)
      (read-frame!)
      (read-frame!))))
 
@@ -710,6 +782,7 @@
         ;; snapshot, the connect-time stats frame, then an update — the
         ;; aircraft-bearing frames must carry the cast and nothing
         ;; receiver-relative; the stats frame carries no aircraft at all.
+        (read-config! reader)
         (let [snapshot    (read-frame! reader)
               stats-frame (read-frame! reader)
               update-f    (read-frame! reader)]
@@ -730,9 +803,40 @@
     (let [streaming (start-streaming-server! {})
           reader    (open-stream! (:port streaming))]
       (try
+        (read-config! reader)
         (let [json-text (frame-json (read-frame! reader))]
           (is (str/includes? json-text "abc0e4"))
           (is (not (re-find receiver-relative-pattern json-text))))
+        (finally
+          (.close reader)
+          (stop-streaming-server! streaming)))))
+
+  ;; The config frame is the ONLY frame that carries a coordinate, so it is
+  ;; the one place a receiver position could plausibly slip onto the wire —
+  ;; either by someone "helpfully" defaulting a disabled crop to the antenna,
+  ;; or by the crop being derived from it. Both would pass every other test
+  ;; in this file. Neither may pass this one.
+  (testing "the config frame carries the DECLARED crop and nothing
+            receiver-relative"
+    (let [streaming (start-streaming-server! {:crop declared-crop})
+          reader    (open-stream! (:port streaming))]
+      (try
+        (let [json-text (frame-json (read-frame! reader))]
+          (is (not (re-find receiver-relative-pattern json-text)))
+          (is (str/includes? json-text "27.9753")
+              "the declared decoy centre, which is public by construction"))
+        (finally
+          (.close reader)
+          (stop-streaming-server! streaming)))))
+
+  (testing "a disabled crop emits NO coordinate at all — it must never fall
+            back to the receiver position"
+    (let [streaming (start-streaming-server! {:crop nil})
+          reader    (open-stream! (:port streaming))]
+      (try
+        (let [json-text (frame-json (read-frame! reader))]
+          (is (not (re-find #"lat|lon" json-text))
+              "no coordinate of any kind on a crop-disabled config frame"))
         (finally
           (.close reader)
           (stop-streaming-server! streaming))))))

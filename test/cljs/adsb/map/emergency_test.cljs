@@ -62,7 +62,8 @@
                 (remove-marker! [_ marker]
                   (swap! !rec update :removed conj marker))
                 (bounds [_] @!bounds)
-                (on-move! [_ f] (reset! !move f)))}))
+                (on-move! [_ f] (reset! !move f))
+                (fit-bounds! [_ _bounds _padding] nil))}))
 
 (def ^:private emergency-icao (:aircraft/icao fixtures/squawking-7700))
 (def ^:private emergency-lng-lat

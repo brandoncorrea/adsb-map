@@ -186,6 +186,47 @@
           (feeder-status->wire status) (assoc :status (feeder-status->wire status))
           last-success-ms (assoc :last-success last-success-ms)))
 
+(defn crop->wire
+  "Project the privacy crop (adsb.ingest.crop) onto the `config` event's
+  `crop` map: the declared centre and radius, so the browser can draw the
+  boundary of what this app publishes.
+
+  ## Yes, this really is a coordinate on the wire
+
+  It is the ONE coordinate that may be, and the reason is the whole point
+  of the crop. This is not the antenna — it is the DECOY centre of the
+  disc we chose and announced (adsb.ingest.crop, README 'Hiding the
+  antenna'). The crop is public by construction: its entire purpose is
+  that the boundary of the published set be a boundary we declared rather
+  than the antenna's horizon, whose centroid IS the antenna. A boundary
+  that must be secret to work would not be a crop; it would be the leak.
+  So drawing it costs nothing that was not already given away by the data
+  it bounds.
+
+  What must never happen here is a FALLBACK. A nil crop yields nil — the
+  gate is disabled, there is no declared boundary, and there is nothing to
+  draw. It must never quietly reach for the receiver position instead;
+  that is the one coordinate in this system that is not ours to publish,
+  and this namespace has no access to it."
+  [{:crop/keys [center radius-m]}]
+  (when (and center radius-m)
+    {:lat       (:geo/lat center)
+     :lon       (:geo/lon center)
+     :radius-km (/ radius-m 1000)}))
+
+(defn config-event->wire
+  "The static boot config as one `config` event envelope, built at
+  `at-ms` — sent ONCE per connection, before the snapshot, because none
+  of it can change while the process lives (adsb.stream.broadcast).
+
+  Only the privacy crop rides it today, and an absent crop yields an
+  envelope with no `crop` key rather than a null — the browser draws no
+  boundary, which is the honest rendering of 'this deployment publishes
+  everything it hears'."
+  [crop at-ms]
+  (cond-> {:at at-ms}
+          (crop->wire crop) (assoc :crop (crop->wire crop))))
+
 (defn picture->wire
   "The picture (icao -> aircraft) as one full-picture frame envelope,
   built at `at-ms`. Sent as the connect-time snapshot and as every
@@ -241,6 +282,18 @@
   second vocabulary."
   [{:keys [aircraft]}]
   (wire->aircraft aircraft))
+
+(defn wire->crop
+  "The inverse projection: a decoded `config` envelope's `crop` map back
+  into the domain crop vocabulary (adsb.ingest.crop's :crop/-namespaced
+  shape), or nil when the event carried none — a deployment with the crop
+  disabled, which the browser renders as no boundary at all rather than as
+  a boundary of unknown size."
+  [{:keys [crop]}]
+  (let [{:keys [lat lon radius-km]} crop]
+    (when (and lat lon radius-km)
+      {:crop/center   {:geo/lat lat :geo/lon lon}
+       :crop/radius-m (* radius-km 1000)})))
 
 (defn wire->stats
   "The inverse projection: a decoded envelope's `stats` map back into the

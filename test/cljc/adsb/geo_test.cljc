@@ -404,3 +404,29 @@
          (is (every? #(= "Feature" (:type %)) (:features collection)))
          (is (every? #(= "Point" (get-in % [:geometry :type]))
                      (:features collection)))))))
+
+(deftest circle-ring
+  (let [center {:geo/lat 27.9753 :geo/lon -82.5331}
+        radius 100000]
+
+    (testing "every vertex sits on the rim — at the radius from the centre,
+              which is what makes it a GEODESIC circle and not a planar one
+              that sags with latitude"
+      (doseq [p (geo/circle center radius)]
+        (is (< (abs (- (geo/distance center p) radius)) 1.0)
+            "vertex is within a metre of the declared radius")))
+
+    (testing "the ring is CLOSED — GeoJSON requires a LinearRing's first and
+              last positions to be identical, and MapLibre drops a ring that
+              is not"
+      (let [ring (geo/circle center radius)]
+        (is (= (first ring) (last ring)))
+        (is (= (inc geo/default-circle-segments) (count ring)))))
+
+    (testing "the first vertex leaves on bearing 0 — due north of the centre"
+      (let [north (first (geo/circle center radius))]
+        (is (> (:geo/lat north) (:geo/lat center)))
+        (is (< (abs (- (:geo/lon north) (:geo/lon center))) 1e-9))))
+
+    (testing "segment count is honoured"
+      (is (= 5 (count (geo/circle center radius 4)))))))

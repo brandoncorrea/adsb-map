@@ -6,8 +6,17 @@
 
   AIRCRAFT DATA AND STATS NEVER SHARE A FRAME (owner decision,
   adsb-jpf): coupled in one envelope, a change to either forces itself
-  on the other; separated, each evolves alone. So a client sees four
+  on the other; separated, each evolves alone. So a client sees five
   kinds of traffic:
+
+    * one `config` on connect, BEFORE the snapshot — the static boot
+      config, which today is the privacy crop's declared boundary
+      (adsb.ingest.crop). It has no tick and is never resent: nothing on
+      it can change while the process lives, so a client learns it once
+      and relearns it on reconnect, which is exactly when the process may
+      have been replaced under it. It leads because it is the frame of
+      reference the map draws — the reader sees the edge of what this app
+      publishes before the aircraft land inside it.
 
     * one `snapshot` on connect — the full picture, aircraft only —
       followed immediately by one `stats` frame, so the chrome
@@ -180,6 +189,17 @@
   stats envelope — the ONLY frame either may ride (ns docstring)."
   "stats")
 
+(def ^:const config-event
+  "The config event: the static boot config, sent ONCE per connection
+  ahead of the snapshot and never again. Nothing on it can change while
+  the process lives, so it has no tick — a client learns it on connect and
+  relearns it on reconnect, which is exactly when the process might have
+  been replaced under it.
+
+  Today it carries only the privacy crop's declared boundary (adsb.wire/
+  crop->wire) so the map can draw the edge of what this app publishes."
+  "config")
+
 ;; ---------------------------------------------------------------------
 ;; Frames — every builder shares the frame-id counter (the ! is that
 ;; counter), so ids increase across the whole stream regardless of kind.
@@ -209,6 +229,16 @@
                    (swap! frame-id inc)
                    (json/generate-string
                      (wire/stats-event->wire stats feeder now-ms))))
+
+(defn- config-frame!
+  "One config SSE frame as of now-ms: the static boot config, which today
+  is the privacy crop's declared boundary (or nothing, when the crop is
+  disabled)."
+  [{:stream/keys [frame-id crop]} now-ms]
+  (sse/event-frame config-event
+                   (swap! frame-id inc)
+                   (json/generate-string
+                     (wire/config-event->wire crop now-ms))))
 
 ;; ---------------------------------------------------------------------
 ;; The registry, admission, and the slow-consumer policy
@@ -602,6 +632,10 @@
                   trusted-proxy-hops clients limits]
     :as          broadcaster}
    request]
+  ;; config -> snapshot -> stats, in that order and once each. Config
+  ;; leads because it is what the map draws its own frame of reference
+  ;; with (the crop boundary); the aircraft then land inside a chart the
+  ;; reader can already see the edges of.
   (let [ip (client-ip trust-forwarded? trusted-proxy-hops request)]
     (diagnose-client-ip! broadcaster request ip)
     (if-some [reason (deny-reason @clients ip limits)]
@@ -612,10 +646,11 @@
         {:on-open  (fn [channel]
                      (if-some [reason (try-register! broadcaster channel ip)]
                        (reject! broadcaster channel reason ip)
-                       ;; Snapshot, then one immediate stats frame from
-                       ;; the tick's cache, so the chrome populates
+                       ;; Config, snapshot, then one immediate stats frame
+                       ;; from the tick's cache, so the chrome populates
                        ;; without waiting out a stats interval.
                        (let [now-ms   (System/currentTimeMillis)
+                             config-f (config-frame! broadcaster now-ms)
                              snapshot (picture-frame! broadcaster
                                                       snapshot-event
                                                       (picture now-ms)
@@ -626,6 +661,7 @@
                                                   {:status  200
                                                    :headers sse/headers}
                                                   false)
+                                  (http-kit/send! channel config-f false)
                                   (http-kit/send! channel snapshot false)
                                   (http-kit/send! channel stats-f false))
                            (mark-ready! broadcaster channel)
@@ -701,6 +737,12 @@
     :heartbeat-ms  heartbeat comment period (default 15000)
     :delta-queue-depth  capacity of the reader -> fan-out handoff queue
                    (default default-delta-queue-depth; see offer-delta!)
+    :crop          the privacy crop (adsb.ingest.crop), or nil when the
+                   gate is disabled. STATIC — held as a value, not a fn,
+                   because it is resolved once at boot and cannot change
+                   while the process lives. Rides the connect-time `config`
+                   event so the map can draw the declared boundary of what
+                   this app publishes; nil means no boundary is drawn.
 
   Connection limits (ns docstring) — an explicit option wins, else the
   environment variable, else the compiled default. The env fallback
@@ -733,7 +775,7 @@
                       diagnose-client-ip-env and adsb-nnk.
 
   Returns a broadcaster to hand to connect!, client-count, and stop!."
-  [{:keys [picture stats feeder stats-interval-ms heartbeat-ms
+  [{:keys [picture stats feeder stats-interval-ms heartbeat-ms crop
            delta-queue-depth max-clients max-per-ip trust-forwarded?
            trusted-proxy-hops diagnose-client-ip?]
     :or   {stats             (constantly nil)
@@ -750,6 +792,7 @@
         broadcaster {:stream/picture    picture
                      :stream/stats      stats
                      :stream/feeder     feeder
+                     :stream/crop       crop
                      :stream/last-stats (atom nil)
                      :stream/clients    (atom {})
                      :stream/deltas     (ArrayBlockingQueue.

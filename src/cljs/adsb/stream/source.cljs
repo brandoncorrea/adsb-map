@@ -45,6 +45,11 @@
     :on-stats    (fn [data-string]) a `stats` event arrived — session
                                     stats and feeder health, never
                                     aircraft data
+    :on-config   (fn [data-string]) the one `config` event arrived, ahead
+                                    of the snapshot — the static boot
+                                    config, today the privacy crop's
+                                    declared boundary. Once per connection
+                                    and never resent (adsb.stream.broadcast)
     :on-error    (fn [ready-state]) an error fired; ready-state is
                                     :connecting (the browser is
                                     auto-retrying) or :closed (the source
@@ -52,7 +57,7 @@
 
   Tests redef this to capture the callbacks and return a fake `Connection`;
   it therefore holds no logic worth testing itself."
-  [url {:keys [on-open on-frame on-aircraft on-stats on-error]}]
+  [url {:keys [on-open on-frame on-aircraft on-stats on-config on-error]}]
   (let [es (js/EventSource. url)
         data-> (fn [callback] (fn [^js e] (callback (.-data e))))
         frame (data-> on-frame)]
@@ -61,6 +66,7 @@
     (.addEventListener es "update" frame)
     (.addEventListener es "aircraft" (data-> on-aircraft))
     (.addEventListener es "stats" (data-> on-stats))
+    (.addEventListener es "config" (data-> on-config))
     (set! (.-onerror es) (fn [_] (on-error (ready-state-kw es))))
     (reify Connection
       (close! [_] (.close es)))))

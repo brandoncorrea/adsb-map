@@ -289,6 +289,14 @@
                                                         crop %)})
         broadcaster       (broadcast/start!
                             {:picture state/age-out!
+                             ;; The declared boundary, for the connect-time
+                             ;; `config` event: the map draws the edge of
+                             ;; what we publish. Safe on the wire precisely
+                             ;; BECAUSE it is the decoy centre and not the
+                             ;; antenna (adsb.wire/crop->wire). nil crop =
+                             ;; no boundary drawn, never a fallback to the
+                             ;; receiver position.
+                             :crop crop
                              ;; nil DISABLES the update tick: a streaming
                              ;; deployment's aircraft flow per delta
                              ;; (adsb.stream.broadcast, adsb-jpf).

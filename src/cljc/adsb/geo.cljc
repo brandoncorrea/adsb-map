@@ -87,6 +87,33 @@
     {:geo/lat (rad->deg lat2)
      :geo/lon (-> (rad->deg lon2) (+ 540) (mod 360) (- 180))}))
 
+(def ^:const default-circle-segments
+  "Points around a `circle` ring. 128 puts each vertex ~2.8° apart, which
+  reads as a smooth curve at every zoom the chart offers while staying a
+  trivial polygon to push."
+  128)
+
+(defn circle
+  "A closed ring of positions approximating the geodesic circle of
+  `radius-m` around `center` — the polygon MapLibre needs to draw a disc
+  whose size is fixed in METERS.
+
+  MapLibre's own `circle` layer type cannot do this: its radius is in
+  SCREEN PIXELS, so a circle layer would swell and shrink against the
+  ground as the reader zooms. A real ground-truth disc has to be a
+  polygon, and each vertex is `destination` on its own bearing — the
+  vertices therefore sit on the true great-circle rim, not on a planar
+  approximation of it, so the ring stays right at any latitude and at
+  radii where flat-earth math visibly sags.
+
+  The first point is repeated as the last, closing the ring — GeoJSON
+  requires a LinearRing's first and last positions to be identical."
+  ([center radius-m] (circle center radius-m default-circle-segments))
+  ([center radius-m segments]
+   (let [ring (mapv #(destination center (* % (/ 360 segments)) radius-m)
+                    (range segments))]
+     (conj ring (first ring)))))
+
 (defn bounds
   "The bounding box enclosing a seq of `{:geo/lat _ :geo/lon _}`
   positions, as `{:geo/min-lat _ :geo/max-lat _ :geo/min-lon _
