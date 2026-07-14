@@ -40,6 +40,47 @@
           ;; the chart's own paper while tiles load
           :background "var(--paper)")]
 
+   ;; Free / Follow reticle — map chrome stacked just above MapLibre's
+   ;; compact attribution (i) in the bottom-right corner (adsb-jg4).
+   ;; Desktop clearance matches .maplibregl-ctrl-bottom-right (roster.clj);
+   ;; phone sheet snaps override bottom in adsb.css.roster/phone.
+   ;; 10px is MapLibre's control margin; 34px clears the compact (i).
+   [:.adsb-follow-control
+    (decl :position        "absolute"
+          :z-index         2
+          :right           "calc(var(--roster-w) + var(--safe-right) + 10px)"
+          :bottom          "calc(var(--safe-bottom) + 10px + 34px)"
+          :display         "inline-flex"
+          :align-items     "center"
+          :justify-content "center"
+          :width           "29px"
+          :height          "29px"
+          :margin          0
+          :padding         0
+          :border          "1px solid var(--rule)"
+          :border-radius   "4px"
+          :background      "var(--paper-chrome)"
+          :color           "var(--faded-ink)"
+          :box-shadow      "0 0 0 2px rgba(0, 0, 0, 0.1)"
+          :cursor          "pointer"
+          :line-height     0)]
+
+   [:.adsb-follow-control:hover
+    (decl :color "var(--ink)")]
+
+   [".adsb-follow-control.is-active"
+    (decl :color      "var(--magenta)"
+          :border-color "var(--magenta)")]
+
+   [:.adsb-follow-control:focus-visible
+    (decl :outline        "2px solid var(--magenta)"
+          :outline-offset "2px")]
+
+   [:.adsb-follow-glyph
+    (decl :display "block"
+          :width   "16px"
+          :height  "16px")]
+
    ;; Taken out of the visual channel, left in the accessible one. The feeder's
    ;; healthy state wears this: the eye gets a green dot, a screen reader still
    ;; hears "Feeder OK" (adsb-33i). `display: none` would have deleted the

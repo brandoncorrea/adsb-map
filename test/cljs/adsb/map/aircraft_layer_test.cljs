@@ -39,7 +39,8 @@
 
 (defn- recording-map []
   (let [!rec (atom {:on-load nil :sources {} :layers [] :set-data []
-                    :images [] :on-layer-click nil :hover-layers []})]
+                    :images [] :on-layer-click nil :on-layer-dblclick nil
+                    :hover-layers []})]
     {:rec !rec
      :m   (reify maplibre/Map
             (destroy! [_] (swap! !rec assoc :destroyed? true))
@@ -52,6 +53,8 @@
               (swap! !rec update :images conj {:id id :image image :opts opts}))
             (on-layer-click! [_ _layer-id f]
               (swap! !rec assoc :on-layer-click f))
+            (on-layer-dblclick! [_ _layer-id f]
+              (swap! !rec assoc :on-layer-dblclick f))
             (on-layer-hover! [_ layer-id _on-enter _on-leave]
               (swap! !rec update :hover-layers conj layer-id))
             ;; The shell-mounting proofs attach the emergency annotations
@@ -59,7 +62,10 @@
             ;; only the moveend registration ever crosses this seam.
             (bounds [_] {:geo/min-lat 27.0 :geo/max-lat 29.0
                          :geo/min-lon -83.0 :geo/max-lon -81.0})
+            (fly-to! [_ _lng-lat] nil)
+            (ease-to! [_ _lng-lat] nil)
             (on-move! [_ _f] nil)
+            (on-drag-start! [_ _f] nil)
             (fit-bounds! [_ _bounds _padding] nil))}))
 
 (defn- fire-load! [{:keys [rec]}] ((:on-load @rec)))
@@ -206,15 +212,30 @@
           handle     (layer/attach! m)
           dispatched (atom [])]
       (fire-load! fake)
-      (testing "the layer wired a click handler AND a hover cursor through the seam"
+      (testing "the layer wired click, dblclick, and hover through the seam"
         (is (fn? (:on-layer-click @rec)))
+        (is (fn? (:on-layer-dblclick @rec)))
         (is (= [layer/layer-id] (:hover-layers @rec))))
       (with-redefs [rf/dispatch (fn [ev] (swap! dispatched conj ev))]
-        ;; The seam hands the app the clicked feature's properties as a
-        ;; Clojure map; drive the handler with one directly.
-        ((:on-layer-click @rec) {:icao "abc0e4" :callsign "UPS2717"}))
+        ;; Single-click (detail 1): select. Multi-click (detail 2): follow.
+        ((:on-layer-click @rec) {:icao "abc0e4" :callsign "UPS2717"
+                                 :click/detail 1}))
       (is (= [[:aircraft/select "abc0e4"]] @dispatched)
           "one selection dispatch, carrying the icao from the feature")
+      (layer/detach! handle))))
+
+(deftest multi-click-and-dblclick-dispatch-follow
+  (rf-test/run-test-sync
+    (let [{:keys [m rec] :as fake} (recording-map)
+          handle     (layer/attach! m)
+          dispatched (atom [])]
+      (fire-load! fake)
+      (with-redefs [rf/dispatch (fn [ev] (swap! dispatched conj ev))]
+        ;; Same gesture: detail 2 then dblclick — must not toggle twice.
+        ((:on-layer-click @rec) {:icao "abc0e4" :click/detail 2})
+        ((:on-layer-dblclick @rec) {:icao "abc0e4" :callsign "UPS2717"}))
+      (is (= [[:aircraft/dblclick-follow "abc0e4"]] @dispatched)
+          "one follow toggle per double-click gesture (adsb-jg4)")
       (layer/detach! handle))))
 
 ;; ---------------------------------------------------------------------

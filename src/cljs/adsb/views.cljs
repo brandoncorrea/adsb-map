@@ -9,13 +9,14 @@
   (:require [adsb.map.view :as map-view]
             [adsb.ui.aircraft-panel :as aircraft-panel]
             [adsb.ui.alert :as alert]
+            [adsb.ui.follow :as follow]
             [adsb.ui.roster :as roster]))
 
 (defn app-root
   "The shell: a full-viewport map, and the chrome floating over it. Every
   surface left over it earns its place: the roster dock (find + ranked list),
   the NOTAM ribbon when an aircraft is squawking, the index card when one is
-  selected.
+  selected, Free/Follow above the map attribution when a flight is pinned.
 
   Every one is a SIBLING of the map, never a child: the chrome is Reagent's and
   the map owns no React inside it."
@@ -23,5 +24,6 @@
   [:div.adsb-shell
    [alert/alert-ribbon]
    [map-view/map-view]
+   [follow/follow-control]
    [roster/roster]
    [aircraft-panel/aircraft-panel]])

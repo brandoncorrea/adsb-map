@@ -153,7 +153,8 @@
 (defn- panel-body
   "The panel for one selected aircraft. Collapsible: expanded = full fact
   sheet; collapsed = a chip with callsign + altitude so the map can breathe.
-  × deselects; the chevron only collapses (adsb-66h)."
+  × deselects; the chevron only collapses (adsb-66h). Free/Follow lives on
+  the map chrome (adsb.ui.follow), not here."
   [aircraft now-ms enrichment expanded?]
   (let [{:aircraft/keys [icao callsign ground-speed-kt track-deg squawk
                          baro-rate-fpm position-suspect? mlat?]} aircraft

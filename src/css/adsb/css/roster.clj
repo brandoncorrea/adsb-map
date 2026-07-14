@@ -307,7 +307,13 @@
 
    [".adsb-roster:not(.is-open) ~ .adsb-map .maplibregl-ctrl-bottom-right,
      .adsb-shell:has(.adsb-roster:not(.is-open)) .maplibregl-ctrl-bottom-right"
-    (decl :right "calc(40px + var(--safe-right))")]])
+    (decl :right "calc(40px + var(--safe-right))")]
+
+   ;; Follow reticle rides the same corner as the (i) — open dock width,
+   ;; collapsed rail width (adsb.ui.follow, adsb-jg4).
+   [".adsb-roster:not(.is-open) ~ .adsb-follow-control,
+     .adsb-shell:has(.adsb-roster:not(.is-open)) .adsb-follow-control"
+    (decl :right "calc(40px + var(--safe-right) + 10px)")]])
 
 (def phone
   "Phone: bottom pull-up with three snaps (closed / half / full).
@@ -444,6 +450,13 @@
             :z-index 1
             :transition "bottom 400ms cubic-bezier(0.22, 1, 0.36, 1)")]
 
+     ;; Follow reticle: same right edge as the (i), bottom is attribution
+     ;; bottom + control stack (margin 10 + (i) 29 + gap ~5).
+     [:.adsb-follow-control
+      (decl :right  "calc(var(--safe-right) + 10px)"
+            :bottom "calc(var(--roster-sheet-h) + var(--safe-bottom) + 10px + 34px)"
+            :transition "bottom 400ms cubic-bezier(0.22, 1, 0.36, 1)")]
+
      ;; Desktop dock clearance sets right:40px when the roster is not
      ;; .is-open. On phone "closed" is also not .is-open, so that rule
      ;; inset the (i) from the right edge — reassert safe-right for every
@@ -451,16 +464,30 @@
      [".adsb-shell:has(.adsb-roster) .maplibregl-ctrl-bottom-right"
       (decl :right "var(--safe-right)")]
 
+     [".adsb-shell:has(.adsb-roster) .adsb-follow-control"
+      (decl :right "calc(var(--safe-right) + 10px)")]
+
      [".adsb-shell:has(.adsb-roster.is-sheet-closed) .maplibregl-ctrl-bottom-right,
        .adsb-shell:has(.adsb-roster:not(.is-open)) .maplibregl-ctrl-bottom-right"
       (decl :right  "var(--safe-right)"
             :bottom "calc(var(--roster-rail-h) + var(--safe-bottom))")]
 
+     [".adsb-shell:has(.adsb-roster.is-sheet-closed) .adsb-follow-control,
+       .adsb-shell:has(.adsb-roster:not(.is-open)) .adsb-follow-control"
+      (decl :right  "calc(var(--safe-right) + 10px)"
+            :bottom "calc(var(--roster-rail-h) + var(--safe-bottom) + 10px + 34px)")]
+
      [".adsb-shell:has(.adsb-roster.is-sheet-half) .maplibregl-ctrl-bottom-right"
       (decl :bottom "calc(52vh + var(--safe-bottom))")]
 
+     [".adsb-shell:has(.adsb-roster.is-sheet-half) .adsb-follow-control"
+      (decl :bottom "calc(52vh + var(--safe-bottom) + 10px + 34px)")]
+
      [".adsb-shell:has(.adsb-roster.is-sheet-full) .maplibregl-ctrl-bottom-right"
-      (decl :bottom "calc(92vh + var(--safe-bottom))")]]))
+      (decl :bottom "calc(92vh + var(--safe-bottom))")]
+
+     [".adsb-shell:has(.adsb-roster.is-sheet-full) .adsb-follow-control"
+      (decl :bottom "calc(92vh + var(--safe-bottom) + 10px + 34px)")]]))
 
 (def styles
   [dock phone])

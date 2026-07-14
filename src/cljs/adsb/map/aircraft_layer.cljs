@@ -210,12 +210,58 @@
   (maplibre/add-image! m style/plane-icon-id (->icon-image draw-plane!) {:sdf true})
   (maplibre/add-image! m style/dot-icon-id (->icon-image draw-dot!) {:sdf true}))
 
-(defn- select!
-  "The click contract: dispatch selection with the icao from the clicked
-  feature's properties. We emit the intent only — adsb-dgb.1 owns the
-  event handler and the panel."
+;; Re-click on the already-selected plane arms a delayed deselect so a
+;; double-click (detail 2 / dblclick event) can cancel it and mean follow
+;; instead. Fresh selections fire immediately.
+(def ^:private deselect-arm-ms 350)
+(defonce ^:private !pending-deselect (atom nil))
+
+;; click detail≥2 and the separate dblclick event often both fire for
+;; one gesture; without a short gate that would toggle follow ON then
+;; immediately OFF.
+(def ^:private follow-dedupe-ms 400)
+(defonce ^:private !last-follow-ms (atom 0))
+
+(defn- cancel-pending-deselect!
+  []
+  (when-let [id @!pending-deselect]
+    (js/clearTimeout id)
+    (reset! !pending-deselect nil)))
+
+(defn- dblclick-follow!
+  "Double-click / multi-click on a plane: toggle focus-follow (adsb-jg4).
+  Cancels any armed deselect from the first click of the gesture.
+  Dedupes when both click(detail≥2) and dblclick arrive for one gesture."
   [props]
-  (rf/dispatch [:aircraft/select (:icao props)]))
+  (cancel-pending-deselect!)
+  (when-let [icao (:icao props)]
+    (let [now (.now js/Date)]
+      (when (> (- now @!last-follow-ms) follow-dedupe-ms)
+        (reset! !last-follow-ms now)
+        (rf/dispatch [:aircraft/dblclick-follow icao])))))
+
+(defn- select!
+  "The click contract. detail 1: select (or arm deselect if already lit).
+  detail ≥ 2: follow toggle — the second half of a double-click, so we
+  do not wait on the separate dblclick event (which MapLibre / the
+  browser can drop or race). Emits intent only; events own app-db."
+  [props]
+  (let [detail (or (:click/detail props) 1)
+        icao   (:icao props)]
+    (when icao
+      (if (>= detail 2)
+        (dblclick-follow! props)
+        (let [selected @(rf/subscribe [:aircraft/selected-icao])]
+          (if (= icao selected)
+            (do (cancel-pending-deselect!)
+                (reset! !pending-deselect
+                        (js/setTimeout
+                          (fn []
+                            (reset! !pending-deselect nil)
+                            (rf/dispatch [:aircraft/select icao]))
+                          deselect-arm-ms)))
+            (do (cancel-pending-deselect!)
+                (rf/dispatch [:aircraft/select icao]))))))))
 
 (defn- hover-enter!
   "Map pointer over a plane → the same hover channel the roster rows use,
@@ -312,9 +358,11 @@
           (maplibre/add-source! m source-id source-spec)
           (maplibre/add-layer! m (layer-spec theme))
           ;; The click contract and its hover affordance, through the
-          ;; seam. Select opens the panel; hover lights the callsign label
+          ;; seam. Select opens the panel; double-click toggles follow
+          ;; (adsb-jg4); hover lights the callsign label
           ;; (adsb.map.selection / adsb-xgg).
           (maplibre/on-layer-click! m layer-id select!)
+          (maplibre/on-layer-dblclick! m layer-id dblclick-follow!)
           (maplibre/on-layer-hover! m layer-id hover-enter! hover-leave!)
           ;; The hot path: a reaction OUTSIDE any component. Its initial
           ;; run flushes whatever picture already arrived; each re-run is

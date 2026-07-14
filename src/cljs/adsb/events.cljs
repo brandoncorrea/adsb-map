@@ -35,27 +35,32 @@
   :aircraft/select
   (fn [db [_ icao]]
     (if (= icao (:aircraft/selected-icao db))
-      ;; Deselect: drop selection AND hover. On mobile a tap has no
-      ;; mouseleave, so a leftover :aircraft/hovered-icao would keep the
-      ;; callsign label pinned after the ring is gone (adsb-oi8). Expand
-      ;; state stays so the next pick keeps the reader's collapse choice
-      ;; (adsb-4ca).
-      (dissoc db :aircraft/selected-icao :aircraft/hovered-icao)
+      ;; Deselect: drop selection, hover, and follow. On mobile a tap has
+      ;; no mouseleave, so a leftover :aircraft/hovered-icao would keep
+      ;; the callsign label pinned after the ring is gone (adsb-oi8).
+      ;; Expand state stays so the next pick keeps the reader's collapse
+      ;; choice (adsb-4ca).
+      (dissoc db :aircraft/selected-icao :aircraft/hovered-icao
+              :map/camera-mode)
       ;; New pick keeps panel/expanded? as the reader left it — collapsed
       ;; stays collapsed when switching flights; default true (sub) only
       ;; applies before the first explicit expand/collapse. Hover is
       ;; cleared so a prior touch-hover does not outlive the new pick.
+      ;; Camera returns to free: map click must not sticky-follow; roster
+      ;; focus re-enters follow explicitly (adsb-jg4).
       (-> db
-          (assoc :aircraft/selected-icao icao)
+          (assoc :aircraft/selected-icao icao
+                 :map/camera-mode :free)
           (dissoc :aircraft/hovered-icao)))))
 
 (rf/reg-event-db
   :aircraft/clear-selection
   (fn [db _]
-    ;; Drop selection and hover together (Escape / × — same sticky-label
-    ;; trap as toggle-deselect on touch). Expand/collapse is view
-    ;; preference and survives across picks (adsb-4ca).
-    (dissoc db :aircraft/selected-icao :aircraft/hovered-icao)))
+    ;; Drop selection, hover, and follow together (Escape / × — same
+    ;; sticky-label trap as toggle-deselect on touch). Expand/collapse is
+    ;; view preference and survives across picks (adsb-4ca).
+    (dissoc db :aircraft/selected-icao :aircraft/hovered-icao
+            :map/camera-mode)))
 
 ;; Detail card expand/collapse. View state of the panel, not of the sky.
 (rf/reg-event-db
@@ -86,9 +91,86 @@
   (fn [{:keys [db]} [_ icao]]
     (let [deselecting? (= icao (:aircraft/selected-icao db))
           position     (get-in db [:aircraft/picture icao :aircraft/position])]
+      ;; Focus from the roster: select and enter follow so the plane does
+      ;; not walk off the chart under a still-open card (adsb-jg4). The
+      ;; follow track owns the fly-to (center + focus-zoom) — do not also
+      ;; fire :map/fly-to here or the track's entry animation races it.
+      ;; Map click stays on plain select (free camera).
       {:fx (cond-> [[:dispatch [:aircraft/select icao]]]
              (and (not deselecting?) position)
-             (conj [:map/fly-to position]))})))
+             (conj [:dispatch [:map/follow]]))})))
+
+;; ---------------------------------------------------------------------
+;; Camera Free / Follow (adsb-jg4)
+;;
+;; :free (default) — selection does not drive the chart after any one-shot
+;; fly-to. :follow — keep the selected aircraft centered (north-up) as
+;; positions step in. Course-up is deliberately not shipped.
+;;
+;; Enter follow: map reticle, roster focus, or double-click a plane.
+;; Leave: reticle, double-click again, user pan (adsb.map.follow →
+;; :map/user-pan), deselect, age-out, or a map click that picks a
+;; different plane (select resets to free).
+
+(rf/reg-event-fx
+  :aircraft/dblclick-follow
+  (fn [{:keys [db]} [_ icao]]
+    ;; Double-click on a map glyph: force-select (never toggle-deselect —
+    ;; the multi-click half of the gesture is already filtered at the
+    ;; MapLibre seam) and toggle follow for that flight.
+    (let [pos        (get-in db [:aircraft/picture icao :aircraft/position])
+          selected?  (= icao (:aircraft/selected-icao db))
+          following? (and selected? (= :follow (:map/camera-mode db)))
+          db*        (-> db
+                         (assoc :aircraft/selected-icao icao)
+                         (dissoc :aircraft/hovered-icao))]
+      (cond
+        (not pos)
+        ;; Heard but never located — open the card, no camera move.
+        {:db db*}
+
+        following?
+        ;; Same plane already followed → free (toggle off).
+        {:db (assoc db* :map/camera-mode :free)}
+
+        :else
+        ;; New pick or free → follow; adsb.map.follow flies on entry.
+        {:db (assoc db* :map/camera-mode :follow)}))))
+
+
+(rf/reg-event-db
+  :map/follow
+  (fn [db _]
+    (let [icao (:aircraft/selected-icao db)
+          pos  (when icao
+                 (get-in db [:aircraft/picture icao :aircraft/position]))]
+      (if (and icao pos)
+        (assoc db :map/camera-mode :follow)
+        db))))
+
+(rf/reg-event-db
+  :map/user-pan
+  (fn [db _]
+    (assoc db :map/camera-mode :free)))
+
+(rf/reg-event-fx
+  :map/toggle-follow
+  (fn [{:keys [db]} _]
+    (let [icao (:aircraft/selected-icao db)
+          pos  (when icao
+                 (get-in db [:aircraft/picture icao :aircraft/position]))
+          on?  (= :follow (:map/camera-mode db))]
+      (cond
+        on?
+        {:db (assoc db :map/camera-mode :free)}
+
+        (and icao pos)
+        ;; Follow track flies on entry (center + focus-zoom). No second
+        ;; fly-to here — concurrent ease/fly cancels the zoom (adsb-jg4).
+        {:db (assoc db :map/camera-mode :follow)}
+
+        :else
+        {:db db}))))
 
 ;; ---------------------------------------------------------------------
 ;; Aircraft hover — selection's transient sibling.
@@ -131,5 +213,5 @@
     (let [db  (assoc db :ui/now-ms now-ms)
           sel (:aircraft/selected-icao db)]
       (if (and sel (not (contains? (:aircraft/picture db) sel)))
-        (dissoc db :aircraft/selected-icao)
+        (dissoc db :aircraft/selected-icao :map/camera-mode)
         db))))

@@ -51,6 +51,13 @@
   (fn [db _]
     (get db :panel/expanded? true)))
 
+;; Camera mode for the selected flight: :free (default) or :follow
+;; (adsb-jg4). Course-up is not shipped. adsb.map.follow reads this.
+(rf/reg-sub
+  :map/camera-mode
+  (fn [db _]
+    (get db :map/camera-mode :free)))
+
 ;; The feeder chip's presentation health — distinct from the stream chip's.
 ;; The server reports the feeder as :ok/:down/:starting on every frame
 ;; (adsb.wire, :feeder/status), but that claim only means anything while OUR
