@@ -8,6 +8,9 @@
 # Editor
 .idea/
 
+# Grok Build local artifacts (screenshots, session dumps)
+.grok/
+
 # Aircraft enrichment database — third-party DATA fetched by `bb db:fetch`
 # (tar1090-db / Mictronics). Large and license-unstated: never committed; the
 # app degrades to absent when it is missing. See README 'Aircraft enrichment
