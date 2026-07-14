@@ -150,6 +150,33 @@ services:
         type: SECRET
         value: REPLACE_ME
 
+      # ── The streaming feed (adsb-elf), an ALTERNATIVE to the HTTP poll ────────
+      # ADSB_SOURCE selects the ingest transport. Unset (or "poll") is the HTTP
+      # ultrafeeder above. "sbs" streams BaseStation CSV (:30003) and "beast"
+      # streams binary Mode-S (:30005) — same sky, lower latency — and each reads
+      # its endpoint from ADSB_FEED_URL:
+      #
+      #   * wss://host  — the intended PRODUCTION shape. The feeder's TCP ports
+      #     are exposed through the Cloudflare Tunnel at sbs.bwawan.com /
+      #     beast.bwawan.com, Access-gated with the SAME service token as the
+      #     HTTP poller, and the JVM dials the edge directly over wss:// with the
+      #     CF-Access-Client-Id/Secret headers from ADSB_FEEDER_AUTH_ID/SECRET
+      #     above (both-or-neither). No cloudflared sidecar: the raw
+      #     `cloudflared access tcp` client does not survive these hostnames,
+      #     but the websocket upgrade does.
+      #   * tcp://host:port — a plain socket for a dev/LAN feeder, no auth.
+      #
+      # A dead tunnel can leave the socket open but silent; the reader treats
+      # 60s of silence as a stall and reconnects (adsb.ingest.tcp). Leave
+      # ADSB_SOURCE unset to keep the HTTP poll. ADSB_FEED_URL is NOT a secret,
+      # but never commit a real one that implies the internal topology.
+      # - key: ADSB_SOURCE
+      #   scope: RUN_TIME
+      #   value: sbs
+      # - key: ADSB_FEED_URL
+      #   scope: RUN_TIME
+      #   value: wss://sbs.bwawan.com
+
       # ── Privacy ─────────────────────────────────────────────────────────────
       # The receiver position backs the range gate and the max-range stat. It is
       # SECRET because it is the Overseer's home: the backend keeps it

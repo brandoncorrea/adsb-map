@@ -20,13 +20,16 @@
   from (adsb.stats)."
   (:require [adsb.env :as env]
             [adsb.http.server :as server]
+            [adsb.ingest.beast-source :as beast-source]
             [adsb.ingest.config :as config]
             [adsb.ingest.plausibility :as plausibility]
             [adsb.ingest.poll :as poll]
             [adsb.ingest.receiver :as receiver]
             [adsb.ingest.replay :as replay]
+            [adsb.ingest.sbs :as sbs]
             [adsb.ingest.source :as source]
             [adsb.ingest.ultrafeeder :as ultrafeeder]
+            [adsb.ingest.wss :as wss]
             [adsb.state :as state]
             [adsb.stats :as stats]
             [adsb.stream.broadcast :as broadcast]
@@ -85,6 +88,7 @@
   {:port            (parse-port (get env "PORT"))
    :source          (get env config/source-env)
    :ultrafeeder-url (get env config/feeder-url-env)
+   :feed-url        (get env config/feed-url-env)
    :dev-csp?        (dev-csp? env)
    :origin-token    (origin-token env)
    :env             env})
@@ -101,25 +105,46 @@
                                plausibility/default-max-range-m)
       (state/apply-batch! (System/currentTimeMillis))))
 
+(defn- ->stream-source
+  "Construct a streaming Source (SBS or Beast) from ADSB_FEED_URL. `->source`
+  is sbs/->source or beast-source/->source. A tcp:// feed uses the default
+  plain-socket transport (a dev/LAN feeder); a wss:// feed dials the tunnel
+  via adsb.ingest.wss, presenting the CF-Access service token from
+  ADSB_FEEDER_AUTH_ID/SECRET (both-or-neither — half a credential fails
+  loudly). A missing or malformed ADSB_FEED_URL already failed in
+  config/parse-feed-url."
+  [->source {:keys [scheme uri host port]} env]
+  (let [opts (case scheme
+               :tcp {}
+               :wss {:transport (wss/transport uri
+                                               (config/feeder-auth-headers env))})]
+    (->source host port opts)))
+
 (defn- build-source!
-  "Select the ingest Source from config and return
-  [source feeder-url feeder-auth-headers]. ADSB_SOURCE=replay swaps the
-  live feeder for the recorded-fixture Source (adsb.ingest.replay) — bb
-  dev with no feeder reachable — and needs no feeder URL or auth, so both
-  trailing values are nil and the range gate falls back to the env
-  override or off. Otherwise the live ultrafeeder Source sits behind a
-  validated feeder URL and the optional Cloudflare Access service token
-  (adsb.ingest.config/feeder-auth-headers): a missing or malformed URL, or
-  half a service-token credential, still fails loudly here, before
-  anything starts (Boundary 3)."
-  [{:keys [source ultrafeeder-url env]}]
-  (if (config/replay-source? source)
-    [(replay/->source) nil nil]
-    (let [feeder-url (config/validate-feeder-url ultrafeeder-url)
-          headers    (config/feeder-auth-headers env)]
-      [(ultrafeeder/->source feeder-url ultrafeeder/default-timeout-ms headers)
-       feeder-url
-       headers])))
+  "Select the ingest Source from ADSB_SOURCE and return
+  [source feeder-url feeder-auth-headers]; the trailing two carry the poll
+  path's HTTP feeder URL and auth headers for the receiver-position resolve,
+  and are nil for every source that has no aircraft.json to consult (replay,
+  sbs, beast). A misconfiguration — an unknown ADSB_SOURCE, a missing or
+  malformed URL, or half a service-token credential — fails loudly here,
+  before anything starts (Boundary 3).
+
+    :poll    live ultrafeeder over HTTP, ADSB_ULTRAFEEDER_URL validated
+    :replay  the recorded fixture (adsb.ingest.replay), no feeder needed
+    :sbs     the SBS stream (:30003) via ADSB_FEED_URL
+    :beast   the Beast stream (:30005) via ADSB_FEED_URL"
+  [{:keys [source ultrafeeder-url feed-url env]}]
+  (case (config/source-kind source)
+    :replay [(replay/->source) nil nil]
+    :poll   (let [feeder-url (config/validate-feeder-url ultrafeeder-url)
+                  headers    (config/feeder-auth-headers env)]
+              [(ultrafeeder/->source feeder-url ultrafeeder/default-timeout-ms
+                                     headers)
+               feeder-url headers])
+    :sbs    [(->stream-source sbs/->source
+                              (config/parse-feed-url feed-url) env) nil nil]
+    :beast  [(->stream-source beast-source/->source
+                              (config/parse-feed-url feed-url) env) nil nil]))
 
 (defn start!
   "Boot the backend from config and return the running system:

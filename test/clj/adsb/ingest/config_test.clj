@@ -103,3 +103,74 @@
     (doseq [value [nil "" "ultrafeeder" "live"]]
       (is (not (config/replay-source? value))
           (str "should keep the ultrafeeder: " (pr-str value))))))
+
+;; ---------------------------------------------------------------------
+;; ADSB_SOURCE classification — poll (the default) vs the streaming/fixture
+;; Sources the boot path builds.
+
+(deftest source-kind-classifies-each-source
+  (testing "unset and \"poll\" both select the HTTP poll Source — the default"
+    (doseq [value [nil "" "  " "poll" "POLL" "  Poll  "]]
+      (is (= :poll (config/source-kind value))
+          (str "should be :poll: " (pr-str value)))))
+  (testing "sbs, beast, and replay each select their Source, case-
+            and whitespace-insensitively"
+    (is (= :sbs (config/source-kind "sbs")))
+    (is (= :sbs (config/source-kind "  SBS ")))
+    (is (= :beast (config/source-kind "beast")))
+    (is (= :beast (config/source-kind "BEAST")))
+    (is (= :replay (config/source-kind "replay")))))
+
+(deftest source-kind-rejects-an-unknown-source
+  (testing "an unrecognized ADSB_SOURCE is a boot-time misconfiguration and
+            fails loudly, naming the env var and the value"
+    (let [{:keys [message data]}
+          (try (config/source-kind "socket")
+               (catch clojure.lang.ExceptionInfo e
+                 {:message (ex-message e) :data (ex-data e)}))]
+      (is (re-find #"ADSB_SOURCE" (str message)))
+      (is (re-find #"socket" (str message)))
+      (is (= config/source-env (:env data))))))
+
+;; ---------------------------------------------------------------------
+;; ADSB_FEED_URL — the streaming feed endpoint for sbs/beast, parsed into a
+;; transport descriptor (tcp:// plain socket vs wss:// through the tunnel).
+
+(deftest parse-feed-url-tcp
+  (testing "tcp://host:port yields the plain-socket descriptor"
+    (is (= {:scheme :tcp :host "dietpi.local" :port 30003}
+           (config/parse-feed-url "tcp://dietpi.local:30003")))))
+
+(deftest parse-feed-url-wss
+  (testing "wss://host yields the websocket descriptor, defaulting to 443"
+    (let [{:keys [scheme host port uri]}
+          (config/parse-feed-url "wss://sbs.bwawan.com")]
+      (is (= :wss scheme))
+      (is (= "sbs.bwawan.com" host))
+      (is (= 443 port))
+      (is (= "wss://sbs.bwawan.com" (str uri)))))
+  (testing "an explicit wss port is honored"
+    (is (= 8443 (:port (config/parse-feed-url "wss://sbs.bwawan.com:8443"))))))
+
+(defn- feed-rejection [url]
+  (try
+    (config/parse-feed-url url)
+    ::no-throw
+    (catch clojure.lang.ExceptionInfo e
+      {:message (ex-message e) :data (ex-data e)})))
+
+(deftest parse-feed-url-fails-fast
+  (testing "a blank or missing URL fails loudly, naming the env var"
+    (doseq [missing [nil "" "   "]]
+      (let [{:keys [message data]} (feed-rejection missing)]
+        (is (re-find #"ADSB_FEED_URL" (str message)))
+        (is (= config/feed-url-env (:env data))))))
+  (testing "a wrong scheme (http/https/ws) is rejected — only tcp and wss"
+    (doseq [bad ["http://feeder:8100" "https://feeder" "ws://feeder"]]
+      (is (re-find #"tcp:// or wss://" (str (:message (feed-rejection bad))))
+          (str "should reject " bad))))
+  (testing "a tcp URL with no port is rejected — the socket needs one"
+    (is (re-find #"must include a port"
+                 (str (:message (feed-rejection "tcp://dietpi.local"))))))
+  (testing "an unparseable URL is rejected as an ex-info, not thrown raw"
+    (is (map? (feed-rejection "tcp://bad host:3")))))

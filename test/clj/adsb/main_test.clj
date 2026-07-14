@@ -58,7 +58,20 @@
 (deftest env->config-captures-source
   (testing "ADSB_SOURCE is captured so start! can pick the ingest Source"
     (is (= "replay" (:source (main/env->config {"ADSB_SOURCE" "replay"}))))
-    (is (nil? (:source (main/env->config {}))))))
+    (is (nil? (:source (main/env->config {})))))
+  (testing "ADSB_FEED_URL is captured for the streaming Sources to parse"
+    (is (= "wss://sbs.bwawan.com"
+           (:feed-url (main/env->config {"ADSB_FEED_URL" "wss://sbs.bwawan.com"}))))
+    (is (nil? (:feed-url (main/env->config {}))))))
+
+(deftest start-fails-fast-on-a-misconfigured-stream-source
+  (testing "ADSB_SOURCE=sbs without ADSB_FEED_URL fails loudly at boot,
+            naming the env var — no dial is attempted"
+    (is (thrown-with-msg? ExceptionInfo #"ADSB_FEED_URL"
+                          (main/start! {:port 0 :source "sbs" :env {}}))))
+  (testing "an unrecognized ADSB_SOURCE fails loudly, naming that env var"
+    (is (thrown-with-msg? ExceptionInfo #"ADSB_SOURCE"
+                          (main/start! {:port 0 :source "socket" :env {}})))))
 
 (deftest start-validates-the-feeder-url
   (testing "boot fails loudly, naming the env var, when the feeder url

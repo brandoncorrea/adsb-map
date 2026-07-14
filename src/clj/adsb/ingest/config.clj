@@ -21,9 +21,19 @@
 (def ^:const feeder-url-env "ADSB_ULTRAFEEDER_URL")
 
 (def ^:const source-env
-  "Selects the ingest Source. Unset (or anything but \"replay\") is the
-  live ultrafeeder, which requires ADSB_ULTRAFEEDER_URL."
+  "Selects the ingest Source: \"poll\" (default, also the unset value) polls
+  ultrafeeder's aircraft.json and requires ADSB_ULTRAFEEDER_URL; \"sbs\" and
+  \"beast\" stream the tunnel-exposed TCP feeds and require ADSB_FEED_URL;
+  \"replay\" serves the recorded fixture and requires nothing."
   "ADSB_SOURCE")
+
+(def ^:const feed-url-env
+  "The streaming feed endpoint for ADSB_SOURCE=sbs / beast, as a URL:
+  tcp://host:port for the plain-socket transport on a dev/LAN feeder, or
+  wss://host for the websocket transport through the Cloudflare Tunnel
+  (wss then presents the CF-Access service token from
+  ADSB_FEEDER_AUTH_ID/SECRET). Required for sbs/beast, unused otherwise."
+  "ADSB_FEED_URL")
 
 (def ^:const replay-source
   "The ADSB_SOURCE value that swaps the live feeder for the recorded
@@ -33,13 +43,31 @@
 
 (def ^:private allowed-schemes #{"http" "https"})
 
+(defn- normalize-source [source]
+  (some-> source str/trim str/lower-case not-empty))
+
 (defn replay-source?
   "True when ADSB_SOURCE selects the fixture-replay Source instead of the
   live ultrafeeder. Case- and whitespace-insensitive; nil (the default)
   is false, so the live feeder — and its required, validated URL —
   remains the default."
   [source]
-  (= replay-source (some-> source str/trim str/lower-case)))
+  (= replay-source (normalize-source source)))
+
+(defn source-kind
+  "Classify ADSB_SOURCE into the Source the boot path builds: :poll (the
+  default — unset or \"poll\"), :replay, :sbs, or :beast. Case- and
+  whitespace-insensitive. An unrecognized value is a boot-time
+  misconfiguration and fails loudly, exactly like a bad feeder URL."
+  [source]
+  (case (normalize-source source)
+    (nil "poll") :poll
+    "replay"     :replay
+    "sbs"        :sbs
+    "beast"      :beast
+    (throw (ex-info (str source-env " must be one of poll, sbs, beast,"
+                         " replay — got: " (pr-str source))
+                    {:type ::invalid-source :env source-env}))))
 
 (defn- fail! [detail]
   (throw (ex-info (str feeder-url-env " " detail)
@@ -114,3 +142,55 @@
                                        :env  [feeder-auth-id-env
                                               feeder-auth-secret-env]}))
       :else           nil)))
+
+;; ---------------------------------------------------------------------
+;; The streaming feed endpoint — ADSB_FEED_URL for ADSB_SOURCE=sbs / beast.
+;;
+;; Two transports, chosen by scheme (adsb-elf): tcp://host:port dials a
+;; plain socket (adsb.ingest.tcp/socket-transport) for a dev/LAN feeder;
+;; wss://host dials the websocket transport (adsb.ingest.wss) through the
+;; Cloudflare Tunnel, presenting the same CF-Access service token the HTTP
+;; poller already holds. Parsed defensively and validated at boot — a
+;; missing, malformed, or wrong-scheme URL fails loudly before the first
+;; dial, exactly like a bad feeder URL (Boundary 3).
+
+(def ^:private feed-schemes #{"tcp" "wss"})
+
+(def ^:private default-wss-port 443)
+
+(defn- fail-feed! [detail]
+  (throw (ex-info (str feed-url-env " " detail)
+                  {:type ::invalid-feed-url
+                   :env  feed-url-env})))
+
+(defn- parse-feed-uri [url]
+  (try
+    (URI. url)
+    (catch URISyntaxException _
+      (fail-feed! (str "must be a valid URL, got: " url)))))
+
+(defn parse-feed-url
+  "Parse ADSB_FEED_URL into a transport descriptor for a streaming Source.
+  tcp://host:port yields {:scheme :tcp :host h :port p} (plain socket);
+  wss://host[:port] yields {:scheme :wss :uri <URI> :host h :port p}
+  (websocket — the caller adds the CF-Access headers). A blank, unparseable,
+  wrong-scheme, hostless, or portless-tcp URL fails loudly, naming the env
+  var."
+  [url]
+  (when (str/blank? url)
+    (fail-feed! "must be set for ADSB_SOURCE=sbs or beast"))
+  (let [uri    (parse-feed-uri url)
+        scheme (some-> (.getScheme uri) str/lower-case)
+        host   (.getHost uri)
+        port   (.getPort uri)]
+    (when-not (feed-schemes scheme)
+      (fail-feed! (str "must be tcp:// or wss://, got scheme: "
+                       (pr-str scheme))))
+    (when (str/blank? host)
+      (fail-feed! (str "must include a host, got: " url)))
+    (if (= "tcp" scheme)
+      (do (when (neg? port)
+            (fail-feed! (str "tcp:// must include a port, got: " url)))
+          {:scheme :tcp :host host :port port})
+      {:scheme :wss :uri uri :host host
+       :port  (if (neg? port) default-wss-port port)})))

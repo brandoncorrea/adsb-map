@@ -44,8 +44,7 @@
             [adsb.schema :as schema]
             [clojure.string :as str]
             [malli.core :as m])
-  (:import (java.io BufferedReader InputStreamReader)
-           (java.net Socket)
+  (:import (java.io BufferedReader InputStream InputStreamReader)
            (java.nio.charset StandardCharsets)))
 
 ;; ---------------------------------------------------------------------
@@ -206,9 +205,11 @@
 
 ;; ---------------------------------------------------------------------
 ;; The reader: fold each line into the picture at arrival time. Effects
-;; live here; line->delta stays pure. The socket lifecycle — dialing,
-;; reconnecting, the reader thread, the unreachable-vs-quiet fetch! —
-;; belongs to adsb.ingest.tcp; this ns supplies only the per-line pump.
+;; live here; line->delta stays pure. The connection lifecycle — dialing,
+;; reconnecting, the reader thread, stall detection, the
+;; unreachable-vs-quiet fetch! — belongs to adsb.ingest.tcp; this ns
+;; supplies only the per-line pump over whatever InputStream the transport
+;; (plain socket or websocket) hands it.
 
 (defn- consume-line!
   "Fold one line's delta into the picture at its arrival instant, or do
@@ -228,21 +229,21 @@
         (recur)))))
 
 (defn- consume!
-  "The tcp reader seam: pump the socket's ASCII lines into the picture
-  until the connection ends."
-  [^Socket sock {:keys [picture clock running?]}]
-  (with-open [reader (BufferedReader.
-                      (InputStreamReader.
-                       (.getInputStream sock)
-                       StandardCharsets/US_ASCII))]
+  "The tcp reader seam: pump the connection's ASCII lines into the picture
+  until the connection ends. tcp/serve-connection! owns closing the stream,
+  so a read that throws (a drop, or the SO_TIMEOUT stall signal) unwinds
+  straight to reconnect."
+  [^InputStream in {:keys [picture clock running?]}]
+  (let [reader (BufferedReader.
+                (InputStreamReader. in StandardCharsets/US_ASCII))]
     (read-lines! reader picture clock running?)))
 
 ;; ---------------------------------------------------------------------
 ;; The Source
 
-(defrecord SbsSource [host port connect-timeout-ms reconnect-ms clock
-                      consume! thread-name
-                      picture running? connected? last-error socket
+(defrecord SbsSource [host port transport connect-timeout-ms idle-timeout-ms
+                      reconnect-ms clock consume! thread-name
+                      picture running? connected? last-error connection
                       reader-thread]
   source/Source
   (open! [this] (tcp/open! this))
@@ -251,14 +252,16 @@
 
 (defn ->source
   "A Source streaming SBS BaseStation messages from `host`:`port` (the
-  ultrafeeder's port 30003). open! starts the reader socket; fetch! returns
-  the accumulated, coerced domain batch (throwing while disconnected so the
-  poll loop backs off); close! stops the reader and closes the socket.
+  ultrafeeder's port 30003). open! starts the reader; fetch! returns the
+  accumulated, coerced domain batch (throwing while disconnected so the
+  poll loop backs off); close! stops the reader and closes the connection.
 
-  Explicit host/port mirrors ultrafeeder/->source; full ADSB_SOURCE
-  selection (host/port from the environment) is left for the wiring bead.
-  Options are adsb.ingest.tcp/reader-state's: :connect-timeout-ms,
-  :reconnect-ms, and the injectable :clock."
+  Explicit host/port mirrors ultrafeeder/->source; ADSB_SOURCE selection
+  and the URL-to-transport wiring live in adsb.main / adsb.ingest.config.
+  Options are adsb.ingest.tcp/reader-state's: :transport (default the
+  plain-socket transport; adsb.ingest.wss/transport for the tunnel),
+  :connect-timeout-ms, :idle-timeout-ms, :reconnect-ms, and the injectable
+  :clock."
   ([host port] (->source host port {}))
   ([host port opts]
    (map->SbsSource
