@@ -101,3 +101,22 @@ SBS carries no receiver-position field (no `r_dst`/`r_dir`), so there is
 nothing to redact here. To be **superseded or augmented by a real capture**
 off the feeder — tracked as bead **adsb-c75** — which must be reviewed
 against `docs/validation-boundaries.md` before it lands.
+
+## Beast Source end-to-end frames (no committed file)
+
+**SYNTHETIC-from-published-vectors.** The Beast Source integration test
+(`test/clj/adsb/ingest/beast_source_test.clj`) does not read a committed
+binary; it **builds its wire bytes in-process** by wrapping mode-s.org's
+published known-answer Mode-S vectors — the same ones the mode-s decode
+tests pin (KLM1023 identification, and the even/odd airborne-position pair
+that decodes to 52.2572/3.91937 at 38000 ft) — in Beast framing (`0x1a` +
+type + 6-byte MLAT + signal + payload, doubling any `0x1a`). The stream is
+adversarial: pure junk, a Mode-A/C and a short Mode-S frame the Source must
+ignore, a corrupted-CRC frame that must leave no trace, and an
+escape+bad-type resync run, served in small flushed chunks so frames split
+across socket reads (exercising `:carry` reassembly). See the framing
+fixture `beast-sample.bin` above for the unit-level capture. To be
+**superseded or augmented by a real capture** off the feeder — tracked as
+bead **adsb-c75** — which must be reviewed against
+`docs/validation-boundaries.md` before it lands. Beast carries no
+receiver-position field, so there is nothing to redact.

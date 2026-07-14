@@ -40,11 +40,12 @@
   throwing."
   (:require [adsb.accumulator :as accumulator]
             [adsb.ingest.source :as source]
+            [adsb.ingest.tcp :as tcp]
             [adsb.schema :as schema]
             [clojure.string :as str]
             [malli.core :as m])
   (:import (java.io BufferedReader InputStreamReader)
-           (java.net InetSocketAddress Socket)
+           (java.net Socket)
            (java.nio.charset StandardCharsets)))
 
 ;; ---------------------------------------------------------------------
@@ -204,16 +205,10 @@
             on-ground (assoc :aircraft/on-ground? on-ground)))))))
 
 ;; ---------------------------------------------------------------------
-;; The reader: a daemon thread holding the socket, folding each line into
-;; the picture at arrival time. Effects live here; line->delta stays pure.
-
-(def ^:const default-connect-timeout-ms 5000)
-
-(def ^:const default-reconnect-ms
-  "How long the reader waits before re-dialing a dropped socket. The poll
-  loop backs off on its own while fetch! throws; this just keeps the
-  reader from hot-looping a refused connection."
-  1000)
+;; The reader: fold each line into the picture at arrival time. Effects
+;; live here; line->delta stays pure. The socket lifecycle — dialing,
+;; reconnecting, the reader thread, the unreachable-vs-quiet fetch! —
+;; belongs to adsb.ingest.tcp; this ns supplies only the per-line pump.
 
 (defn- consume-line!
   "Fold one line's delta into the picture at its arrival instant, or do
@@ -224,7 +219,7 @@
 
 (defn- read-lines!
   "Read and consume lines until EOF, the socket closes, or the Source
-  stops. Returns on any of those; the caller reconnects if still running."
+  stops. Returns on any of those; tcp reconnects if still running."
   [^BufferedReader reader picture clock running?]
   (loop []
     (when @running?
@@ -232,87 +227,27 @@
         (consume-line! picture clock line)
         (recur)))))
 
-(defn- connect!
-  "Open a socket to host:port within the connect timeout, or throw."
-  ^Socket [host port connect-timeout-ms]
-  (doto (Socket.)
-    (.connect (InetSocketAddress. ^String host (int port))
-              (int connect-timeout-ms))))
-
-(defn- sleep-quietly!
-  "Sleep ms, returning nil early (not throwing) if the thread is
-  interrupted — close! interrupts the reader to abort a reconnect wait."
-  [ms]
-  (try
-    (Thread/sleep (long ms))
-    (catch InterruptedException _ nil)))
-
-(defn- serve-connection!
-  "Dial the feed and pump its lines into the picture until the connection
-  ends. Marks the Source connected on success and disconnected on the way
-  out, storing any failure for fetch! to surface. Never throws."
-  [{:keys [host port connect-timeout-ms clock
-           picture running? connected? last-error socket]}]
-  (try
-    (let [sock (connect! host port connect-timeout-ms)]
-      (reset! socket sock)
-      (reset! last-error nil)
-      (reset! connected? true)
-      (with-open [reader (BufferedReader.
-                          (InputStreamReader.
-                           (.getInputStream sock)
-                           StandardCharsets/US_ASCII))]
-        (read-lines! reader picture clock running?)))
-    (catch Throwable e
-      (reset! last-error e))
-    (finally
-      (reset! connected? false))))
-
-(defn- run-reader!
-  "The reader thread's body: serve the connection, and while the Source is
-  still open, wait and reconnect after it ends. A dropped socket therefore
-  self-heals without the poll loop re-opening the Source."
-  [{:keys [running? reconnect-ms] :as state}]
-  (loop []
-    (when @running?
-      (serve-connection! state)
-      (when @running?
-        (sleep-quietly! reconnect-ms)
-        (recur)))))
-
-(defn- start-reader! [state]
-  (let [thread (Thread. ^Runnable #(run-reader! state) "adsb-sbs-reader")]
-    (.setDaemon thread true)
-    (.start thread)
-    thread))
-
-(defn- close-quietly! [^Socket socket]
-  (try
-    (some-> socket .close)
-    (catch Throwable _ nil)))
+(defn- consume!
+  "The tcp reader seam: pump the socket's ASCII lines into the picture
+  until the connection ends."
+  [^Socket sock {:keys [picture clock running?]}]
+  (with-open [reader (BufferedReader.
+                      (InputStreamReader.
+                       (.getInputStream sock)
+                       StandardCharsets/US_ASCII))]
+    (read-lines! reader picture clock running?)))
 
 ;; ---------------------------------------------------------------------
 ;; The Source
 
 (defrecord SbsSource [host port connect-timeout-ms reconnect-ms clock
+                      consume! thread-name
                       picture running? connected? last-error socket
                       reader-thread]
   source/Source
-  (open! [this]
-    (reset! running? true)
-    (reset! reader-thread (start-reader! this))
-    this)
-  (fetch! [_]
-    (if @connected?
-      (accumulator/snapshot @picture (clock))
-      (throw (ex-info "SBS feed unreachable"
-                      {:type ::unreachable :host host :port port}
-                      @last-error))))
-  (close! [this]
-    (reset! running? false)
-    (close-quietly! @socket)
-    (some-> ^Thread @reader-thread .interrupt)
-    this))
+  (open! [this] (tcp/open! this))
+  (fetch! [this] (tcp/snapshot-or-throw! this))
+  (close! [this] (tcp/close! this)))
 
 (defn ->source
   "A Source streaming SBS BaseStation messages from `host`:`port` (the
@@ -322,27 +257,9 @@
 
   Explicit host/port mirrors ultrafeeder/->source; full ADSB_SOURCE
   selection (host/port from the environment) is left for the wiring bead.
-  Options:
-
-    :connect-timeout-ms  socket connect timeout (default 5000)
-    :reconnect-ms        pause before re-dialing a dropped socket
-    :clock               0-arg fn returning epoch ms — injected so tests
-                         drive freshness and age-out deterministically
-                         (default the wall clock)"
+  Options are adsb.ingest.tcp/reader-state's: :connect-timeout-ms,
+  :reconnect-ms, and the injectable :clock."
   ([host port] (->source host port {}))
-  ([host port {:keys [connect-timeout-ms reconnect-ms clock]
-               :or   {connect-timeout-ms default-connect-timeout-ms
-                      reconnect-ms        default-reconnect-ms
-                      clock               #(System/currentTimeMillis)}}]
+  ([host port opts]
    (map->SbsSource
-    {:host               host
-     :port               port
-     :connect-timeout-ms connect-timeout-ms
-     :reconnect-ms       reconnect-ms
-     :clock              clock
-     :picture            (atom {})
-     :running?           (atom false)
-     :connected?         (atom false)
-     :last-error         (atom nil)
-     :socket             (atom nil)
-     :reader-thread      (atom nil)})))
+    (tcp/reader-state host port opts consume! "adsb-sbs-reader"))))
