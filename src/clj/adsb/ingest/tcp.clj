@@ -201,16 +201,27 @@
   "Dial the feed through :transport and run its :consume! pump on the
   connection's InputStream until the connection ends. Marks the Source
   connected on success and disconnected on the way out, closing the
-  connection and storing any failure for fetch! to surface. Never throws."
+  connection and storing any failure for fetch! to surface. Never throws.
+
+  A close! landing MID-DIAL is the case the running? check exists for
+  (adsb-12j). close! closes the connection it can see — which, mid-dial,
+  is still the old one (nil) — and interrupts the reader; but a dial is
+  not interrupt-responsive (Socket.connect ignores the flag outright), so
+  it completes anyway and hands back a live connection nobody is left to
+  close. Pumping it would then hold the socket open until the next message
+  or the 60s idle timeout, well after the Source was told to stop. Storing
+  the connection BEFORE the check and closing in the finally means the
+  fresh socket is released whichever side of the check the dial lands on."
   [{:keys [host port connect-timeout-ms idle-timeout-ms transport consume!
-           connected? last-error connection] :as state}]
+           running? connected? last-error connection] :as state}]
   (try
     (let [conn (transport host port {:connect-timeout-ms connect-timeout-ms
                                      :idle-timeout-ms    idle-timeout-ms})]
       (reset! connection conn)
-      (reset! last-error nil)
-      (reset! connected? true)
-      (consume! (:in conn) state))
+      (when @running?
+        (reset! last-error nil)
+        (reset! connected? true)
+        (consume! (:in conn) state)))
     (catch Throwable e
       (reset! last-error e))
     (finally

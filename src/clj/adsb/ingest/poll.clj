@@ -65,12 +65,21 @@
 
 (defn- poll-once!
   "One poll. Returns true on a successful fetch (feeder :ok), false on a
-  feeder failure (feeder :down). Never throws."
-  [source on-batch! status]
+  feeder failure (feeder :down). Never throws.
+
+  A fetch that fails BECAUSE we are shutting down is not a feeder failure
+  (adsb-12j). stop! interrupts this thread, and an interrupt landing
+  inside a fetch surfaces as an exception like any other — which used to
+  be charged to the feeder, so every clean shutdown logged a spurious
+  'Feeder unreachable' warning about a feeder that was fine. stop! clears
+  running? BEFORE it interrupts, so a throw with running? already false
+  belongs to the shutdown and is dropped."
+  [source on-batch! status running?]
   (let [batch (try
                 (source/fetch! source)
                 (catch Throwable e
-                  (mark-down! status e)
+                  (when @running?
+                    (mark-down! status e))
                   ::failed))]
     (when-not (= ::failed batch)
       (deliver-batch! on-batch! batch)
@@ -91,9 +100,14 @@
            interval-ms initial-backoff-ms max-backoff-ms]}]
   (loop [backoff initial-backoff-ms]
     (when @running?
-      (let [ok?  (poll-once! source on-batch! status)
+      (let [ok?  (poll-once! source on-batch! status running?)
             wait (if ok? interval-ms backoff)]
-        (when (sleep! wait)
+        ;; running? is re-checked BEFORE the sleep, not only after it: an
+        ;; interrupt that lands during the fetch is consumed by whatever
+        ;; exception carried it out, so the sleep below would no longer see
+        ;; the flag and would serve a full backoff before noticing we had
+        ;; stopped — holding stop! open for it (adsb-12j).
+        (when (and @running? (sleep! wait))
           (recur (if ok?
                    initial-backoff-ms
                    (next-backoff backoff max-backoff-ms))))))))

@@ -101,3 +101,58 @@
       (is (= [swa-icao] (keys @picture)) "the sweep ran")
       (is (= {:messages 2} (tcp/last-metadata state))
           "the swept-away aircraft's message is still counted"))))
+
+;; ---------------------------------------------------------------------
+;; close! during an in-flight dial (adsb-12j)
+
+(defn- wait-until
+  "Busy-wait for pred, up to 2s. Returns pred's value or nil."
+  [pred]
+  (let [deadline (+ (System/currentTimeMillis) 2000)]
+    (loop []
+      (or (pred)
+          (when (< (System/currentTimeMillis) deadline)
+            (Thread/sleep 2)
+            (recur))))))
+
+(defn- stuck-transport
+  "A transport whose dial is IN FLIGHT until `release?` says otherwise, and
+  which ignores an interrupt while it waits — the property that makes this
+  worth testing at all, and the one Socket.connect actually has (it does
+  not respond to the interrupt flag). Records its close! in `closed?`."
+  [dialing? release? closed?]
+  (fn [_host _port _opts]
+    (reset! dialing? true)
+    (while (not @release?)
+      (Thread/onSpinWait))
+    {:in     (java.io.ByteArrayInputStream. (byte-array 0))
+     :close! #(reset! closed? true)}))
+
+(deftest close!-during-a-dial-releases-the-fresh-connection
+  (testing "a close! that lands mid-dial closes the connection the dial goes
+            on to return, and never pumps it. close! can only close the
+            connection it can see — mid-dial that is still the old one (nil)
+            — and the interrupt it fires does not abort a dial, so the dial
+            completes into a Source that has already been stopped. Without
+            the running? re-check the reader would consume! that socket and
+            hold it open until the next message or the 60s idle timeout,
+            long after close! returned (adsb-12j)."
+    (let [dialing? (atom false)
+          release? (atom false)
+          closed?  (atom false)
+          consumed? (atom false)
+          state    (tcp/reader-state
+                     "127.0.0.1" 30005
+                     {:transport (stuck-transport dialing? release? closed?)}
+                     (fn [_in _state] (reset! consumed? true))
+                     "test-reader")]
+      (tcp/open! state)
+      (is (wait-until #(deref dialing?)) "the reader is in the dial")
+      (tcp/close! state)
+      (reset! release? true)                 ; the dial completes anyway
+      (is (wait-until #(deref closed?))
+          "the connection the dial returned is closed")
+      (is (not @consumed?)
+          "and never pumped — the Source was already stopped")
+      (is (not @(:connected? state))
+          "a stopped Source never reports connected"))))

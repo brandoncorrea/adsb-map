@@ -3,6 +3,7 @@
     [adsb.http.server :as server]
     [adsb.state :as state]
     [clojure.test :refer [deftest testing is use-fixtures]]
+    [clojure.tools.logging.test :refer [logged? with-log]]
     [org.httpkit.client :as http]
     [org.httpkit.server :as http-kit]))
 
@@ -51,6 +52,30 @@
           second-server (server/start! ephemeral)]
       (is (some? first-server))
       (is (identical? first-server second-server)))))
+
+(deftest start-warns-when-it-ignores-the-options-it-was-handed
+  (testing "start! stays idempotent — the second caller gets the RUNNING
+            server, not the one it described — but it no longer does so
+            silently. Discarding options is harmless only while they match;
+            a REPL restart asking for a different port, or for handler
+            dependencies bound to a fresh broadcaster, otherwise got a server
+            wired to the old ones with nothing said (adsb-12j)."
+    (with-log
+      (let [first-server  (server/start! ephemeral)
+            second-server (server/start! (assoc ephemeral :dev-csp? true))]
+        (is (identical? first-server second-server)
+            "still idempotent: the running server, not a second one")
+        (is (logged? 'adsb.http.server :warn #"ALREADY RUNNING")
+            "and it says so")))))
+
+(deftest start-with-the-same-options-warns-about-nothing
+  (testing "the warning is about a CONFLICT, not about a second call: an
+            idempotent restart with the options already running has nothing
+            to report and must stay quiet."
+    (with-log
+      (server/start! ephemeral)
+      (server/start! ephemeral)
+      (is (not (logged? 'adsb.http.server :warn #"ALREADY RUNNING"))))))
 
 (deftest stop-is-idempotent
   (testing "stop! is safe to call when running and again when stopped"

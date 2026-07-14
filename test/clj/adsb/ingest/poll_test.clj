@@ -126,3 +126,25 @@
         (Thread/sleep 30)
         (is (<= @calls (inc after)) "polling stops after stop!"))
       (is (nil? (poll/stop! poller)) "second stop! is a no-op"))))
+
+(deftest stop-during-a-fetch-is-not-a-feeder-failure
+  (testing "stop! interrupts the loop thread, and an interrupt landing inside
+            a fetch comes out as an exception like any other. Charging that
+            to the feeder logged 'Feeder unreachable' at every clean shutdown
+            and left the status :down, libelling a feeder that was fine
+            (adsb-12j). The fetch here blocks until it is interrupted, so the
+            stop always lands mid-fetch."
+    (let [in-fetch? (atom false)
+          src       (source/fn-source
+                      (fn []
+                        (reset! in-fetch? true)
+                        (Thread/sleep 10000)   ; interrupted by stop!
+                        []))
+          poller    (poll/start! (merge fast {:source    src
+                                              :on-batch! identity}))]
+      (is (wait-until #(deref in-fetch?)) "the loop is inside a fetch")
+      (poll/stop! poller)
+      (is (not= :down (:feeder/status (poll/status poller)))
+          "the shutdown is not charged to the feeder")
+      (is (not (.isAlive ^Thread (:poll/thread poller)))
+          "and the loop thread is gone — no backoff sleep after the stop"))))

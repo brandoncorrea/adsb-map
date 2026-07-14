@@ -80,21 +80,39 @@
 ;; options it was passed. That is exactly what you want from a REPL and
 ;; exactly what you do not want anywhere else, because a caller cannot
 ;; tell the server it asked for from the one it was given.
+;;
+;; So it says so out loud (adsb-12j). Discarding options is only harmless
+;; while the options are the SAME; a second start! asking for a different
+;; port, or for handler dependencies bound to a fresh broadcaster, gets a
+;; server wired to the old ones and no indication that it did.
 
+;; nil, or {:srv handle :options the-options-it-was-started-with}.
 (defonce ^:private server (atom nil))
 
 (defn start!
   "Start the REPL's server. Idempotent — a no-op returning the running
-  server if one is already up, IGNORING the options passed. Callers that
-  need a server of their own want start-server!."
+  server if one is already up, IGNORING the options passed and WARNING
+  when they differ from the ones it is running with. Callers that need a
+  server of their own want start-server!."
   ([] (start! {}))
   ([options]
-   (or @server (reset! server (start-server! options)))))
+   (if-let [{:keys [srv] :as running} @server]
+     (do
+       (when (not= options (:options running))
+         (log/warn (str "adsb http server is ALREADY RUNNING and start! is "
+                        "idempotent: the options you passed were IGNORED and "
+                        "you have been handed the server that is already up, "
+                        "wired to the options below. Call stop! first. "
+                        "running: " (pr-str (:options running))
+                        " — requested: " (pr-str options))))
+       srv)
+     (:srv (reset! server {:srv     (start-server! options)
+                           :options options})))))
 
 (defn stop!
   "Stop the REPL's server if running. Idempotent. Blocks until it is gone."
   []
-  (when-let [srv @server]
+  (when-let [{:keys [srv]} @server]
     (stop-server! srv)
     (reset! server nil))
   nil)
