@@ -99,25 +99,60 @@
   (long (or seen-at-ms
             (- captured-at-ms (* 1000 (or seen-s 0))))))
 
+(defn position-observed-at-ms
+  "The absolute instant an aircraft's POSITION was last updated, given
+  the instant its batch was captured — observed-at-ms, asked about the
+  position rather than about the aircraft.
+
+  The two answers differ, and the difference is the whole point. Most
+  messages carry no position at all: a velocity, a callsign, a squawk
+  all refresh seen without moving the aircraft an inch. Measuring a
+  position-to-position hop against time-since-last-MESSAGE therefore
+  divides a real distance by a fictitious near-zero interval, and reads
+  an airliner at cruise as a teleport (adsb-zxk).
+
+  An aircraft that already carries :aircraft/position-at-ms was stamped
+  when its position arrived (adsb.accumulator/merge-delta) — that stamp
+  wins, as it does in observed-at-ms. Otherwise the feeder's seen_pos is
+  seconds-since-the-position-moved at capture time, so the instant is
+  capture minus that. A positioned aircraft with neither — a feeder that
+  omits seen_pos — falls back to when it was last heard: the old,
+  optimistic answer, which is the freshest instant we can honestly claim
+  and errs toward calling a jump ordinary rather than inventing one."
+  [{:aircraft/keys [position-at-ms position-seen-s] :as aircraft}
+   captured-at-ms]
+  (long (or position-at-ms
+            (when position-seen-s
+              (- captured-at-ms (* 1000 position-seen-s)))
+            (observed-at-ms aircraft captured-at-ms))))
+
 (defn- ->observation
   "Stamp an ingested aircraft with the absolute instant it was heard
-  (observed-at-ms). The capture-relative :aircraft/seen-s is dropped —
-  it rots the moment the poll ends; :aircraft/seen-at-ms is its
-  durable form."
+  (observed-at-ms), and its position with the instant that MOVED
+  (position-observed-at-ms). The capture-relative :aircraft/seen-s and
+  :aircraft/position-seen-s are dropped — they rot the moment the poll
+  ends; the absolute stamps are their durable form."
   [aircraft captured-at-ms]
-  (-> aircraft
-      (dissoc :aircraft/seen-s)
-      (assoc :aircraft/seen-at-ms
-             (observed-at-ms aircraft captured-at-ms))))
+  (cond-> (-> aircraft
+              (dissoc :aircraft/seen-s :aircraft/position-seen-s)
+              (assoc :aircraft/seen-at-ms
+                     (observed-at-ms aircraft captured-at-ms)))
+          (positioned? aircraft)
+          (assoc :aircraft/position-at-ms
+                 (position-observed-at-ms aircraft captured-at-ms))))
 
 (defn- merge-observation
   "One aircraft's step of merge-batch: the new observation wins, except
-  a position-less observation inherits the last-known position."
+  a position-less observation inherits the last-known position — and the
+  stamp that says when that position was last true. The two travel
+  together or not at all: an inherited position re-stamped as fresh is
+  the very lie that makes ordinary flight look like a teleport."
   [previous observation]
   (if (or (positioned? observation) (not (positioned? previous)))
     observation
-    (assoc observation
-           :aircraft/position (:aircraft/position previous))))
+    (merge observation
+           (select-keys previous [:aircraft/position
+                                  :aircraft/position-at-ms]))))
 
 (defn merge-batch
   "Merge one coerced feeder batch — a full snapshot of what the feeder

@@ -84,8 +84,13 @@
 (deftest position-jump?
   (let [equator-origin {:geo/lat 0 :geo/lon 0}
         one-degree-east {:geo/lat 0 :geo/lon 1}
+        ;; Both ends of the interval are POSITION stamps (adsb-zxk).
+        ;; :aircraft/seen-at-ms is deliberately the LIE here — a message
+        ;; heard long after the position moved — so a detector that read
+        ;; it would compute a wildly different speed and fail this test.
         previous {:aircraft/position equator-origin
-                  :aircraft/seen-at-ms 0}
+                  :aircraft/position-at-ms 0
+                  :aircraft/seen-at-ms 3599999}
         ms-per-hour 3600000
         ;; One degree along the equator in one hour: the implied speed
         ;; in knots is exactly the distance in nautical miles (~60 kt).
@@ -203,6 +208,92 @@
                                                    [silent])
                                     ups-icao)
                             :aircraft/position-suspect?)))))))
+
+(deftest the-poll-path-measures-from-seen-pos-not-seen
+  ;; The poll half of adsb-zxk. aircraft.json publishes BOTH `seen`
+  ;; (since the last message of any type) and `seen_pos` (since the
+  ;; position moved), and they routinely diverge — in the real fixture,
+  ;; 34 of 39 positioned aircraft have a position older than their last
+  ;; message, by up to 39 s. Measure a hop against `seen` and ordinary
+  ;; flight teleports.
+  (let [origin  {:geo/lat 28.0 :geo/lon -82.5}
+        ;; ~6 nm north. Over 50 s that is ~432 kt — an airliner. Over the
+        ;; 0.5 s that `seen` would have claimed, it is ~43,000 kt.
+        moved   (update origin :geo/lat + 0.1)
+        polled  (fn [position seen-s position-seen-s]
+                  (-> fixtures/ups-2717
+                      (assoc :aircraft/position position
+                             :aircraft/seen-s seen-s
+                             :aircraft/position-seen-s position-seen-s)))
+        picture (-> {}
+                    (plausibility/merge-batch-flagging-jumps
+                      [(polled origin 0.5 50.5)] captured-at-ms)
+                    ;; One poll later the position has moved 6 nm. The
+                    ;; feeder heard this aircraft 0.5 s ago (a velocity, a
+                    ;; squawk), but the POSITION is 0.5 s old against a
+                    ;; previous position 50.5 s old: 50 s of flight.
+                    (plausibility/merge-batch-flagging-jumps
+                      [(polled moved 0.5 0.5)] (+ captured-at-ms 50000)))
+        aircraft (get picture ups-icao)]
+
+    (testing "6 nm in 50 s is an airliner, not a teleport — even though only
+              0.5 s elapsed since the last MESSAGE"
+      (is (not (contains? aircraft :aircraft/position-suspect?))))
+
+    (testing "the stored position stamp is when the position moved, which is
+              older than when the aircraft was last heard"
+      (is (= (+ captured-at-ms 49500) (:aircraft/position-at-ms aircraft)))
+      (is (= (+ captured-at-ms 49500) (:aircraft/seen-at-ms aircraft))))
+
+    (testing "the capture-relative fields do not survive the merge — they rot
+              the moment the poll ends"
+      (is (not (contains? aircraft :aircraft/seen-s)))
+      (is (not (contains? aircraft :aircraft/position-seen-s))))
+
+    (testing "a real teleport across the same poll gap still flags"
+      (is (true? (:aircraft/position-suspect?
+                   (-> picture
+                       (plausibility/merge-batch-flagging-jumps
+                         [(polled mid-atlantic 0.5 0.5)]
+                         (+ captured-at-ms 51000))
+                       (get ups-icao))))))))
+
+(deftest a-position-less-observation-keeps-its-position-stamp
+  ;; merge-observation inherits the last-known position; it must inherit the
+  ;; stamp that says when that position was true, or the next poll measures a
+  ;; real hop against a freshly-minted interval and invents a jump (adsb-zxk).
+  (let [origin  {:geo/lat 28.0 :geo/lon -82.5}
+        silent  (-> fixtures/ups-2717
+                    (dissoc :aircraft/position :aircraft/position-seen-s)
+                    (assoc :aircraft/seen-s 0.5))
+        picture (-> {}
+                    (plausibility/merge-batch-flagging-jumps
+                      [(assoc fixtures/ups-2717
+                              :aircraft/position origin
+                              :aircraft/seen-s 0.5
+                              :aircraft/position-seen-s 0.5)]
+                      captured-at-ms)
+                    (plausibility/merge-batch-flagging-jumps
+                      [silent] (+ captured-at-ms 30000)))
+        aircraft (get picture ups-icao)]
+
+    (testing "the inherited position keeps the stamp it was true at, not the
+              instant it was inherited"
+      (is (= origin (:aircraft/position aircraft)))
+      (is (= (- captured-at-ms 500) (:aircraft/position-at-ms aircraft))))
+
+    (testing "so the next real position is measured over the whole silence —
+              30 s of flight, not an instant"
+      (is (not (contains?
+                 (-> picture
+                     (plausibility/merge-batch-flagging-jumps
+                       [(assoc fixtures/ups-2717
+                               :aircraft/position (update origin :geo/lat + 0.06)
+                               :aircraft/seen-s 0.5
+                               :aircraft/position-seen-s 0.5)]
+                       (+ captured-at-ms 60000))
+                     (get ups-icao))
+                 :aircraft/position-suspect?))))))
 
 (deftest age-out-is-the-only-thing-that-clears-the-flag
   ;; The one decay boundary (adsb-caf). Not a rule plausibility enforces
@@ -347,6 +438,43 @@
     (testing "the flagged aircraft still validates — the flag is a domain
               field, not a smuggled one"
       (is (m/validate schema/aircraft (get jumped ups-icao))))
+
+    (testing "a NON-POSITIONAL message between two positions does not
+              fabricate a jump (adsb-zxk). 61% of a real SBS stream is
+              velocity, callsign and squawk — each refreshes when we HEARD
+              the aircraft without moving it an inch. Divide the hop by
+              time-since-last-MESSAGE and this airliner implies 27,000 kt;
+              divide it by time-since-the-position-MOVED and it implies the
+              450 kt it is actually flying."
+      (let [;; 0.062 nm apart: one second of ordinary cruise.
+            p2       (update tampa :geo/lat + 0.00102)
+            ;; The velocity lands 992 ms on — 8 ms before the next position.
+            ;; This is the message that used to collapse the denominator.
+            velocity (plausibility/accumulate-flagging-jumps
+                       origin (delta :aircraft/ground-speed-kt 451.2)
+                       (+ heard-at 992))
+            moved    (plausibility/accumulate-flagging-jumps
+                       velocity (delta :aircraft/position p2)
+                       (+ heard-at 1000))]
+
+        (is (not (contains? (get moved ups-icao) :aircraft/position-suspect?))
+            "an airliner at cruise is not a teleport")
+
+        (testing "— because the velocity message advanced 'when we heard it'
+                  and left 'when it moved' alone: two different questions"
+          (let [ac (get velocity ups-icao)]
+            (is (= (+ heard-at 992) (:aircraft/seen-at-ms ac)))
+            (is (= heard-at (:aircraft/position-at-ms ac)))))))
+
+    (testing "and the detector is not merely deaf now: a genuine teleport
+              still flags across an intervening non-positional message"
+      (let [velocity (plausibility/accumulate-flagging-jumps
+                       origin (delta :aircraft/ground-speed-kt 451.2)
+                       (+ heard-at 992))
+            spoofed  (plausibility/accumulate-flagging-jumps
+                       velocity (delta :aircraft/position mid-atlantic)
+                       (+ heard-at 1000))]
+        (is (true? (:aircraft/position-suspect? (get spoofed ups-icao))))))
 
     (testing "the flag the deltas earned rides the snapshot the poll loop
               takes, and the state merge honours it rather than

@@ -33,12 +33,21 @@
   age-out threshold and comes back is a new arrival, not a continuation.
   Inheriting its fields would let a returning airframe's first
   position-less messages resurrect an hours-old position, stamped as
-  heard now — a lie the whole downstream stack would believe (adsb-gq3)."
+  heard now — a lie the whole downstream stack would believe (adsb-gq3).
+
+  :aircraft/seen-at-ms is stamped on EVERY message; :aircraft/position-at-ms
+  only on the ones that carry a position, and otherwise persists like any
+  other unspoken field. A velocity message means we heard the aircraft,
+  not that it moved — and the jump detector measures against the instant
+  it MOVED. Stamping both on every message is what made an airliner at
+  cruise read as 27,000 kt (adsb-zxk)."
   [previous delta now-ms]
   (-> (when-not (and previous (aircraft/aged-out? previous now-ms))
         previous)
       (merge delta)
-      (assoc :aircraft/seen-at-ms now-ms)))
+      (assoc :aircraft/seen-at-ms now-ms)
+      (cond-> (:aircraft/position delta)
+              (assoc :aircraft/position-at-ms now-ms))))
 
 (defn accumulate
   "Fold one per-message delta, heard at now-ms, into the picture,

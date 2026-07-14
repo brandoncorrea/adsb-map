@@ -52,7 +52,7 @@
   stays absent — an aircraft with no reported altitude is not at sea
   level, and one with no reported speed is not stationary."
   [{:keys [hex flight alt_baro lat lon squawk gs track baro_rate
-           seen rssi] :as raw}]
+           seen seen_pos rssi] :as raw}]
   (let [callsign (some-> flight str/trim not-empty)]
     (cond-> {:aircraft/icao (str/lower-case hex)}
             callsign (assoc :aircraft/callsign callsign)
@@ -65,6 +65,11 @@
             track (assoc :aircraft/track-deg track)
             baro_rate (assoc :aircraft/baro-rate-fpm baro_rate)
             seen (assoc :aircraft/seen-s seen)
+            ;; seen_pos is seconds since the POSITION was last updated —
+            ;; not since the last message, which is `seen` above and is
+            ;; routinely much smaller (this fixture: seen 2.8, seen_pos
+            ;; 6.765). The jump detector divides by this one (adsb-zxk).
+            seen_pos (assoc :aircraft/position-seen-s seen_pos)
             rssi (assoc :aircraft/rssi rssi)
             ;; True only for MLAT-derived positions; absent otherwise, so
             ;; the wire can omit it like on-ground? and position-suspect?.

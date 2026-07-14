@@ -113,6 +113,13 @@
   enumeration. :aircraft/rssi is excluded for the same reason — signal
   strength is a measurement of the receiver, not of the aircraft.
 
+  :aircraft/position-at-ms is excluded too, though not for privacy: it is
+  an ingest-internal stamp — when the position last MOVED, as against
+  seen-at, when the aircraft was last HEARD — that exists so the jump
+  detector divides by the right interval (adsb-zxk). The browser renders
+  the detector's verdict (position-suspect), never re-derives it, so the
+  stamp would be a field it carries and never reads.
+
   The stats map is held to the same discipline: stats->wire is an
   ALLOWLIST projecting only the two scalars above. max-range-km is a
   DISTANCE, not a position — a radius reveals no bearing, so no antenna

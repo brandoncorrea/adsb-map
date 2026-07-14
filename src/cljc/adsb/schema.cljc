@@ -79,6 +79,17 @@
    ;; rather than overwriting it. Absent on a polled aircraft fresh from
    ;; ingest, which carries only the capture-relative seen-s.
    [:aircraft/seen-at-ms {:optional true} number?]
+   ;; seen-s/seen-at-ms answer "when did we last hear ANYTHING from this
+   ;; aircraft"; these two answer "when did its POSITION last move". They
+   ;; are not the same question, and the jump detector needs this one:
+   ;; most messages carry no position (velocity, callsign, squawk), so a
+   ;; position-to-position hop divided by time-since-last-MESSAGE reads an
+   ;; ordinary airliner as a 27,000 kt teleport (adsb-zxk). The feeder
+   ;; publishes seen_pos beside seen for exactly this reason. Capture-
+   ;; relative on the way in, absolute once merged — the seen-s/seen-at-ms
+   ;; pairing, applied to the position.
+   [:aircraft/position-seen-s {:optional true} number?]
+   [:aircraft/position-at-ms {:optional true} number?]
    [:aircraft/rssi {:optional true} number?]
    ;; Set at merge time when a new position implies an impossible jump
    ;; from the previous observation — the fingerprint of spoofing.

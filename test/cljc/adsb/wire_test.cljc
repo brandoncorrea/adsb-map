@@ -196,25 +196,32 @@
       (is (= {} stats))
       (is (= {} feeder)))))
 
+;; The fields the allowlist deliberately withholds: rssi, because it
+;; measures the RECEIVER and inverts toward its location; position-at-ms,
+;; because it is an ingest-internal stamp the jump detector divides by and
+;; the browser never reads (adsb-zxk).
+(defn- withheld [aircraft]
+  (dissoc aircraft :aircraft/rssi :aircraft/position-at-ms))
+
 (deftest wire-round-trip
-  (testing "a domain aircraft survives the round trip, minus the
-            deliberately withheld receiver-relative rssi"
+  (testing "a domain aircraft survives the round trip, minus the fields the
+            allowlist deliberately withholds"
     (doseq [[icao domain-aircraft] picture]
-      (is (= (dissoc domain-aircraft :aircraft/rssi)
+      (is (= (withheld domain-aircraft)
              (wire/wire->aircraft (wire/aircraft->wire domain-aircraft)))
           icao)))
 
   (testing "a decoded frame envelope becomes the picture again, keyed
             by icao"
     (let [envelope (wire/picture->wire picture captured-at-ms)]
-      (is (= (update-vals picture #(dissoc % :aircraft/rssi))
+      (is (= (update-vals picture withheld)
              (wire/wire->picture envelope)))))
 
   (testing "an upsert envelope decodes back into its one domain aircraft —
             the same decode a full-picture entry gets, so the browser needs
             no second vocabulary (adsb-jpf)"
     (doseq [[icao domain-aircraft] picture]
-      (is (= (dissoc domain-aircraft :aircraft/rssi)
+      (is (= (withheld domain-aircraft)
              (wire/wire->upsert (wire/upsert->wire domain-aircraft
                                                    captured-at-ms)))
           icao)))

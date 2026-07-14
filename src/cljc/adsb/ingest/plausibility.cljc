@@ -70,15 +70,23 @@
 (def ^:const ^:private ms-per-hour 3600000)
 
 (defn position-jump?
-  "True when reaching `position` at `observed-at-ms` from the
-  aircraft's previous observation implies a speed strictly above
+  "True when reaching `position` at `position-at-ms` — the instant the
+  POSITION was last updated, not the instant the aircraft was last heard
+  — from the aircraft's previous position implies a speed strictly above
   max-implied-speed-kt. Zero-or-negative elapsed time with a changed
   position is the most impossible jump of all; with an unchanged
-  position it is just the feeder repeating itself."
+  position it is just the feeder repeating itself.
+
+  Both ends of the interval are position stamps. Dividing the distance
+  since the last POSITION by the time since the last MESSAGE is a
+  distance over a fictitious interval — 61% of a real SBS stream carries
+  no position, so the denominator collapses toward zero while the
+  numerator keeps a full hop, and 24 of 33 real aircraft come out
+  'suspect' (adsb-zxk)."
   [{previous-position :aircraft/position
-    previous-at-ms    :aircraft/seen-at-ms}
-   position observed-at-ms max-implied-speed-kt]
-  (let [elapsed-ms (- observed-at-ms previous-at-ms)
+    previous-at-ms    :aircraft/position-at-ms}
+   position position-at-ms max-implied-speed-kt]
+  (let [elapsed-ms (- position-at-ms previous-at-ms)
         distance-m (geo/distance previous-position position)]
     (if (pos? elapsed-ms)
       (> (/ (geo/meters->nm distance-m)
@@ -96,8 +104,8 @@
         jumped?  (and position
                       (aircraft/positioned? previous)
                       (position-jump? previous position
-                                      (aircraft/observed-at-ms observation
-                                                               captured-at-ms)
+                                      (aircraft/position-observed-at-ms
+                                        observation captured-at-ms)
                                       max-implied-speed-kt))]
     (cond-> observation
             (or jumped? (:aircraft/position-suspect? previous))
