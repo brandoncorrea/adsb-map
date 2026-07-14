@@ -33,16 +33,24 @@
   "An OPTIONAL side-channel for payload-level metadata a Source observed on
   its last fetch! — facts that belong to the whole payload, not to any one
   aircraft, and so never enter the coerced batch (which would churn every
-  consumer). The ultrafeeder payload's cumulative `messages` counter is the
-  first such fact; adsb.stats differences it into a rate.
+  consumer). The cumulative `messages` counter is the first such fact;
+  adsb.stats differences it into a rate.
 
-  A Source updates this behind fetch! (an atom it owns) and exposes the
-  latest here; the poll loop that drives fetch! stays oblivious. Sources
+  EVERY LIVE SOURCE CARRIES IT, by whatever means its wire format allows:
+  the poll Source reads the counter off the aircraft.json payload
+  (adsb.ingest.ultrafeeder), while the streaming Sources — which see each
+  message individually and so are the better placed to count — tally the
+  messages they decode (adsb.ingest.tcp/last-metadata, shared by SBS and
+  Beast). Either way the count is cumulative and monotonic for the life of
+  the Source, which is what adsb.stats differences.
+
+  A Source updates this behind fetch! or its reader thread (an atom it
+  owns) and exposes the latest here; the poll loop stays oblivious. Sources
   with no payload metadata (the fixture-replay Source) simply do not
-  implement this protocol."
+  implement this protocol, and the rate is then unknown."
   (last-metadata [source]
-    "The payload-level metadata from the most recent fetch!, e.g.
-    {:messages n}, or nil/empty when none has been seen."))
+    "The Source's latest payload-level metadata, e.g. {:messages n}, or
+    nil/empty when none has been seen."))
 
 (defn metadata
   "The Source's latest payload metadata, or nil when the Source exposes

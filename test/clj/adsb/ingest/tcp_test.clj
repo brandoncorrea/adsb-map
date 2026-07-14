@@ -7,7 +7,9 @@
   adsb.ingest.beast-source-test) over a local in-process socket. What is
   left to test here is the state tcp itself owns, and that needs no
   socket at all: reader-state builds the atoms, accumulate! folds into
-  them, and the clock is a literal."
+  them, and the clock is a literal. The message counter behind
+  last-metadata (adsb-3mw) is the same kind of state, counted in the same
+  fold."
   (:require
     [adsb.aircraft :as aircraft]
     [adsb.ingest.tcp :as tcp]
@@ -73,3 +75,29 @@
       (is (not (contains? (get @picture ups-icao) :aircraft/position))
           "the hours-old position is not re-broadcast stamped heard-now")
       (is (= returns-at (get-in @picture [ups-icao :aircraft/seen-at-ms]))))))
+
+(deftest last-metadata-counts-the-decoded-messages
+  (testing "a reader that has heard nothing reports a count, not nil — the
+            rate is zero-so-far, and adsb.stats needs a first sample to
+            difference from"
+    (is (= {:messages 0} (tcp/last-metadata (reader-state)))))
+
+  (testing "every decoded message counts, including several from one
+            aircraft — this is a message rate, not an aircraft count"
+    (let [state (reader-state)]
+      (tcp/accumulate! state {:aircraft/icao ups-icao} t0)
+      (tcp/accumulate! state {:aircraft/icao ups-icao :aircraft/altitude-ft 37000} t0)
+      (tcp/accumulate! state {:aircraft/icao swa-icao} t0)
+      (is (= {:messages 3} (tcp/last-metadata state)))))
+
+  (testing "the count is CUMULATIVE and monotonic, like the ultrafeeder
+            payload's counter: it survives the sweep that empties the
+            picture, since a counter that fell back would read to
+            adsb.stats as a feeder restart"
+    (let [{:keys [picture] :as state} (reader-state)
+          returns-at (+ t0 (* 4 60 60 1000))]
+      (tcp/accumulate! state {:aircraft/icao ups-icao} t0)
+      (tcp/accumulate! state {:aircraft/icao swa-icao} returns-at)
+      (is (= [swa-icao] (keys @picture)) "the sweep ran")
+      (is (= {:messages 2} (tcp/last-metadata state))
+          "the swept-away aircraft's message is still counted"))))

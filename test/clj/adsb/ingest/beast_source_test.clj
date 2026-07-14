@@ -193,6 +193,32 @@
                     "the corrupted-CRC frame decoded to nothing")))
             (finally (source/close! src))))))))
 
+(def ^:private decoded-message-count
+  "The wire's three decodable frames — the identification and the two
+  position halves. The junk bytes, the Mode-A/C and short Mode-S frames,
+  the corrupted-CRC frame, and the resync run decode to nothing and so are
+  not messages: what the counter reports is what the radio HEARD, not what
+  arrived on the socket."
+  3)
+
+(deftest metadata-reports-the-decoded-message-count
+  (testing "the Beast Source counts every frame it decodes and exposes the
+            running total through Metadata (adsb-3mw), so adsb.stats can
+            difference it into a rate on a streaming deployment"
+    (with-beast-feed wire-bytes
+      (fn [host port]
+        (let [src (source/open!
+                    (beast-source/->source host port
+                                           {:clock (constantly 1000000)}))]
+          (try
+            (is (= {:messages decoded-message-count}
+                   (wait-until
+                     (fn []
+                       (let [m (source/metadata src)]
+                         (when (= decoded-message-count (:messages m)) m)))))
+                "the corrupt and out-of-scope frames are not counted")
+            (finally (source/close! src))))))))
+
 (deftest read-loop-sweeps-the-cpr-state
   (testing "the read loop's sweep step drops the aircraft that have gone
             quiet and stamps the sweep, so cpr-state does not grow for

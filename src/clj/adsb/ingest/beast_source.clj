@@ -131,12 +131,14 @@
 
 (defrecord BeastSource [host port transport connect-timeout-ms idle-timeout-ms
                         reconnect-ms clock on-delta consume! thread-name
-                        picture swept-at-ms running? connected? last-error
-                        connection reader-thread]
+                        picture messages swept-at-ms running? connected?
+                        last-error connection reader-thread]
   source/Source
   (open! [this] (tcp/open! this))
   (fetch! [this] (tcp/snapshot-or-throw! this))
-  (close! [this] (tcp/close! this)))
+  (close! [this] (tcp/close! this))
+  source/Metadata
+  (last-metadata [this] (tcp/last-metadata this)))
 
 (defn ->source
   "A Source streaming binary Mode-S from `host`:`port` (the ultrafeeder's

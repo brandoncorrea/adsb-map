@@ -50,7 +50,15 @@
   streaming Source constructed without one) need nothing: accumulate!
   no-ops on a nil hook. The hook RUNS ON THE READER THREAD, so it must
   never block; production hands off through a bounded queue and drops
-  under pressure rather than stall the radio."
+  under pressure rather than stall the radio.
+
+  THE MESSAGE COUNT is the streaming Sources' answer to the ultrafeeder
+  payload's cumulative `messages` field (adsb.ingest.source/Metadata): a
+  counter accumulate! advances once per decoded message, which
+  adsb.stats differences into a rate exactly as it does the poll source's
+  (adsb-3mw). A streaming reader sees every individual message, so it is
+  better placed to count than the poll source ever was; each Source
+  exposes the tally through last-metadata below."
   (:require [adsb.accumulator :as accumulator]
             [adsb.ingest.plausibility :as plausibility]
             [clojure.tools.logging :as log])
@@ -158,6 +166,10 @@
   adsb-b36) — then hand the aircraft's FULL MERGED post-accumulate state
   to the optional :on-delta hook (ns docstring).
 
+  Also the count step: every format pump reaches this fold once per
+  message it decodes, so the message counter (ns docstring) is advanced
+  here rather than in each pump.
+
   The flagging belongs to this fold and not to the hook's far end: the
   hook receives an aircraft already merged, its previous position gone,
   and it feeds a fast lane (offer-delta!) that never consults the state
@@ -169,8 +181,9 @@
   subscriber would turn every message into a reconnect. The reader also
   sweeps the picture here (sweep-picture!), on the interval, since this
   is the one step every format pump shares."
-  [{:keys [picture on-delta] :as state} delta now-ms]
+  [{:keys [picture on-delta messages] :as state} delta now-ms]
   (sweep-picture! state now-ms)
+  (swap! messages inc)
   (let [merged (-> (swap! picture plausibility/accumulate-flagging-jumps
                           delta now-ms)
                    (get (:aircraft/icao delta)))]
@@ -245,6 +258,20 @@
                     {:type ::unreachable :host host :port port}
                     @last-error))))
 
+(defn last-metadata
+  "Metadata (adsb.ingest.source/Metadata): {:messages n}, the messages this
+  reader has decoded since the Source was constructed.
+
+  CUMULATIVE AND MONOTONIC, exactly like the ultrafeeder payload's counter,
+  because that is the shape adsb.stats/compute! differences into a rate — a
+  count that reset on each reconnect would read as a feeder restart and
+  blank the rate every time the tunnel hiccuped. It counts DECODED messages,
+  not bytes or lines: a stream of pure garbage folds nothing and so reports
+  no rate, which is the honest answer for :feeder/silent-frames (a radio
+  hearing only noise is not hearing)."
+  [{:keys [messages]}]
+  {:messages @messages})
+
 (defn close!
   "Stop the reader and close the connection. Interrupts the reader so a
   blocked read or reconnect wait aborts at once. Called once after the last
@@ -297,6 +324,7 @@
    :consume!           consume!
    :thread-name        thread-name
    :picture            (atom {})
+   :messages           (atom 0)
    :swept-at-ms        (atom nil)
    :running?           (atom false)
    :connected?         (atom false)
