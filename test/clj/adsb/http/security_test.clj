@@ -193,20 +193,20 @@
             strip http-kit's; the app must not depend on an edge for that,
             so it declines to send one, and this proves http-kit honors
             the :server-header option rather than us merely asking"
-    (try
-      (let [srv      (server/start! {:port 0})
-            port     (http-kit/server-port srv)
-            response @(http/request {:url    (str "http://localhost:" port
-                                                  "/healthz")
-                                     :method :get})
-            headers  (:headers response)]
-        (is (= 200 (:status response)))
-        (is (= security/content-security-policy
-               (:content-security-policy headers)))
-        (is (= "nosniff" (:x-content-type-options headers)))
-        (is (= "no-referrer" (:referrer-policy headers)))
-        (is (some? (:strict-transport-security headers)))
-        (is (nil? (:server headers))
-            "the app does not name its HTTP library to strangers"))
-      (finally
-        (server/stop!)))))
+    (let [srv (server/start-server! {:port 0})]
+      (try
+        (let [port     (http-kit/server-port srv)
+              response @(http/request {:url    (str "http://localhost:" port
+                                                    "/healthz")
+                                       :method :get})
+              headers  (:headers response)]
+          (is (= 200 (:status response)))
+          (is (= security/content-security-policy
+                 (:content-security-policy headers)))
+          (is (= "nosniff" (:x-content-type-options headers)))
+          (is (= "no-referrer" (:referrer-policy headers)))
+          (is (some? (:strict-transport-security headers)))
+          (is (nil? (:server headers))
+              "the app does not name its HTTP library to strangers"))
+        (finally
+          (server/stop-server! srv))))))

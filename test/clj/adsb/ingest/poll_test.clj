@@ -87,6 +87,34 @@
             "a callback failure is not a feeder failure")
         (finally (poll/stop! poller))))))
 
+(deftest stop-waits-for-an-in-flight-batch
+  (testing "stop! does not return while on-batch! is still running, so a
+            batch cannot land after the caller believes polling has ended.
+            The assembled system's on-batch! writes to adsb.state, so a
+            stop! that returned early let a dying poller repopulate the
+            global picture a test had just cleared (adsb-a07).
+
+            on-batch! is slow on purpose: without the join, stop! returns
+            straight through the sleep and the thread is still alive."
+    (let [in-batch? (atom false)
+          landed    (atom 0)
+          src       (source/fn-source #(coerce/->aircraft-batch raw-entries))
+          poller    (poll/start!
+                      (merge fast
+                             {:source    src
+                              :on-batch! (fn [_]
+                                           (reset! in-batch? true)
+                                           (Thread/sleep 300)
+                                           (swap! landed inc))}))]
+      (wait-until #(deref in-batch?))
+      (poll/stop! poller)
+      (is (not (.isAlive ^Thread (:poll/thread poller)))
+          "the loop thread has ended by the time stop! returns")
+      (let [at-stop @landed]
+        (Thread/sleep 200)
+        (is (= at-stop @landed)
+            "no batch lands after stop! returned")))))
+
 (deftest stop-is-idempotent-and-halts-polling
   (testing "stop! ends the loop and is safe to call twice"
     (let [calls  (atom 0)

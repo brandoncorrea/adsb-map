@@ -141,13 +141,30 @@
     (.start thread)
     {:poll/thread thread :poll/running? running? :poll/status status}))
 
+(def ^:const stop-timeout-ms
+  "How long stop! waits for the interrupted loop thread to actually end.
+  Bounded, because a wedged reader must not hang a REPL restart or a test
+  suite — we would rather log the straggler than never return."
+  5000)
+
 (defn stop!
   "Stop a poller returned by start!. Idempotent — interrupts the loop
-  thread so an in-progress backoff sleep aborts at once."
+  thread so an in-progress backoff sleep aborts at once, then WAITS for
+  the thread to finish.
+
+  The wait is the point. The loop calls on-batch!, which in the assembled
+  system writes the batch into adsb.state. A stop! that returned while the
+  thread was still in flight let a batch land after the caller believed
+  polling had ended — so a test's (stop! ...) then (state/clear!) could be
+  followed by the dying poller repopulating the global picture (adsb-a07)."
   [{:poll/keys [^Thread thread running?]}]
   (when running?
     (reset! running? false)
-    (.interrupt thread))
+    (.interrupt thread)
+    (.join thread stop-timeout-ms)
+    (when (.isAlive thread)
+      (log/warn "feeder poll thread still alive" stop-timeout-ms
+                "ms after stop!; abandoning it")))
   nil)
 
 (defn status

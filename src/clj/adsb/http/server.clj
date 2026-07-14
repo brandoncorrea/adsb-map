@@ -32,35 +32,69 @@
   internet client only ever helps the client."
   nil)
 
+(defn start-server!
+  "Start a server and return its handle. ALWAYS starts a new one, and the
+  caller owns what it gets back — nothing here is shared. This is the seam
+  for anyone who needs a server of their own: the composition root, and any
+  test that wants its own handler on its own port.
+
+  :port defaults to 8280; every other option is a handler dependency passed
+  through to adsb.http.routes/handler — :state-lookup (default: the
+  adsb.state store), :feeder-status, and :stream-connect."
+  ([] (start-server! {}))
+  ([{:keys [port] :or {port default-port} :as options}]
+   (let [dependencies (merge {:state-lookup state/lookup}
+                             (dissoc options :port))
+         srv          (http-kit/run-server
+                        (routes/handler dependencies)
+                        {:port                  port
+                         :legacy-return-value?  false
+                         :max-line              max-request-line-bytes
+                         :max-body              max-request-body-bytes
+                         :server-header         server-header})]
+     (log/info "adsb http server listening on port"
+               (http-kit/server-port srv))
+     srv)))
+
+(defn stop-server!
+  "Stop a handle from start-server! and BLOCK until it has actually stopped.
+  nil-safe and idempotent.
+
+  The deref is the point. http-kit's server-stop! is asynchronous: it
+  returns a promise and keeps draining in the background. Dropping that
+  promise makes `stopped` and `gone` two different instants, so a caller
+  that stopped a server and moved on could still be racing it (adsb-a07)."
+  [srv]
+  (when srv
+    @(http-kit/server-stop! srv)
+    (log/info "adsb http server stopped"))
+  nil)
+
+;; ---------------------------------------------------------------------
+;; The REPL's one server
+;;
+;; A convenience for `bb dev` and a REPL: one server, held in a global, so
+;; a restart is two keystrokes. Production and tests do NOT come through
+;; here — they own their handle via start-server!. Note what start! must
+;; do to stay idempotent: hand back the RUNNING server and discard the
+;; options it was passed. That is exactly what you want from a REPL and
+;; exactly what you do not want anywhere else, because a caller cannot
+;; tell the server it asked for from the one it was given.
+
 (defonce ^:private server (atom nil))
 
 (defn start!
-  "Start the server. Idempotent — a no-op returning the running server
-  if one is already up. :port defaults to 8280; every other option is a
-  handler dependency passed through to adsb.http.routes/handler —
-  :state-lookup (default: the adsb.state store), :feeder-status, and
-  :stream-connect."
+  "Start the REPL's server. Idempotent — a no-op returning the running
+  server if one is already up, IGNORING the options passed. Callers that
+  need a server of their own want start-server!."
   ([] (start! {}))
-  ([{:keys [port] :or {port default-port} :as options}]
-   (or @server
-       (let [dependencies (merge {:state-lookup state/lookup}
-                                 (dissoc options :port))
-             srv          (http-kit/run-server
-                            (routes/handler dependencies)
-                            {:port                  port
-                             :legacy-return-value?  false
-                             :max-line              max-request-line-bytes
-                             :max-body              max-request-body-bytes
-                             :server-header         server-header})]
-         (log/info "adsb http server listening on port"
-                   (http-kit/server-port srv))
-         (reset! server srv)))))
+  ([options]
+   (or @server (reset! server (start-server! options)))))
 
 (defn stop!
-  "Stop the server if running. Idempotent."
+  "Stop the REPL's server if running. Idempotent. Blocks until it is gone."
   []
   (when-let [srv @server]
-    (http-kit/server-stop! srv)
-    (reset! server nil)
-    (log/info "adsb http server stopped"))
+    (stop-server! srv)
+    (reset! server nil))
   nil)

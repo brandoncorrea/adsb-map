@@ -320,7 +320,7 @@
                                                                 (source/metadata
                                                                   source))}))
                              :feeder  #(poll/status poller)})
-        http-server       (server/start!
+        http-server       (server/start-server!
                             {:port           port
                              :dev-csp?       dev-csp?
                              :origin-token   origin-token
@@ -368,10 +368,15 @@
      :system/server      http-server}))
 
 (defn stop!
-  "Stop a running system, edge first. For tests and the REPL —
-  production stops by dying."
-  [{:system/keys [poller broadcaster]}]
-  (server/stop!)
+  "Stop a running system, edge first, and block until each layer is down.
+  For tests and the REPL — production stops by dying.
+
+  Stops the server THIS system started, not whatever a global happens to
+  hold: the system owns its handle (adsb-a07). By the time this returns,
+  the socket is closed and the poll thread has ended, so nothing the
+  system started can still be writing to adsb.state."
+  [{:system/keys [poller broadcaster server]}]
+  (server/stop-server! server)
   (broadcast/stop! broadcaster)
   (poll/stop! poller)
   nil)

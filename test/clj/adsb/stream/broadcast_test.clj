@@ -74,14 +74,15 @@
                        :max-per-ip         max-per-ip
                        :trust-forwarded?   trust-forwarded?
                        :trusted-proxy-hops trusted-proxy-hops})
-        srv         (server/start!
+        srv         (server/start-server!
                       {:port           0
                        :stream-connect #(broadcast/connect! broadcaster %)})]
     {:broadcaster broadcaster
+     :server      srv
      :port        (http-kit/server-port srv)}))
 
-(defn- stop-streaming-server! [{:keys [broadcaster]}]
-  (server/stop!)
+(defn- stop-streaming-server! [{:keys [broadcaster server]}]
+  (server/stop-server! server)
   (broadcast/stop! broadcaster))
 
 (defn- start-and-stop-broadcaster
