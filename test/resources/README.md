@@ -56,3 +56,22 @@ real position is private (see `docs/validation-boundaries.md`); the committed
 aircraft-sample positions, so the range gate behaves realistically in tests
 without locating the antenna. The git hash in `version` is likewise zeroed.
 Do not replace these with real coordinates.
+
+## beast-sample.bin
+
+**SYNTHETIC.** A Beast binary capture (ultrafeeder's port 30005 wire format)
+**constructed from the framing spec, not recorded** — dietpi.local does not
+resolve from the build machine and the feeder is never contacted (see
+`docs/CLAUDE.md`: never test against a live feeder). It is built to exercise
+`adsb.ingest.beast/frames` adversarially: one frame of each Beast type ('1'
+Mode-A/C, '2' short Mode-S, '3' long Mode-S), a doubled-`0x1a` escape in the
+MLAT, signal, and payload positions, pure junk and an escape-plus-bad-type run
+between frames (resync), and a truncated final frame (carry).
+
+The exact byte layout and a regenerator live in the `(comment ...)` at the
+bottom of `test/clj/adsb/ingest/beast_test.clj`; the committed bytes are the
+source of truth the tests read. To be **superseded or augmented by a real
+capture** off the feeder — tracked as bead **adsb-c75**. Beast carries no
+receiver-position field, so there is nothing to redact here today; a real
+capture must be reviewed against `docs/validation-boundaries.md` before it
+lands.
