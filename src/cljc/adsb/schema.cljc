@@ -82,8 +82,9 @@
    [:aircraft/rssi {:optional true} number?]
    ;; Set at merge time when a new position implies an impossible jump
    ;; from the previous observation — the fingerprint of spoofing.
-   ;; Flagged and surfaced, never dropped or clamped; cleared by the
-   ;; next consistent observation (adsb.ingest.plausibility).
+   ;; Flagged and surfaced, never dropped or clamped; sticks for the
+   ;; track's life in the picture and is cleared only by age-out, never
+   ;; by anything the aircraft transmits (adsb.ingest.plausibility).
    [:aircraft/position-suspect? {:optional true} :boolean]
    ;; True only when the position derives from multilateration rather
    ;; than the aircraft's own ADS-B — lower-confidence data the UI

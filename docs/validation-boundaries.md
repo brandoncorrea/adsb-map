@@ -183,11 +183,14 @@ decision down:
   in `adsb.state/apply-batch!` — the one place the previous observation is
   available.) A new position implying a sustained speed strictly above **1200 kt**
   from the aircraft's previous observation sets `:aircraft/position-suspect? true`
-  on the domain aircraft. Clearing rule: the flag is recomputed on every
-  observation, so the next observation consistent with the last stored position
-  clears it; a position-less observation inherits the flag along with the
-  inherited position — a suspect position does not launder itself by falling
-  silent. The 1200 kt threshold deliberately sits above the 1000 kt per-field
+  on the domain aircraft. Clearing rule: **nothing the aircraft transmits clears
+  it.** The flag means "this track has made at least one impossible jump since we
+  picked it up," so it sticks for the track's life in the picture — on both ingest
+  paths, so the badge means one thing regardless of deployment (adsb-caf). A track
+  that could clear its own mark by settling down would only need one plausible
+  message to launder a spoof. The single decay boundary is the age-out sweep: an
+  aircraft re-acquired after five minutes of silence is a new track and starts
+  clean. The 1200 kt threshold deliberately sits above the 1000 kt per-field
   ceiling so the two layers never disagree about a fast-but-real aircraft.
 
 The temptation is to silently clamp bad values into range. **Don't.** Clamping turns

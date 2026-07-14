@@ -16,6 +16,10 @@
     the same aircraft's previous observation sets
     :aircraft/position-suspect? true. FLAGGED, never dropped, never
     clamped — a jump is the fingerprint of spoofing and must surface.
+    The flag means 'this track has made at least one impossible jump
+    since we picked it up', and it sticks: nothing the aircraft sends
+    clears it, on either ingest path. Only the age-out sweep does, by
+    forgetting the track entirely (adsb-caf).
 
   Pure: the receiver position, the previous picture, and time are all
   arguments. Fetching the receiver position is I/O and lives at the
@@ -83,24 +87,21 @@
       (pos? distance-m))))
 
 (defn- flag-position-jump
-  "One aircraft's step of flag-position-jumps."
+  "One aircraft's step of flag-position-jumps. Suspect once it jumps,
+  suspect for the rest of its life in the picture: the flag is carried
+  forward from the previous entry, never recomputed away."
   [picture {:aircraft/keys [icao position] :as observation}
    captured-at-ms max-implied-speed-kt]
-  (let [previous (get picture icao)]
-    (cond
-      (nil? position)
-      (cond-> observation
-              (:aircraft/position-suspect? previous)
-              (assoc :aircraft/position-suspect? true))
-
-      (and (aircraft/positioned? previous)
-           (position-jump? previous position
-                           (aircraft/observed-at-ms observation
-                                                    captured-at-ms)
-                           max-implied-speed-kt))
-      (assoc observation :aircraft/position-suspect? true)
-
-      :else observation)))
+  (let [previous (get picture icao)
+        jumped?  (and position
+                      (aircraft/positioned? previous)
+                      (position-jump? previous position
+                                      (aircraft/observed-at-ms observation
+                                                               captured-at-ms)
+                                      max-implied-speed-kt))]
+    (cond-> observation
+            (or jumped? (:aircraft/position-suspect? previous))
+            (assoc :aircraft/position-suspect? true))))
 
 ;; ---------------------------------------------------------------------
 ;; Position-jump flagging
@@ -116,13 +117,17 @@
   whose new position implies an impossible speed from its previous
   observation in `picture`. Nothing is dropped or clamped.
 
-  Clearing rule: the flag is recomputed on every observation, so a
-  positioned observation consistent with the last stored position —
-  suspect or not — carries no flag. A position-less observation
-  inherits the previous flag along with the position that merge-batch
-  will inherit: a suspect position does not launder itself by falling
-  silent. A first-ever position has nothing to jump from and is never
-  flagged."
+  Clearing rule: NOTHING an aircraft transmits clears the flag. Once a
+  track jumps it stays suspect for the rest of its life in the picture,
+  positioned or silent, however consistently it behaves afterwards
+  (adsb-caf). A track that could clear its own mark by settling down
+  would only need one plausible message to launder a spoof, and the
+  operator would never see the teleport that earned it. The flag decays
+  at exactly one boundary: the age-out sweep
+  (adsb.aircraft/age-out). An aircraft re-acquired after five minutes of
+  silence is a new track to us and starts clean.
+
+  A first-ever position has nothing to jump from and is never flagged."
   [picture batch captured-at-ms max-implied-speed-kt]
   (mapv #(flag-position-jump picture % captured-at-ms
                              max-implied-speed-kt)
@@ -155,13 +160,15 @@
   :aircraft/seen-at-ms, which the accumulator stamps honestly at arrival
   (adsb-0g0): a reception gap reads as a gap, not as a teleport.
 
-  The flag STICKS, where merge-batch recomputes it every snapshot. A
-  delta says only what changed and never carries
-  :aircraft/position-suspect?, so the accumulator's plain merge keeps the
-  flag on the aircraft for the rest of its life in the picture. That is
-  the point of flagging per message: an upsert is a full-state
-  replacement at the client, so a track caught teleporting must not
-  launder the flag away with its very next message."
+  The flag STICKS here, as it does on the poll path: a delta says only
+  what changed and never carries :aircraft/position-suspect?, so the
+  accumulator's plain merge would keep it anyway — flag-position-jump
+  carries it forward explicitly so the lifetime is one rule stated in
+  one place rather than an accident of two different merges (adsb-caf).
+  That stickiness is what makes flagging per message worth doing: an
+  upsert is a full-state replacement at the client, so a track caught
+  teleporting must not launder the flag away with its very next
+  message."
   [picture delta heard-at-ms]
   (accumulator/accumulate picture
                           (flag-position-jump picture delta heard-at-ms

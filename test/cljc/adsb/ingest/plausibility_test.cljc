@@ -1,6 +1,7 @@
 (ns adsb.ingest.plausibility-test
   (:require
     [adsb.accumulator :as accumulator]
+    [adsb.aircraft :as aircraft]
     [adsb.fixtures :as fixtures]
     [adsb.geo :as geo]
     [adsb.ingest.coerce :as coerce]
@@ -167,16 +168,22 @@
                                     icao)
                             :aircraft/position-suspect?)))))
 
-    (testing "a subsequent observation consistent with the last stored
-              position clears the flag"
-      (let [;; Consistent with the (suspect) mid-atlantic position.
-            settled (at-position fixtures/ups-2717
-                                 (update mid-atlantic :geo/lat + 0.002))]
-        (is (not (contains? (stored (picture-after [fixtures/ups-2717]
-                                                   [teleported]
-                                                   [settled])
-                                    ups-icao)
-                            :aircraft/position-suspect?)))))
+    (testing "the flag STICKS across every later snapshot, exactly as it
+              does on the streaming path (adsb-caf): a track that settled
+              down could otherwise launder a spoof with one plausible
+              position, and the operator would never see the teleport"
+      (let [;; Consistent with the (suspect) mid-atlantic position, and
+            ;; then consistent again — behaving does not buy absolution.
+            settled  (at-position fixtures/ups-2717
+                                  (update mid-atlantic :geo/lat + 0.002))
+            settled' (at-position fixtures/ups-2717
+                                  (update mid-atlantic :geo/lat + 0.004))]
+        (is (true? (:aircraft/position-suspect?
+                     (stored (picture-after [fixtures/ups-2717]
+                                            [teleported]
+                                            [settled]
+                                            [settled'])
+                             ups-icao))))))
 
     (testing "a position-less observation inherits the flag along with
               the position — a suspect position does not launder itself
@@ -195,6 +202,26 @@
         (is (not (contains? (stored (picture-after [fixtures/ups-2717]
                                                    [silent])
                                     ups-icao)
+                            :aircraft/position-suspect?)))))))
+
+(deftest age-out-is-the-only-thing-that-clears-the-flag
+  ;; The one decay boundary (adsb-caf). Not a rule plausibility enforces
+  ;; — a rule it INHERITS, by keeping the flag on the entry and nowhere
+  ;; else: forget the entry and the flag is gone with it.
+  (let [teleported (at-position fixtures/ups-2717 mid-atlantic)
+        suspect    (first (picture-after [fixtures/ups-2717] [teleported]))
+        long-after (+ captured-at-ms aircraft/age-out-threshold-ms 1000)]
+
+    (testing "the sweep evicts the suspect track like any other"
+      (is (true? (:aircraft/position-suspect? (get suspect ups-icao))))
+      (is (empty? (aircraft/age-out suspect long-after))))
+
+    (testing "an aircraft re-acquired after the sweep is a new track and
+              starts clean — its first position has nothing to jump from"
+      (let [swept    (aircraft/age-out suspect long-after)
+            reheard  (plausibility/merge-batch-flagging-jumps
+                       swept [teleported] long-after)]
+        (is (not (contains? (get reheard ups-icao)
                             :aircraft/position-suspect?)))))))
 
 ;; ---------------------------------------------------------------------
