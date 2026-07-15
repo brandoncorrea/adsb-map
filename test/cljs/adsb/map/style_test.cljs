@@ -248,7 +248,7 @@
                              (:altitude-stops day) (:altitude-stops night))))
           "every ramp stop differs between editions"))
     (testing "each edition's halo is its OWN paper (design-direction §2/§4)"
-      (is (= "#F5EFDF" (:halo-color day)))
+      (is (= "#E2E8DE" (:halo-color day)))     ; Moss (adsb-ixd)
       (is (= "#151B26" (:halo-color night))))
     (testing "an unknown theme falls back to the day edition — a chart is
               always on the table"

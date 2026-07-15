@@ -61,19 +61,36 @@ aircraft inks in `adsb.map.style/palettes`, basemap inks in
 `adsb.map.basemap/editions`, chrome inks in `adsb.css.tokens` custom
 properties — one table, three media, change them together.
 
-| Role | Day edition | Night edition |
+| Role | Day edition — **Moss** | Night edition |
 |---|---|---|
-| Paper (map base) | `#F5EFDF` | `#151B26` |
-| Paper, chrome/panels | `#FBF6E8` | `#1B2330` |
-| Terrain tint 1 / 2 | `#E7DBB8` / `#E0CFA0` | `#1D2634` / `#232E40` |
-| Contour lines | `#D9C99F` | `#2E3A49` |
-| Water fill / line | `#C9DCD6` / `#3D5E8C` | `#101823` / `#7FA3D4` |
-| Ink (text, rules, glyph outlines) | `#2C2A24` | `#E9E2CE` |
-| Faded ink (captions, ticks) | `#6E6A58` | `#8D96A8` |
-| Aviation magenta (accents, selection) | `#A83A63` | `#E77E9B` |
-| Aero blue (links, water labels) | `#36547E` | `#8BA9D6` |
-| Roads | `#A65A2E` at ~0.6 alpha | `#6B5540` at ~0.6 alpha |
+| Paper (map base) | `#E2E8DE` | `#151B26` |
+| Paper, chrome/panels | `#ECF1E8` | `#1B2330` |
+| Terrain tint 1 / 2 | `#C2D7B4` / `#A2C193` | `#1D2634` / `#232E40` |
+| Contour lines | `#A6BF9E` | `#2E3A49` |
+| Water fill / line | `#A6C7BE` / `#2A6358` | `#101823` / `#7FA3D4` |
+| Ink (text, rules, glyph outlines) | `#1B2A1D` | `#E9E2CE` |
+| Faded ink (captions, ticks) | `#506049` | `#8D96A8` |
+| Aviation magenta (accents, selection) | `#A5385C` | `#E77E9B` |
+| Aero (links, water labels — teal by day) | `#2A6358` | `#8BA9D6` |
+| Roads | `#5C6E56` at ~0.75 alpha | `#6B5540` at ~0.6 alpha |
 | Emergency red | `#CE2029` | `#FF5A4D` |
+
+*The DAY column was re-chosen 2026-07-15 (bead `adsb-ixd`): the original
+warm "sectional" day print (paper `#F5EFDF`, tan hypsometry, sienna roads)
+read as a DESERT — the same warm cream-and-clay DNA no matter how it was
+tuned. The Overseer picked **Moss** by eye in a throwaway `#/preview` fitting
+room — candidates browsed and tuned live over real traffic, then the room
+removed once it had served its purpose (as the earlier gallery was, cf.
+`f86beba`). Moss is a cool deep-forest chart — grey-green stock, true
+greens (sage retired — it is itself a desert green), deep-teal water,
+moss-slate roads (terracotta retired — adobe was the strongest arid cue). The wine-pen
+magenta and the accent RELATIONSHIPS carry over; "aero blue" becomes a deep
+teal by day to harmonize with the forest plate. The NIGHT edition is
+unchanged — it was already the premium reference the day edition now
+matches. The original sectional day values live on in git history and the
+bead. NOTE: §1's "warm paper" concept prose now describes the NIGHT edition
+and the app's origins, not the day print — a broader §1 revision is the
+Overseer's call, deferred here.*
 
 *The magenta and aero rows were re-inked 2026-07-12 by the §5 pick — the
 "wine pen" accent variation (bead `adsb-dgb.10`). The relationships stand;

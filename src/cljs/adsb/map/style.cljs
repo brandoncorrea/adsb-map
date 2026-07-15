@@ -248,8 +248,8 @@
    {:ground-color    "#8A8374"   ; on the tarmac — dusty field khaki
     :unknown-color   "#9A937F"   ; positioned, altitude never reported
     :emergency-color "#CE2029"   ; red pen; overrides everything
-    :halo-color      "#F5EFDF"   ; the day paper itself
-    :trail-rgb       "44, 42, 36" ; day ink #2C2A24
+    :halo-color      "#E2E8DE"   ; the day paper itself — Moss (adsb-ixd)
+    :trail-rgb       "27, 42, 29" ; day ink #1B2A1D — Moss forest ink
     :altitude-stops  [[0     "#A0622D"]    ; sienna — on the deck
                       [10000 "#C2447C"]    ; aviation magenta
                       [20000 "#7A4F86"]    ; plum — the transition

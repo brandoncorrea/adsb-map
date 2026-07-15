@@ -60,7 +60,9 @@
    (face "Space Grotesk" "normal" 500 "space-grotesk-500.woff2")])
 
 (def day-tokens
-  "The day edition — the printed chart under a reading lamp."
+  "The day edition — Moss, a cool deep-forest chart (bead adsb-ixd,
+  2026-07-15). It replaced the warm 'sectional' day print, which read as a
+  desert; the night edition below is unchanged."
   (decl
     ;; §5 type tokens — major third, 1.25 @ 13px.
     :--t-2 "8.5px"
@@ -89,24 +91,29 @@
     :--safe-bottom "env(safe-area-inset-bottom, 0px)"
     :--safe-left   "env(safe-area-inset-left, 0px)"
 
-    :--paper        "#F5EFDF"                   ; map paper (also the pre-tile backdrop)
-    :--paper-chrome "#FBF6E8"                   ; panels, header — a lighter leaf
-    :--paper-veil   "rgba(251, 246, 232, 0.92)" ; panel over the chart
-    :--paper-halo   "rgba(251, 246, 232, 0.7)"  ; hairline halos on paper
-    :--ink          "#2C2A24"
-    :--faded-ink    "#6E6A58"                   ; tuned from §2's #8B8471 for caption contrast
-    :--contour      "#D9C99F"
-    :--magenta      "#A83A63"                   ; the wine pen (§5)
-    :--aero         "#36547E"
+    ;; The day edition — MOSS (bead adsb-ixd, picked by eye in the #/preview
+    ;; fitting room 2026-07-15). The warm "sectional" day print read as a
+    ;; desert; Moss is a cool deep-forest chart — greener, cooler paper,
+    ;; sage and terracotta retired — while the NIGHT edition and the wine-pen
+    ;; accent relationships carry over. See docs/design-direction.md §2.
+    :--paper        "#E2E8DE"                   ; map paper (also the pre-tile backdrop)
+    :--paper-chrome "#ECF1E8"                   ; panels, header — a lighter leaf
+    :--paper-veil   "rgba(236, 241, 232, 0.92)" ; panel over the chart
+    :--paper-halo   "rgba(236, 241, 232, 0.7)"  ; hairline halos on paper
+    :--ink          "#1B2A1D"                   ; forest ink
+    :--faded-ink    "#506049"                   ; green-grey captions/ticks
+    :--contour      "#A6BF9E"
+    :--magenta      "#A5385C"                   ; the wine pen (§5), on forest stock
+    :--aero         "#2A6358"                   ; deep teal — links, water labels
     :--emergency    "#CE2029"
     :--on-emergency "#FBF3E4"                   ; text on the emergency red
     :--alt-ground   "#8A8374"                   ; aircraft states — mirror adsb.map.style
     :--alt-unknown  "#9A937F"
     :--ok           "#55722F"                   ; connection: live (contrast-tuned)
     :--warn         "#8F6318"                   ; connection: reconnecting (contrast-tuned)
-    :--rule         "rgba(44, 42, 36, 0.3)"     ; hairline ink rules
-    :--rule-strong  "rgba(44, 42, 36, 0.5)"
-    :--rule-faint   "rgba(44, 42, 36, 0.08)"
+    :--rule         "rgba(27, 42, 29, 0.3)"     ; hairline ink rules
+    :--rule-strong  "rgba(27, 42, 29, 0.5)"
+    :--rule-faint   "rgba(27, 42, 29, 0.08)"
 
     ;; One hand (§5): every family variable is the plotter's mono.
     :--mono  "\"Space Mono\", ui-monospace, Menlo, Consolas, monospace"

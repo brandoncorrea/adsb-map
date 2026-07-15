@@ -47,25 +47,31 @@
 
 (def editions
   {:day
-   {:paper         "#F5EFDF"              ; the warm chart paper
-    :terrain-1     "#E7DBB8"              ; hypsometric tint, low
-    :terrain-2     "#E0CFA0"              ; hypsometric tint, high
-    :contour       "#D9C99F"              ; contour/outline ink
-    :water-fill    "#C9DCD6"              ; chart-water green-grey
-    :water-outline "rgba(61, 94, 140, 0.5)"  ; coastline pen, quiet
-    :water-line    "#3D5E8C"              ; rivers — aero blue
-    :ink           "#2C2A24"              ; place-name ink
-    :faded-ink     "#6E6A58"              ; captions, POIs, boundaries (§2, contrast-tuned)
-    :magenta       "#A83A63"              ; the wine pen (§5) — airports
-    :aero          "#36547E"              ; water labels — §5 chrome aero
-    :road          "rgba(166, 90, 46, 0.6)" ; sectional road sienna
-    :road-casing   "#F5EFDF"              ; roads are single ink strokes
-    :rail          "#D9C99F"              ; rail hatching, quiet
-    :building      "#E0CFA0"              ; built-up tint
-    :building-line "#D9C99F"
-    :aeroway       "#EDE4CB"              ; runway/taxiway ground
-    :aeroway-line  "#8B8471"
-    :label-halo    "#F5EFDF"              ; text sits on the paper
+   ;; MOSS — the day edition (bead adsb-ixd, picked in the #/preview fitting
+   ;; room 2026-07-15). A cool deep-forest chart: the warm sectional day
+   ;; print read as a desert, so sage and terracotta are retired for true
+   ;; greens, a grey-green stock, deep-teal water, and moss-slate roads. The
+   ;; NIGHT edition below is unchanged. Mirror in adsb.css.tokens (chrome)
+   ;; and adsb.map.style (aircraft halo/trail).
+   {:paper         "#E2E8DE"              ; the forest chart stock
+    :terrain-1     "#C2D7B4"              ; hypsometric tint, low — fresh green
+    :terrain-2     "#A2C193"              ; hypsometric tint, high — deep green
+    :contour       "#A6BF9E"              ; contour/outline ink
+    :water-fill    "#A6C7BE"              ; chart-water, teal-green
+    :water-outline "rgba(42, 99, 88, 0.5)"   ; coastline pen, quiet
+    :water-line    "#2A6358"              ; rivers — deep teal
+    :ink           "#1B2A1D"              ; place-name ink, forest
+    :faded-ink     "#506049"              ; captions, POIs, boundaries
+    :magenta       "#A5385C"              ; the wine pen (§5) — airports
+    :aero          "#2A6358"              ; water labels — deep teal
+    :road          "rgba(92, 110, 86, 0.75)" ; moss-slate road (no terracotta)
+    :road-casing   "#E2E8DE"              ; roads are single ink strokes
+    :rail          "#A6BF9E"              ; rail hatching, quiet
+    :building      "#A2C193"              ; built-up tint
+    :building-line "#A6BF9E"
+    :aeroway       "#CFDFC4"              ; runway/taxiway ground
+    :aeroway-line  "#506049"
+    :label-halo    "#E2E8DE"              ; text sits on the paper
     :hide-decor?   false}
    :night
    {:paper         "#151B26"              ; the night stock
