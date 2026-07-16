@@ -56,8 +56,8 @@
       (admit receiver-position crop)
       (state/apply-batch! (System/currentTimeMillis))))
 
-(defn- delta->stream! [delta aircraft now-ms]
-  (let [{:keys [receiver-position crop broadcaster]} delta]
+(defn- delta->stream! [fan-out aircraft now-ms]
+  (let [{:keys [receiver-position crop broadcaster]} fan-out]
     (when (and broadcaster
                (seq (admit [aircraft] receiver-position crop)))
       (broadcast/offer-delta! broadcaster aircraft now-ms))))

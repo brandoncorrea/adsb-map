@@ -18,7 +18,7 @@
 
 (defn- mlat-derived? [{:keys [type mlat]}]
   (or (= "mlat" type)
-      (seq mlat)))
+      (and (sequential? mlat) (seq mlat))))
 
 (def ^:private known-category?
   (m/validator schema/emitter-category))

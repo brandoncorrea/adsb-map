@@ -6,6 +6,7 @@
             [clojure.string :as str]
             [malli.core :as m]))
 
+;; The Mode S 24-bit CRC polynomial (ICAO Annex 10 Vol IV).
 (def ^:const crc-generator 0xfff409)
 (def ^:private crc-width-mask 0xffffff)
 (def ^:private crc-high-bit 0x800000)
@@ -45,6 +46,9 @@
        (apply str)))
 
 (defn- extended-squitter-icao [payload]
+  ;; DF18 CF field: 0/2 carry an ICAO address, 1 a non-ICAO one (hence the ~
+  ;; prefix, matching readsb). Other CF values (TIS-B relay, ADS-R rebroadcast)
+  ;; are deliberately not decoded.
   (let [df   (bit-shift-right (nth payload 0) 3)
         cf   (bit-and (nth payload 0) 0x07)
         icao (bytes->hex (subvec payload 1 4))]
@@ -53,13 +57,14 @@
       (and (= df df-extended-squitter-non-transponder) (contains? #{0 2} cf)) icao
       (and (= df df-extended-squitter-non-transponder) (= 1 cf)) (str "~" icao))))
 
+;; The ICAO Annex 10 6-bit character table; # marks the invalid codes.
 (def ^:private callsign-charset
   "#ABCDEFGHIJKLMNOPQRSTUVWXYZ##### ###############0123456789######")
 
 (defn- six-bit-code [callsign-bytes i]
   (let [bit-offset  (* 6 i)
         byte-offset (quot bit-offset 8)
-        shift       (- 10 (rem bit-offset 8))
+        shift       (- 10 (rem bit-offset 8))  ; 10 = 16-bit window - 6-bit code
         pair        (bit-or (bit-shift-left (nth callsign-bytes
                                                  byte-offset)
                                             8)
@@ -76,6 +81,8 @@
               str/trim
               not-empty))))
 
+;; The type-code -> category-set mapping runs backwards by design (TC 4 = set
+;; A). TC 1 (set D, mostly reserved) is deliberately not decoded.
 (def ^:private category-set {4 "A", 3 "B", 2 "C"})
 
 (defn- emitter-category [me type-code]
@@ -93,12 +100,16 @@
 
 (def ^:private plausible-ground-speed? (m/validator schema/plausible-ground-speed-kt))
 (def ^:const ^:private vertical-rate-fpm-per-unit 64)
+;; Velocity subtypes 2 and 4 are the supersonic encodings: units of 4 kt.
 (def ^:private supersonic-subtypes #{2 4})
 
 (defn- velocity-multiplier [subtype]
   (if (supersonic-subtypes subtype) 4 1))
 
 (defn- signed-component [direction-bit value multiplier]
+  ;; DO-260B velocity fields: 0 means "no data" and real values sit at an
+  ;; offset of one, so the (dec value) is the encoding, not an off-by-one.
+  ;; Direction bit set = west/south = negative.
   (when (pos? value)
     (* (dec value)
        multiplier
@@ -168,6 +179,9 @@
           (merge fields (vertical-rate-fields me)))))))
 
 (defn- velocity-delta [icao payload]
+  ;; Airspeed/heading (subtypes 3/4) and GNSS vertical rates are decoded but
+  ;; deliberately dropped here: heading is not track, and the domain models
+  ;; ground-referenced motion only (see adsb-qxl for the open question).
   (let [{:velocity/keys [speed-kt speed-source direction-deg
                          vertical-rate-fpm vertical-rate-source]}
         (airborne-velocity payload)]
@@ -179,10 +193,14 @@
             (and vertical-rate-fpm (= :baro vertical-rate-source))
             (assoc :aircraft/baro-rate-fpm vertical-rate-fpm))))
 
+;; The spec-recommended window for pairing even/odd CPR halves (DO-260B).
 (def ^:const cpr-pair-max-gap-ms 10000)
 (def ^:const feet-per-meter 3.28084)
 
 (defn- q-bit-altitude-ft [altitude-field]
+  ;; Q=1: 25 ft LSB above a -1000 ft base, with the Q bit spliced out of the
+  ;; middle of the field. Q=0 (Gillham 100 ft coding) is deliberately not
+  ;; decoded and yields no altitude.
   (when (pos? (bit-and altitude-field 0x10))
     (let [n (bit-or (bit-shift-left (bit-shift-right altitude-field 5) 4)
                     (bit-and altitude-field 0x0f))]
@@ -193,6 +211,8 @@
                       (bit-shift-right (nth me 2) 4))]
     (when (pos? field)
       (cond
+        ;; TC 9-18 carries barometric altitude; TC 20-22 carries GNSS height
+        ;; in meters — hence the unit conversion on that arm only.
         (<= 9 type-code 18) (q-bit-altitude-ft field)
         (<= 20 type-code 22) (* field feet-per-meter)))))
 

@@ -92,6 +92,9 @@
     (some-> websocket .abort)
     (catch Throwable _)))
 
+;; The claim/abandon CAS pair exists so a WebSocket whose buildAsync completes
+;; AFTER .get times out is closed instead of leaked: the timed-out dialer
+;; marks the dial ::abandoned, and the late completion sees it lost the race.
 (defn- claim-dial! [state websocket]
   (compare-and-set! state nil websocket))
 

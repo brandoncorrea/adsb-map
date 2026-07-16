@@ -12,6 +12,8 @@
      :background  "var(--paper)"
      :color       "var(--ink)"}]
 
+   ;; Declared twice on purpose: 100vh is the fallback for browsers without
+   ;; dvh; the second rule wins where dvh is understood.
    [:.adsb-shell
     {:position "relative"
      :height   "100vh"

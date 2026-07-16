@@ -99,8 +99,8 @@ no clock:
 
 ```clojure
 (require '[adsb.aircraft :as ac] :reload)  ; :reload — always, or you get a stale namespace
-ac/age-out-threshold-ms                          ;=> 300000
-(ac/aged-out? #:aircraft{:seen-at-ms 0} 300001)  ;=> true — silent 5 min, out of the picture
+ac/age-out-threshold-ms                          ;=> 120000
+(ac/aged-out? #:aircraft{:seen-at-ms 0} 120001)  ;=> true — silent 2 min, out of the picture
 ```
 
 That port is the JVM REPL. ClojureScript evaluation goes through shadow-cljs on its own

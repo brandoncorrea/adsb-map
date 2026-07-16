@@ -36,12 +36,6 @@
     [lon lat]))
 (def ^:private ground-icao (:aircraft/icao fixtures/on-the-ground))
 
-(deftest display-name-prefers-callsign
-  (is (= "UPS2717" (selection/display-name fixtures/ups-2717)))
-  (is (= ground-icao
-         (selection/display-name
-           (dissoc fixtures/on-the-ground :aircraft/callsign)))))
-
 (deftest ring-element-is-a-fixed-box-so-the-plane-stays-centred
   (let [el (selection/ring-element "UPS2717")]
     (is (= "adsb-selection-ring" (.-className el)))

@@ -1,5 +1,6 @@
 (ns adsb.map.emergency
-  (:require [adsb.corejs :as cjs]
+  (:require [adsb.aircraft :as aircraft]
+            [adsb.corejs :as cjs]
             [adsb.geo :as geo]
             [adsb.map.maplibre :as maplibre]
             [adsb.ui.alert :as alert]
@@ -36,8 +37,6 @@
 (defn- mayday-line [aircraft*]
   (str "mayday · " (or (alert/aircraft-alert aircraft*) "emergency")))
 
-(defn- display-name [{:aircraft/keys [callsign icao]}] (or callsign icao))
-
 (defn- distance-text [distance-m]
   (-> (geo/meters->nm distance-m)
       math/round
@@ -64,6 +63,8 @@
     (set-draw-in! delay-ms)))
 
 (defn- stamp-offset [track-deg]
+  ;; Orbit the stamp 90° off the aircraft's track so it never sits on the
+  ;; flight path; 106/74 px are the ellipse's semi-axes plus clearance.
   (let [theta (* (+ (or track-deg 0) 90) (/ math/PI 180))]
     [(* 106 (math/sin theta))
      (* -74 (math/cos theta))]))
@@ -110,7 +111,7 @@
 
 (defn- update-stamp! [{:keys [word-el callsign-el altitude-el rate-el]} aircraft*]
   (set! (.-textContent word-el) (mayday-line aircraft*))
-  (set! (.-textContent callsign-el) (display-name aircraft*))
+  (set! (.-textContent callsign-el) (aircraft/display-name aircraft*))
   (set! (.-textContent altitude-el) (altitude-text aircraft*))
   (set! (.-textContent rate-el) (vertical-rate-text aircraft*)))
 
@@ -140,7 +141,7 @@
      :distance-el distance-el}))
 
 (defn- update-arrow! [{:keys [el glyph-el callsign-el distance-el]} aircraft* edge]
-  (let [name*    (display-name aircraft*)
+  (let [name*    (aircraft/display-name aircraft*)
         distance (distance-text (:edge/distance-m edge))]
     (set! (-> glyph-el .-style .-transform)
           (str "rotate(" (:edge/bearing-deg edge) "deg)"))

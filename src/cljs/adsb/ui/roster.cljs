@@ -33,9 +33,6 @@
        roster-sort
        vec))
 
-(defn display-name [{:aircraft/keys [callsign icao]}]
-  (or callsign icao))
-
 (defn fmt-alt [{:aircraft/keys [on-ground? altitude-ft]}]
   (cond
     on-ground? "GND"
@@ -46,6 +43,9 @@
 (defn fmt-sq [v] (or (some-> v str) "—"))
 (def ^:const sheet-states [:closed :half :full])
 
+;; Must match the CSS snap heights (--roster-sheet-h/--roster-full-h/
+;; --roster-rail-h in css/roster.clj's phone block) or the drag settle
+;; animation lands on the wrong height.
 (def ^:const sheet-heights
   {:closed 0.0
    :half   0.52
@@ -122,11 +122,6 @@
     (get db :roster/sheet default-sheet)))
 
 (rf/reg-sub
-  :roster/open?
-  :<- [:roster/sheet]
-  (fn [sheet _] (sheet-open? sheet)))
-
-(rf/reg-sub
   :roster/query
   (fn [db _] (or (:roster/query db) "")))
 
@@ -178,7 +173,7 @@
        :on-click       #(on-row-click! icao)
        :on-mouse-enter #(on-row-enter! icao)
        :on-mouse-leave on-row-leave!}
-      [:span.adsb-roster-name (display-name ac)]
+      [:span.adsb-roster-name (aircraft/display-name ac)]
       [:span.adsb-roster-alt (fmt-alt ac)]
       [:span.adsb-roster-spd (fmt-spd (:aircraft/ground-speed-kt ac))]
       [:span.adsb-roster-sq (fmt-sq (:aircraft/squawk ac))]]]))

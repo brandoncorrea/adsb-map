@@ -1,13 +1,17 @@
 (ns adsb.ingest.cpr
   (:require [clojure.math :as math]))
 
-(def ^:const cpr-scale 131072.0)
+;; Compact Position Reporting, per DO-260B §A.1.7 / ICAO Annex 10 Vol IV.
+(def ^:const cpr-scale 131072.0)  ; 2^17 — the fields are 17-bit fractions
 (def ^:const even-zone-count 60)
 (def ^:const odd-zone-count 59)
 
+;; NZ, the number of latitude zones.
 (def ^:private nz 15)
 
 (defn nl [lat]
+  ;; NL(lat), the longitude-zone count for a latitude — the spec's closed
+  ;; form, with the table's edge cases pinned at the equator and the poles.
   (let [lat (abs (double lat))]
     (cond
       (zero? lat) 59
@@ -39,10 +43,15 @@
   (let [zones (zone-count parity)
         lat   (* (/ 360.0 zones) (+ (mod j zones) cpr-lat-fraction))]
     (cond-> lat
+            ;; Southern-hemisphere unwrap: the spec's decode lands southern
+            ;; latitudes in [270, 360).
             (>= lat 270.0)
             (- 360.0))))
 
 (defn global-position [even odd]
+  ;; The global (unambiguous) decode from an even/odd pair — the j and m
+  ;; zone-index computations are straight from the spec's algorithm; don't
+  ;; re-derive them from this code.
   (let [lat-fraction-even (/ (:cpr/lat even) cpr-scale)
         lat-fraction-odd  (/ (:cpr/lat odd) cpr-scale)
         j                 (math/floor

@@ -189,8 +189,8 @@ decision down:
   paths, so the badge means one thing regardless of deployment (adsb-caf). A track
   that could clear its own mark by settling down would only need one plausible
   message to launder a spoof. The single decay boundary is the age-out sweep: an
-  aircraft re-acquired after five minutes of silence is a new track and starts
-  clean. The 1200 kt threshold deliberately sits above the 1000 kt per-field
+  aircraft re-acquired after two minutes of silence (`age-out-threshold-ms`,
+  shortened from five in adsb-rg1) is a new track and starts clean. The 1200 kt threshold deliberately sits above the 1000 kt per-field
   ceiling so the two layers never disagree about a fast-but-real aircraft.
 
 The temptation is to silently clamp bad values into range. **Don't.** Clamping turns

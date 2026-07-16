@@ -1,5 +1,6 @@
 (ns adsb.map.selection
-  (:require [adsb.corejs :as cjs]
+  (:require [adsb.aircraft :as aircraft]
+            [adsb.corejs :as cjs]
             [adsb.map.maplibre :as maplibre]
             [re-frame.core :as rf]
             [reagent.core :as r]))
@@ -7,9 +8,6 @@
 (def ^:const ring-diameter-px 44)
 
 (def ^:const svg-ns "http://www.w3.org/2000/svg")
-
-(defn display-name [{:aircraft/keys [callsign icao]}]
-  (or callsign icao ""))
 
 (defn ring-element [label]
   (let [el      (cjs/create-element "div")
@@ -59,7 +57,7 @@
         icao      (:icao slot)
         next-icao (:aircraft/icao aircraft)
         lng-lat   (position->lng-lat aircraft)
-        label     (some-> aircraft display-name)]
+        label     (or (some-> aircraft aircraft/display-name) "")]
     (cond
       (nil? lng-lat)
       (when marker

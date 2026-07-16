@@ -26,7 +26,12 @@
    [:track {:optional true} [:maybe number?]]
    [:baro_rate {:optional true} [:maybe number?]]
    [:seen {:optional true} [:maybe number?]]
+   [:seen_pos {:optional true} [:maybe number?]]
    [:rssi {:optional true} [:maybe number?]]])
+;; type/category/mlat are deliberately absent above: they are advisory
+;; fields, and garbage in them costs the FIELD, never the aircraft — the
+;; coercion layer field-validates each. The typed fields above are
+;; arithmetic inputs; garbage there rejects the entry at the boundary.
 
 (def position
   [:map

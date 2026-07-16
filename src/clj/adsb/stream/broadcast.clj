@@ -50,6 +50,10 @@
                    (json/generate-string
                      (wire/config-event->wire crop now-ms))))
 
+;; Reflection into http-kit's private channel field is deliberate: http-kit
+;; fills :remote-addr from the leftmost (attacker-written) X-Forwarded-For
+;; entry, so the real socket peer is the only trustworthy client identity.
+;; See validation-boundaries.md, Boundary 2.
 (def ^:private async-channel-key-field
   (delay
     (try

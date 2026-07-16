@@ -306,8 +306,7 @@
                     (still under the age-out line — adsb-rg1: 2 min)"
             (with-redefs [cjs/now-ms (constantly 100000)]
               (@!tick))
-            (is (= 100 (age-of)))
-            (is (> 100 70)))
+            (is (= 100 (age-of))))
 
           (testing "past the age-out line the tick drops the aircraft from
                     the setData payload entirely — it disappears"

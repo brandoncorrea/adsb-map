@@ -1,30 +1,12 @@
 (ns adsb.ingest.replay
-  (:require [adsb.ingest.coerce :as coerce]
+  (:require [adsb.geo :as geo]
+            [adsb.ingest.coerce :as coerce]
             [adsb.ingest.source :as source]
-            [cheshire.core :as json]
-            [clojure.math :as math]))
+            [cheshire.core :as json]))
 
 (def ^:const default-fixture-path "test/resources/aircraft-sample.json")
 (def ^:const default-loop-ms 90000)
 (def ^:const default-age-rate 0.5)
-(def ^:private earth-radius-m 6371000)
-(def ^:private meters-per-nm 1852)
-
-(defn- dead-reckon [{:geo/keys [lat lon]} gs-kt track-deg elapsed-s]
-  (let [dist-m  (/ (* gs-kt meters-per-nm elapsed-s) 3600.0)
-        ang     (/ dist-m earth-radius-m)
-        bearing (math/to-radians track-deg)
-        lat1    (math/to-radians lat)
-        lon1    (math/to-radians lon)
-        lat2    (math/asin (+ (* (math/sin lat1) (math/cos ang))
-                              (* (math/cos lat1) (math/sin ang)
-                                 (math/cos bearing))))
-        lon2    (+ lon1 (math/atan2 (* (math/sin bearing) (math/sin ang)
-                                       (math/cos lat1))
-                                    (- (math/cos ang)
-                                       (* (math/sin lat1) (math/sin lat2)))))]
-    {:geo/lat (math/to-degrees lat2)
-     :geo/lon (- (mod (+ (math/to-degrees lon2) 540) 360) 180)}))
 
 (defn- advance [aircraft elapsed-s age-rate]
   (let [{:aircraft/keys [position ground-speed-kt track-deg seen-s]} aircraft
@@ -32,7 +14,8 @@
     (cond-> aged
             (and position ground-speed-kt track-deg)
             (assoc :aircraft/position
-                   (dead-reckon position ground-speed-kt track-deg elapsed-s)))))
+                   (geo/destination position track-deg
+                                    (* (geo/knots->mps ground-speed-kt) elapsed-s))))))
 
 (defn- elapsed-s [start-ms now-ms loop-ms]
   (/ (mod (- now-ms start-ms) loop-ms) 1000.0))

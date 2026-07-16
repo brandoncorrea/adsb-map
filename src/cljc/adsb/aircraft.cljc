@@ -2,10 +2,15 @@
 
 (def ^:const stale-threshold-ms 60000)
 
+;; Also the only decay boundary for :aircraft/position-suspect? — see
+;; validation-boundaries.md. 5min -> 2min in adsb-rg1.
 (def ^:const age-out-threshold-ms 120000)
 
 (defn positioned? [aircraft]
   (contains? aircraft :aircraft/position))
+
+(defn display-name [{:aircraft/keys [callsign icao]}]
+  (or callsign icao))
 
 (def ^:const squawk->emergency-kind
   {"7500" :hijack

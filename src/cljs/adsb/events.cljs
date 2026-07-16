@@ -24,7 +24,7 @@
 (rf/reg-event-db
   :panel/toggle-expanded
   (fn [db _]
-    (update db :panel/expanded? (complement (some-fn nil? boolean)))))
+    (update db :panel/expanded? (fnil not true))))
 
 (rf/reg-event-fx
   :aircraft/focus

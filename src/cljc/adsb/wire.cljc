@@ -32,9 +32,10 @@
 (def ^:private wire->feeder-status (set/map-invert feeder-status->wire))
 
 (defn feeder->wire [{:feeder/keys [status last-success-ms]}]
-  (cond-> {}
-          (feeder-status->wire status) (assoc :status (feeder-status->wire status))
-          last-success-ms (assoc :last-success last-success-ms)))
+  (let [wire-status (feeder-status->wire status)]
+    (cond-> {}
+            wire-status (assoc :status wire-status)
+            last-success-ms (assoc :last-success last-success-ms))))
 
 (defn crop->wire [{:crop/keys [center radius-m]}]
   (when (and center radius-m)
@@ -43,8 +44,9 @@
      :radius-km (/ radius-m 1000)}))
 
 (defn config-event->wire [crop at-ms]
-  (cond-> {:at at-ms}
-          (crop->wire crop) (assoc :crop (crop->wire crop))))
+  (if-let [wire-crop (crop->wire crop)]
+    {:at at-ms :crop wire-crop}
+    {:at at-ms}))
 
 (defn picture->wire [picture at-ms]
   {:at       at-ms

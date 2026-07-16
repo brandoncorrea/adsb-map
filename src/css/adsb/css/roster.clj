@@ -301,6 +301,8 @@
 
 (def phone
   (at-media {:max-width "640px"}
+    ;; The snap heights must match adsb.ui.roster/sheet-heights and
+    ;; closed-rail-px — the CLJS drag math settles onto these values.
     [[":root"
       {:--roster-sheet-h "52dvh"
        :--roster-full-h  "min(calc(92dvh + var(--safe-bottom)), calc(100dvh - var(--safe-top)))"
@@ -390,6 +392,7 @@
      [:.adsb-roster-handle-label
       {:padding-bottom "1px"}]
 
+     ;; 16px minimum, or iOS Safari zooms the page when the input focuses.
      [:.adsb-roster-search-input
       {:font-size "16px"}]
 

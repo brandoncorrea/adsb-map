@@ -66,7 +66,7 @@
                     (get-property prop)
                     str
                     str/trim)
-        n   (when (seq raw) (parse-double raw))]
+        n   (js/parseFloat raw)]
     (if (js/isFinite n)
       n
       0)))

@@ -22,6 +22,8 @@
    :beast/payload (subvec data header-byte-count)})
 
 (defn- read-data [bs start n]
+  ;; Beast escapes a literal 0x1a in frame data by doubling it, so a lone
+  ;; 0x1a can only be the next frame marker — hence :resync, not an error.
   (let [len (count bs)]
     (loop [p    start
            data []

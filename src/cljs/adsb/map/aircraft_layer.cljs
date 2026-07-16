@@ -135,6 +135,9 @@
   (doseq [[icon-id draw!] icons]
     (maplibre/add-image! m icon-id (->icon-image draw!) {:sdf true})))
 
+;; Clicking the already-selected aircraft arms a DELAYED deselect so a
+;; double-click can cancel it and follow instead; follow-dedupe suppresses
+;; the duplicate when the click (detail>=2) and dblclick paths both fire.
 (def ^:private deselect-arm-ms 350)
 (defonce ^:private !pending-deselect (atom nil))
 (def ^:private follow-dedupe-ms 400)
@@ -144,8 +147,6 @@
   (when-let [id @!pending-deselect]
     (js/clearTimeout id)
     (reset! !pending-deselect nil)))
-
-(defn now-ms [] (js-invoke js/Date "now"))
 
 (defn- dblclick-follow! [props]
   (cancel-pending-deselect!)

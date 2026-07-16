@@ -1,18 +1,21 @@
 (ns adsb.ingest.crop
-  (:require [adsb.geo :as geo]))
+  (:require [adsb.geo :as geo]
+            [adsb.schema :as schema]
+            [clojure.string :as str]
+            [malli.core :as m]))
 
 (def ^:const crop-lat-env "ADSB_CROP_LAT")
 (def ^:const crop-lon-env "ADSB_CROP_LON")
 (def ^:const crop-radius-km-env "ADSB_CROP_RADIUS_KM")
 (def ^:const max-radius-m 400000)
 
-(defn- valid-latitude? [lat]
-  (and (number? lat) (<= -90 lat 90)))
-
-(defn- valid-longitude? [lon]
-  (and (number? lon) (<= -180 lon 180)))
+(def ^:private valid-latitude? (m/validator schema/latitude))
+(def ^:private valid-longitude? (m/validator schema/longitude))
 
 (defn outside-crop? [aircraft {:crop/keys [center radius-m]}]
+  ;; A position-less aircraft can't be proven inside the crop, so an enabled
+  ;; crop excludes it from publication — deliberately stricter than the ingest
+  ;; rule "no position → keep" (see validation-boundaries.md).
   (if-let [position (:aircraft/position aircraft)]
     (> (geo/distance center position) radius-m)
     true))
@@ -24,7 +27,7 @@
 
 (defn- configured? [s]
   (and (string? s)
-       (not (re-matches #"\s*" s))))
+       (not (str/blank? s))))
 
 (defn- parse-number [s]
   (when (configured? s)

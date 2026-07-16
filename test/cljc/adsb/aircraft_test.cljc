@@ -17,6 +17,13 @@
     (is (aircraft/stale? {:aircraft/seen-at-ms 0}
                          (inc aircraft/stale-threshold-ms)))))
 
+(deftest display-name
+  (testing "prefers the callsign, falls back to the icao"
+    (is (= "UPS2717" (aircraft/display-name fixtures/ups-2717)))
+    (is (= never-positioned-icao
+           (aircraft/display-name
+             (dissoc fixtures/never-positioned :aircraft/callsign))))))
+
 (deftest positioned?
   (testing "true for an aircraft that has reported a position"
     (is (aircraft/positioned? fixtures/ups-2717)))

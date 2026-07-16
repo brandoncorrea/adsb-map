@@ -56,6 +56,10 @@
       (is (= "a10202" (:aircraft/icao aircraft)))
       (is (not (contains? aircraft :aircraft/position)))))
 
+  (testing "rejects an entry whose seen_pos is not numeric — bad wire types
+            must die at the boundary, not in later arithmetic"
+    (is (nil? (coerce/->aircraft (assoc cruising-raw :seen_pos "garbage")))))
+
   (testing "omits the position when only one of lat/lon is present"
     (is (not (contains? (coerce/->aircraft (dissoc cruising-raw :lon))
                         :aircraft/position))))
@@ -144,7 +148,13 @@
 
   (testing "an adsb_icao entry with the mlat field absent entirely
             carries no marker"
-    (is (not (contains? (coerce/->aircraft cruising-raw) :aircraft/mlat?)))))
+    (is (not (contains? (coerce/->aircraft cruising-raw) :aircraft/mlat?))))
+
+  (testing "garbage in the mlat field costs the marker, never the aircraft —
+            it is advisory, like category"
+    (let [aircraft (coerce/->aircraft (assoc cruising-raw :mlat 42))]
+      (is (= "abc0e4" (:aircraft/icao aircraft)))
+      (is (not (contains? aircraft :aircraft/mlat?))))))
 
 (deftest ->aircraft-plausibility
   (testing "an absurd altitude costs the field, not the aircraft, and is never clamped"
