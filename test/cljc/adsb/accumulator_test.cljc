@@ -1,15 +1,9 @@
 (ns adsb.accumulator-test
-  (:require
-    [adsb.accumulator :as accumulator]
-    [adsb.aircraft :as aircraft]
-    #?(:clj  [clojure.test :refer [deftest testing is]]
-       :cljs [cljs.test :refer-macros [deftest testing is]])))
+  (:require [adsb.accumulator :as accumulator]
+            [adsb.aircraft :as aircraft]
+            [clojure.test :refer [deftest is testing]]))
 
-;; A single wall-clock instant the deltas are heard at, so age-out
-;; assertions read against a known now. Literal maps and literal now-ms
-;; throughout — the namespace is pure, so there is nothing to mock.
 (def ^:private t0 1720713600000)
-
 (def ^:private ups-icao "a1b2c3")
 (def ^:private swa-icao "d4e5f6")
 
@@ -38,11 +32,10 @@
                         {:aircraft/icao ups-icao :aircraft/callsign "UPS2717"}
                         t0)
                       (accumulator/accumulate
-                        {:aircraft/icao ups-icao
+                        {:aircraft/icao     ups-icao
                          :aircraft/position {:geo/lat 39.0 :geo/lon -104.0}}
                         (+ t0 1000)))]
-      (is (= "UPS2717" (get-in picture [ups-icao :aircraft/callsign]))
-          "the callsign the position-only delta never mentioned survives")
+      (is (= "UPS2717" (get-in picture [ups-icao :aircraft/callsign])))
       (is (= {:geo/lat 39.0 :geo/lon -104.0}
              (get-in picture [ups-icao :aircraft/position])))))
 
@@ -53,13 +46,11 @@
                         {:aircraft/icao ups-icao :aircraft/on-ground? true}
                         t0)
                       (accumulator/accumulate
-                        {:aircraft/icao ups-icao
-                         :aircraft/on-ground? false
+                        {:aircraft/icao        ups-icao
+                         :aircraft/on-ground?  false
                          :aircraft/altitude-ft 3800}
                         (+ t0 1000)))]
-      (is (false? (get-in picture [ups-icao :aircraft/on-ground?]))
-          "the merge overwrites the stale true; the field cannot go absent
-           on a plain merge, so the source has to say airborne out loud")
+      (is (not (get-in picture [ups-icao :aircraft/on-ground?])))
       (is (= 3800 (get-in picture [ups-icao :aircraft/altitude-ft])))))
 
   (testing "every applied delta refreshes the seen stamp to now-ms"
@@ -103,15 +94,10 @@
                        (accumulator/accumulate
                          {:aircraft/icao ups-icao :aircraft/altitude-ft 30000}
                          t0))]
-      (is (= t0 (get-in picture [ups-icao :aircraft/seen-at-ms]))
-          "the reviving delta stamps it fresh")
+      (is (= t0 (get-in picture [ups-icao :aircraft/seen-at-ms])))
       (is (not (aircraft/aged-out? (get picture ups-icao) t0)))
-      (is (not (contains? (get picture ups-icao) :aircraft/position))
-          "the position from before the silence is NOT re-broadcast as if
-           heard now — the aircraft has been somewhere else for five
-           minutes, and the feed will say where within seconds")
-      (is (not (contains? (get picture ups-icao) :aircraft/callsign))
-          "nor does any other pre-silence field carry through")))
+      (is (not (contains? (get picture ups-icao) :aircraft/position)))
+      (is (not (contains? (get picture ups-icao) :aircraft/callsign)))))
 
   (testing "silence short of the threshold is not a revival: the fields
             the delta does not mention still persist"
@@ -125,8 +111,7 @@
                          {:aircraft/icao ups-icao :aircraft/altitude-ft 30000}
                          t0))]
       (is (= {:geo/lat 39.0 :geo/lon -104.0}
-             (get-in picture [ups-icao :aircraft/position]))
-          "still inside the age-out line, so the picture is continuous"))))
+             (get-in picture [ups-icao :aircraft/position]))))))
 
 (deftest sweep
   (testing "the aged-out aircraft are evicted from the picture itself, so
@@ -140,7 +125,7 @@
                         t0))
           swept   (accumulator/sweep picture t0)]
       (is (= [swa-icao] (keys swept)))
-      (is (map? swept) "a picture in, a picture out — not a batch")))
+      (is (map? swept))))
 
   (testing "sweeping keeps exactly what snapshot would show"
     (let [picture (-> {}
@@ -149,8 +134,7 @@
                       (accumulator/accumulate
                         {:aircraft/icao swa-icao} t0))]
       (is (= (set (map :aircraft/icao (accumulator/snapshot picture t0)))
-             (set (keys (accumulator/sweep picture t0))))
-          "silence exactly at the threshold survives both, by the one rule")))
+             (set (keys (accumulator/sweep picture t0)))))))
 
   (testing "the empty picture sweeps to the empty picture"
     (is (= {} (accumulator/sweep {} t0)))))

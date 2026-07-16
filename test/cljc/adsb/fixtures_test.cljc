@@ -1,15 +1,9 @@
 (ns adsb.fixtures-test
-  "Tests for the cast itself. The cast is only useful if it keeps telling
-  the truth: every member must still survive the real ingest boundary and
-  still satisfy the domain schema, and each must exhibit exactly the one
-  quirk it is named for."
-  (:require
-    [adsb.fixtures :as fixtures]
-    [adsb.ingest.coerce :as coerce]
-    [adsb.schema :as schema]
-    [malli.core :as m]
-    #?(:clj  [clojure.test :refer [deftest testing is]]
-       :cljs [cljs.test :refer-macros [deftest testing is]])))
+  (:require [adsb.fixtures :as fixtures]
+            [adsb.ingest.coerce :as coerce]
+            [adsb.schema :as schema]
+            [clojure.test :refer [deftest is testing]]
+            [malli.core :as m]))
 
 (deftest cast-integrity
   (testing "every raw cast member coerces through the real ingest
@@ -39,7 +33,7 @@
 
   (testing "on-the-ground coerces \"ground\" to an on-ground flag and
             never an altitude"
-    (is (true? (:aircraft/on-ground? fixtures/on-the-ground)))
+    (is (:aircraft/on-ground? fixtures/on-the-ground))
     (is (not (contains? fixtures/on-the-ground :aircraft/altitude-ft)))))
 
 (deftest never-positioned-fixture
@@ -71,4 +65,4 @@
             now carries the :aircraft/mlat? confidence marker, derived
             through the real ingest boundary"
     (is (contains? fixtures/mlat-derived :aircraft/position))
-    (is (true? (:aircraft/mlat? fixtures/mlat-derived)))))
+    (is (:aircraft/mlat? fixtures/mlat-derived))))

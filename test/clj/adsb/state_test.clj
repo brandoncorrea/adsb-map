@@ -1,14 +1,11 @@
 (ns adsb.state-test
-  (:require
-    [adsb.fixtures :as fixtures]
-    [adsb.state :as state]
-    [clojure.string :as str]
-    [clojure.test :refer [deftest testing is use-fixtures]]))
+  (:require [adsb.fixtures :as fixtures]
+            [adsb.state :as state]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest is testing use-fixtures]]))
 
 (def ^:private captured-at-ms 1720713600000)
-
 (def ^:private ups-icao (:aircraft/icao fixtures/ups-2717))
-
 (def ^:private long-silent-icao (:aircraft/icao fixtures/long-silent))
 
 (use-fixtures :each
@@ -19,22 +16,20 @@
 (deftest apply-batch!
   (testing "an applied batch is visible in the snapshot, keyed by icao"
     (state/apply-batch! [fixtures/ups-2717] captured-at-ms)
-    (is (= "UPS2717"
-           (get-in (state/snapshot) [ups-icao :aircraft/callsign])))))
+    (is (= "UPS2717" (get-in (state/snapshot) [ups-icao :aircraft/callsign])))))
 
 (deftest apply-batch!-flags-position-jumps
   (testing "an impossible position jump between polls surfaces in the
             store as :aircraft/position-suspect? — flagged, never
             dropped (adsb.ingest.plausibility)"
     (let [mid-atlantic {:geo/lat 28.0 :geo/lon -60.0}
-          teleported (assoc fixtures/ups-2717
-                            :aircraft/position mid-atlantic)]
+          teleported   (assoc fixtures/ups-2717
+                         :aircraft/position mid-atlantic)]
       (state/apply-batch! [fixtures/ups-2717] captured-at-ms)
       (state/apply-batch! [teleported] (+ captured-at-ms 1000))
       (let [aircraft (state/lookup ups-icao)]
         (is (true? (:aircraft/position-suspect? aircraft)))
-        (is (= mid-atlantic (:aircraft/position aircraft))
-            "the jumped position is stored as reported, never clamped")))))
+        (is (= mid-atlantic (:aircraft/position aircraft)))))))
 
 (deftest lookup
   (testing "returns the aircraft last heard under an icao"

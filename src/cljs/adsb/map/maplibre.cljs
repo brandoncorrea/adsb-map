@@ -1,14 +1,7 @@
 (ns adsb.map.maplibre
-  "The seam over MapLibre GL JS — a thin, fakeable interop wrapper, and the
-  ONLY place the app touches the raw library.
-
-  Why a seam at all? Tests run in real headless Chromium, but headless WebGL
-  is slow and flaky, and MapLibre's rendering is MapLibre's contract, not
-  ours. So tests never construct a real map: they `with-redefs` `create!` to
-  capture the options and hand back a fake `Map`. See docs/testing-setup.md,
-  \"The Map Seam\"."
-  (:require
-    ["maplibre-gl" :as maplibre]))
+  (:require [adsb.corejs :as cjs]
+            [clojure.math :as math]
+            ["maplibre-gl" :as maplibre]))
 
 (defprotocol Map
   "The narrow surface the app needs from a live map instance. It grows only
@@ -117,22 +110,8 @@
     is nothing to carry them across. A swoop on load would just be the map
     showing off (adsb.map.crop frames the declared boundary this way)."))
 
-(def ^:const focus-zoom
-  "The closest the chart will pull in when flying to an aircraft — and the
-  FLOOR, not the target: a reader already zoomed further in than this keeps
-  their zoom, because flying to an aircraft should move the camera, not undo the
-  reader's own decision about how close they wanted to be.
-
-  13 is an inspect distance: roughly a city/airport scale, so a followed
-  jet fills the chart rather than sitting as a pin on a multi-county view
-  (adsb-jg4). Default chart open is ~7; crop framing often lands near 8–10."
-  13)
-
-(def ^:const dblclick-hit-px
-  "Half-width of the query box around a double-click point when testing
-  for an aircraft under the cursor. Icons are small; without this the
-  basemap DoubleClickZoom wins most of the time."
-  12)
+(def ^:const focus-zoom 13)
+(def ^:const dblclick-hit-px 12)
 
 (deftype MapLibreMap [^js gl-map]
   Map
@@ -160,7 +139,7 @@
     (when-not (.isMoving gl-map)
       (.easeTo gl-map #js {:center   #js [lon lat]
                            :duration 350
-                           :easing   (fn [t] (- 1 (js/Math.pow (- 1 t) 3)))})))
+                           :easing   (fn [t] (- 1 (math/pow (- 1 t) 3.0)))})))
   (on-layer-click! [_ layer-id f]
     (.on gl-map "click" layer-id
          (fn [e]
@@ -170,12 +149,8 @@
                      detail (if oe (.-detail oe) 1)
                      props  (js->clj (.-properties (aget features 0))
                                      :keywordize-keys true)]
-                 ;; Pass click detail so the layer can treat multi-click
-                 ;; as follow without waiting on the dblclick event.
                  (f (assoc props :click/detail detail))))))))
   (on-layer-dblclick! [_ layer-id f]
-    ;; Map-level + hit box: layer-scoped dblclick often misses small
-    ;; symbols. DoubleClickZoom is disabled on create (see create!).
     (.on gl-map "dblclick"
          (fn [e]
            (let [pt       (.-point e)
@@ -188,7 +163,7 @@
                                  #js [(+ x pad) (+ y pad)]]
                             #js {:layers #js [layer-id]})]
              (when (and features (pos? (.-length features)))
-               (.preventDefault e)
+               (cjs/prevent-default e)
                (f (js->clj (.-properties (aget features 0))
                            :keywordize-keys true)))))))
   (on-layer-hover! [_ layer-id on-enter on-leave]
@@ -206,10 +181,6 @@
              (set! (.-cursor canvas-style) "")
              (when on-leave (on-leave))))))
   (add-marker! [_ element lng-lat]
-    ;; Explicit center anchor: MapLibre's default is center, but a custom
-    ;; element whose box is not yet laid out can still pin wrong if the
-    ;; options omit it. The ring's layout box is the SVG only; the label
-    ;; is absolute and must not pull the anchor (adsb-rg1).
     (-> (maplibre/Marker. #js {:element element
                                :anchor  "center"
                                :offset  #js [0 0]})
@@ -218,7 +189,7 @@
   (move-marker! [_ marker lng-lat]
     (.setLngLat ^js marker (clj->js lng-lat)))
   (remove-marker! [_ marker]
-    (.remove ^js marker))
+    (cjs/remove! marker))
   (bounds [_]
     (let [^js b (.getBounds gl-map)]
       {:geo/min-lat (.getSouth b)
@@ -231,33 +202,17 @@
     (.on gl-map "dragstart" (fn [_e] (f))))
   (camera [_]
     (let [^js c (.getCenter gl-map)]
-      ;; [lon lat], the order MapLibre's own options want it back in.
       {:center  [(.-lng c) (.-lat c)]
        :zoom    (.getZoom gl-map)
        :bearing (.getBearing gl-map)
        :pitch   (.getPitch gl-map)}))
   (fit-bounds! [_ {:geo/keys [min-lat max-lat min-lon max-lon]} padding-px]
-    ;; MapLibre's LngLatBoundsLike as [[west south] [east north]] — [lon lat]
-    ;; corners, the transposition this codebase keeps making a point of.
     (.fitBounds gl-map
                 #js [#js [min-lon min-lat] #js [max-lon max-lat]]
                 #js {:padding padding-px
                      :animate false})))
 
-(defn create!
-  "Construct a real MapLibre map inside `container` (a DOM node) with `opts`
-  — a Clojure map of MapLibre map options (`:style`, `:center` as [lon lat],
-  `:zoom`, `:attributionControl`). Returns a value satisfying `Map`.
-
-  DoubleClickZoom is disabled: double-click on a plane means Free/Follow
-  (adsb-jg4), and MapLibre's handler races any preventDefault we try from
-  a late-registered listener. Empty-chart zoom is scroll-wheel / pinch.
-
-  This is the seam. It is deliberately a thin translation with no logic worth
-  testing — a unit test redefines it to record `opts` and never touches the
-  GPU. Everything interesting to assert (the default center, the token-free
-  style) lives in `adsb.map.view/default-map-opts`, which the fake still runs."
-  [container opts]
+(defn create! [container opts]
   (let [gl (maplibre/Map. (clj->js (assoc opts :container container)))]
     (.disable (.-doubleClickZoom gl))
     (->MapLibreMap gl)))

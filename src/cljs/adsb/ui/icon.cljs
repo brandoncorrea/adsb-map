@@ -1,61 +1,6 @@
 (ns adsb.ui.icon
-  "The app's icons — one registry, one component, and no dependency.
-
-  FontAwesome, but VENDORED AS PATH DATA rather than installed. There is no
-  npm package here, no webfont, no kit script, no CDN. The reason is the CSP
-  (adsb.http.security): `default-src 'none'` refuses every origin the app does
-  not name, and a font CDN is not worth an origin. The app already vendors its
-  four woff2 faces (adsb.css.tokens) and MapLibre's CSS for exactly this
-  reason. An icon is a `d` attribute. It can just live in the source.
-
-  So each entry below is a SLOT: paste the `viewBox` and the path's `d`
-  straight out of the icon's .svg and it lights up. Both come from the same
-  two attributes of the downloaded file:
-
-      <svg ... viewBox=\"0 0 384 512\"><path d=\"M342.6 150.6 …\"/></svg>
-                        ^^^^^^^^^^^^^            ^^^^^^^^^^^^^^^
-                        :view-box                :path
-
-  FONT AWESOME FREE 7.3.0, SOLID. CC BY 4.0, which REQUIRES attribution —
-  docs/icon-licenses.md is it, and it is not optional. Read it before adding an
-  icon.
-
-  FREE ONLY, and the reason is this repo rather than the subscription: a Pro
-  licence grants the right to USE the suite, not to REDISTRIBUTE it, and this
-  repository is PUBLIC — anyone can clone it and lift a path straight out of
-  the map below. So a Pro icon may be used in this project and may not be
-  COMMITTED to this file. If one is ever needed it goes the way the enrichment
-  database goes (fetched at build time, gitignored, absent-tolerant), or it
-  gets drawn by hand the way the follow reticle used to be. The full argument,
-  and the escape route, are in docs/icon-licenses.md.
-
-  SIZING. The svg is `1em` square and filled with `currentColor`, which means
-  it is NOT styled here. It inherits the font-size and the colour of whatever
-  box it lands in, exactly as the character glyph it replaces did — so the
-  panel's close button still sizes its mark with `font-size: var(--t1)` and
-  still fades it with `color: var(--faded-ink)`, and the hover rule that swaps
-  that colour keeps working untouched. Replacing a glyph with an icon should
-  cost the stylesheet nothing, and it costs it nothing.
-
-  An UNFILLED slot renders a crossed box, loudly, at the icon's size. Loudly
-  missing beats quietly wrong — the same bargain adsb.map.basemap strikes with
-  its glyph endpoint. A silent nil here would be an icon-shaped hole that
-  nobody notices until it ships."
   (:require [clojure.string :as str]))
 
-;; The icons the chrome asks for, and every one of them is a Free Solid icon.
-;;
-;;   :xmark             the index card's way out       (adsb.ui.aircraft-panel)
-;;   :chevron-down      that card, expanded            (adsb.ui.aircraft-panel)
-;;   :chevron-right     that card, collapsed           (adsb.ui.aircraft-panel)
-;;   :crosshairs        the chart's Free/Follow mark   (adsb.ui.follow)
-;;   :magnifying-glass  the roster's find field        (adsb.ui.roster)
-;;
-;; The chevrons are a MATCHED PAIR and that is the entire point of taking them
-;; from a typeface designer rather than from Unicode: the ▾/▸ they replace were
-;; two unrelated geometric characters with different optical weights and
-;; different vertical centring, so the control visibly twitched when it toggled.
-;; Paste both from the same style or the twitch comes back.
 (def icons
   {:xmark
    {:view-box "0 0 384 512"
@@ -77,47 +22,26 @@
    {:view-box "0 0 512 512"
     :path     "M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376C296.3 401.1 253.9 416 208 416 93.1 416 0 322.9 0 208S93.1 0 208 0 416 93.1 416 208zM208 352a144 144 0 1 0 0-288 144 144 0 1 0 0 288z"}})
 
-(def ^:const placeholder-view-box
-  "The box the crossed-box placeholder is drawn in. Its own — an unfilled slot
-  has no viewBox of its own to borrow."
-  "0 0 16 16")
+(def ^:const placeholder-view-box "0 0 16 16")
 
-(defn filled?
-  "Has this slot been pasted in yet? Both halves or neither: a `d` without the
-  `viewBox` it was drawn against scales to nonsense."
-  [{:keys [view-box path]}]
-  (and (not (str/blank? view-box))
-       (not (str/blank? path))))
+(defn filled? [{:keys [view-box path]}]
+  (not-any? str/blank? [view-box path]))
 
-(defn- placeholder
-  "An unpasted icon: a crossed box, in the ink of whatever asked for it. Sized
-  like any other icon, so the layout it lands in is the layout it will keep."
-  []
+(defn- placeholder []
   [:g {:fill "none" :stroke "currentColor" :stroke-width 1.5}
    [:rect {:x 1 :y 1 :width 14 :height 14}]
    [:path {:d "M1 1 L15 15 M15 1 L1 15"}]])
 
-(defn icon
-  "One icon, as hiccup — `[icon :xmark]`.
-
-  Decorative by default and so `aria-hidden`: every call site in this app sits
-  inside a control that already carries its own `aria-label`, and an icon that
-  names itself a second time is a screen reader saying everything twice. If a
-  future icon is ever the ONLY thing naming its control, that control is
-  missing a label — fix it there, not here.
-
-  `focusable=false` is not redundant with aria-hidden: legacy Edge/IE put SVG
-  in the tab order regardless, and a focus stop on a decoration is a keyboard
-  trap that no reader can see."
-  [k]
-  (let [{:keys [view-box path] :as entry} (get icons k)
-        ready? (filled? entry)]
+(defn icon [icon-key]
+  (let [{:keys [view-box path] :as entry} (get icons icon-key)
+        ready?    (filled? entry)
+        icon-name (name icon-key)]
     [:svg
-     {:class       (str "adsb-icon adsb-icon-" (name k))
+     {:class       (str "adsb-icon adsb-icon-" icon-name)
       :viewBox     (if ready? view-box placeholder-view-box)
       :aria-hidden true
       :focusable   "false"
-      :data-icon   (name k)}
+      :data-icon   icon-name}
      (if ready?
        [:path {:d path}]
        [placeholder])]))

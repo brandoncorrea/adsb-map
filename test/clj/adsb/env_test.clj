@@ -1,7 +1,8 @@
 (ns adsb.env-test
   (:require [adsb.env :as env]
             [babashka.fs :as fs]
-            [clojure.test :refer [deftest is testing]]))
+            [clojure.test :refer [deftest is testing]])
+  (:import (java.util HashMap)))
 
 (defn- temp-file-with [contents]
   (let [f (str (fs/create-temp-file {:prefix "adsb-env" :suffix ".env"}))]
@@ -56,4 +57,4 @@
             is handled, not just a Clojure map"
     (let [f (temp-file-with "B=from-file")]
       (is (= {"A" "from-environment" "B" "from-file"}
-             (env/read! f (java.util.HashMap. {"A" "from-environment"})))))))
+             (env/read! f (HashMap. {"A" "from-environment"})))))))

@@ -1,7 +1,6 @@
 (ns adsb.stream.sse-test
-  (:require
-    [adsb.stream.sse :as sse]
-    [clojure.test :refer [deftest testing is]]))
+  (:require [adsb.stream.sse :as sse]
+            [clojure.test :refer [deftest testing is]]))
 
 (deftest event-frame
   (testing "frames an event as event/id/data lines closed by a blank line"

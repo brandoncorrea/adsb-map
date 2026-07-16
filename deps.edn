@@ -1,74 +1,34 @@
-{:paths ["src/clj" "src/cljc" "src/cljs" "resources"]
-
- :deps
- {org.clojure/clojure            {:mvn/version "1.12.1"}
-  ch.qos.logback/logback-classic {:mvn/version "1.5.18"}
-  cheshire/cheshire              {:mvn/version "5.13.0"}
-  ;; 2.9.0-beta1: 2.8.x never fires :on-close (and never fails send!)
-  ;; for plain HTTP streaming — closeKey notifies the accept-time
-  ;; AsyncChannel, not the per-request one (#375 regression, fixed by
-  ;; #578) — so SSE clients would leak forever. Verified by
-  ;; adsb.stream.broadcast-test/disconnect-cleanup, which fails on 2.8.x.
-  http-kit/http-kit              {:mvn/version "2.9.0-beta1"}
-  metosin/malli                  {:mvn/version "0.17.0"}
-  metosin/reitit                 {:mvn/version "0.7.2"}
-  org.clojure/tools.logging      {:mvn/version "1.3.0"}}
-
- :aliases
- {;; shadow-cljs resolves its whole classpath through this alias
-  ;; (shadow-cljs.edn carries :deps {:aliases [:cljs]}), so the frontend
-  ;; deps live here and malli is declared once, above, for both sides.
-  ;; thheller/shadow-cljs must match the npm pin in package.json — the CLI
-  ;; wrapper and the compiler on the classpath are the same program.
-  :cljs  {:extra-paths ["test/cljc" "test/cljs"]
-          :extra-deps  {thheller/shadow-cljs {:mvn/version "2.28.20"}
-                        reagent/reagent      {:mvn/version "1.2.0"}
-                        re-frame/re-frame    {:mvn/version "1.4.3"}
-                        day8.re-frame/test   {:mvn/version "0.1.7"}}}
-
-  ;; bb css / bb css:watch — Garden compiles src/css to the stylesheet at
-  ;; resources/public/app.css, which is BUILD OUTPUT (gitignored), never
-  ;; hand-edited. Both the source path and garden itself live here rather
-  ;; than in :paths, so the compiler never reaches the production classpath:
-  ;; the uberjar ships the compiled CSS and nothing that could compile it.
-  ;; org.flatland/ordered is not optional: garden rebuilds every declaration
-  ;; map and CSS order is load-bearing. See adsb.css.decl.
-  :css   {:extra-paths ["src/css"]
-          :extra-deps  {com.lambdaisland/garden {:mvn/version "1.9.606"}
-                        org.flatland/ordered    {:mvn/version "1.15.12"}}
-          :main-opts   ["-m" "adsb.css.build"]}
-
-  ;; bb dev — the backend half: the full system (feeder poll + SSE +
-  ;; http) on :8280 through the one composition root, adsb.main.
-  ;; Requires ADSB_ULTRAFEEDER_URL — boot fails loudly without it.
-  :dev   {:main-opts ["-m" "adsb.main"]}
-
-  ;; bb test:clj — clojure.test over test/clj and test/cljc. babashka/fs is a
-  ;; test-only convenience (temp files); the app itself uses clojure.java.io,
-  ;; so this never ships in the uberjar. src/css and its two deps come along so
-  ;; adsb.css-test can hold the stylesheet up to the light; like the :css alias
-  ;; itself, none of it reaches the uberjar.
-  ;; test/resources is on the classpath for ONE file: logback-test.xml, which
-  ;; logback picks over resources/logback.xml and which quiets the suite's
-  ;; deliberate INFO/WARN chatter. The JSON fixtures beside it are slurped by
-  ;; relative path, not as resources, and do not need to be here.
-  :test  {:extra-paths ["test/clj" "test/cljc" "test/cljs" "src/css" "test/resources"]
-          :extra-deps  {io.github.cognitect-labs/test-runner {:git/tag "v0.5.1" :git/sha "dfb30dd"}
-                        babashka/fs                          {:mvn/version "0.5.22"}
-                        com.lambdaisland/garden              {:mvn/version "1.9.606"}
-                        org.flatland/ordered                 {:mvn/version "1.15.12"}}
-          :exec-fn     cognitect.test-runner.api/test
-          :exec-args   {:dirs ["test/clj" "test/cljc"]}}
-
-  ;; bb lint — clj-kondo as a library, so nobody needs the binary installed.
-  :lint  {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.09.27"}}
-          :main-opts    ["-m" "clj-kondo.main"]}
-
-  ;; bb build — tools.build packages the deployable uberjar (build.clj).
-  ;; clojure -T:build uber. Runs after `shadow-cljs release app`.
-  :build {:deps       {io.github.clojure/tools.build {:mvn/version "0.10.5"}}
-          :ns-default build}
-
-  :nrepl {:extra-paths ["test/clj" "test/cljc"]
-          :extra-deps  {nrepl/nrepl {:mvn/version "1.3.1"}}
-          :main-opts   ["-m" "nrepl.cmdline" "--port" "7888"]}}}
+{:paths   ["src/clj" "src/cljc" "src/cljs" "resources"]
+ :deps    {org.clojure/clojure            {:mvn/version "1.12.1"}
+           ch.qos.logback/logback-classic {:mvn/version "1.5.18"}
+           cheshire/cheshire              {:mvn/version "5.13.0"}
+           http-kit/http-kit              {:mvn/version "2.9.0-beta1"}
+           metosin/malli                  {:mvn/version "0.17.0"}
+           metosin/reitit                 {:mvn/version "0.7.2"}
+           org.clojure/tools.logging      {:mvn/version "1.3.0"}
+           }
+ :aliases {:test  {:extra-paths ["test/clj" "test/cljc" "test/cljs" "src/css" "test/resources"]
+                   :extra-deps  {io.github.cognitect-labs/test-runner {:git/tag "v0.5.1" :git/sha "dfb30dd"}
+                                 babashka/fs                          {:mvn/version "0.5.22"}
+                                 com.lambdaisland/garden              {:mvn/version "1.9.606"}
+                                 org.flatland/ordered                 {:mvn/version "1.15.12"}}
+                   :exec-fn     cognitect.test-runner.api/test
+                   :exec-args   {:dirs ["test/clj" "test/cljc"]}}
+           :cljs  {:extra-paths ["test/cljc" "test/cljs"]
+                   :extra-deps  {thheller/shadow-cljs {:mvn/version "2.28.20"}
+                                 reagent/reagent      {:mvn/version "1.2.0"}
+                                 re-frame/re-frame    {:mvn/version "1.4.3"}
+                                 day8.re-frame/test   {:mvn/version "0.1.7"}}}
+           :css   {:extra-paths ["src/css"]
+                   :extra-deps  {com.lambdaisland/garden {:mvn/version "1.9.606"}
+                                 org.flatland/ordered    {:mvn/version "1.15.12"}}
+                   :main-opts   ["-m" "adsb.css.build"]}
+           :dev   {:main-opts ["-m" "adsb.main"]}
+           :lint  {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.09.27"}}
+                   :main-opts    ["-m" "clj-kondo.main"]}
+           :build {:deps       {io.github.clojure/tools.build {:mvn/version "0.10.5"}}
+                   :ns-default build}
+           :nrepl {:extra-paths ["test/clj" "test/cljc"]
+                   :extra-deps  {nrepl/nrepl {:mvn/version "1.3.1"}}
+                   :main-opts   ["-m" "nrepl.cmdline" "--port" "7888"]}
+           }}

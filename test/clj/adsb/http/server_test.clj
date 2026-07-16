@@ -1,14 +1,12 @@
 (ns adsb.http.server-test
-  (:require
-    [adsb.http.server :as server]
-    [adsb.state :as state]
-    [clojure.test :refer [deftest testing is use-fixtures]]
-    [clojure.tools.logging.test :refer [logged? with-log]]
-    [org.httpkit.client :as http]
-    [org.httpkit.server :as http-kit]))
+  (:require [adsb.http.server :as server]
+            [adsb.state :as state]
+            [clojure.test :refer [deftest is testing use-fixtures]]
+            [clojure.tools.logging.test :refer [logged? with-log]]
+            [org.httpkit.client :as http]
+            [org.httpkit.server :as http-kit])
+  (:import (java.net ConnectException Socket)))
 
-;; Port 0 asks the OS for a free ephemeral port, so this suite never
-;; contends with a `bb dev` running on :8280.
 (def ^:private ephemeral {:port 0})
 
 (use-fixtures :each (fn [run] (try (run) (finally (server/stop!)))))
@@ -39,9 +37,7 @@
     (let [srv  (server/start-server! ephemeral)
           port (http-kit/server-port srv)]
       (server/stop-server! srv)
-      (is (thrown? java.net.ConnectException
-                   (java.net.Socket. "localhost" ^int port))
-          "the listening socket is closed by the time stop-server! returns"))))
+      (is (thrown? ConnectException (Socket. "localhost" ^int port))))))
 
 (deftest stop-server!-is-nil-safe
   (is (nil? (server/stop-server! nil))))
@@ -63,10 +59,8 @@
     (with-log
       (let [first-server  (server/start! ephemeral)
             second-server (server/start! (assoc ephemeral :dev-csp? true))]
-        (is (identical? first-server second-server)
-            "still idempotent: the running server, not a second one")
-        (is (logged? 'adsb.http.server :warn #"ALREADY RUNNING")
-            "and it says so")))))
+        (is (identical? first-server second-server))
+        (is (logged? 'adsb.http.server :warn #"ALREADY RUNNING"))))))
 
 (deftest start-with-the-same-options-warns-about-nothing
   (testing "the warning is about a CONFLICT, not about a second call: an

@@ -1,14 +1,18 @@
 (ns adsb.ingest.config-test
-  (:require
-    [adsb.ingest.config :as config]
-    [clojure.test :refer [deftest testing is]]))
+  (:require [adsb.ingest.config :as config]
+            [clojure.test :refer [deftest is testing]])
+  (:import (clojure.lang ExceptionInfo)))
+
+(defmacro try-or-ex [& body]
+  `(try
+     ~@body
+     ::no-throw
+     (catch ExceptionInfo e#
+       {:message (ex-message e#)
+        :data    (ex-data e#)})))
 
 (defn- rejection [url]
-  (try
-    (config/validate-feeder-url url)
-    ::no-throw
-    (catch clojure.lang.ExceptionInfo e
-      {:message (ex-message e) :data (ex-data e)})))
+  (try-or-ex (config/validate-feeder-url url)))
 
 (deftest accepts-valid-http-and-https
   (testing "http and https base URLs pass and come back unchanged"
@@ -49,11 +53,7 @@
     (is (map? (rejection "http://bad host/with spaces")))))
 
 (defn- auth-failure [env]
-  (try
-    (config/feeder-auth-headers env)
-    ::no-throw
-    (catch clojure.lang.ExceptionInfo e
-      {:message (ex-message e) :data (ex-data e)})))
+  (try-or-ex (config/feeder-auth-headers env)))
 
 (deftest feeder-auth-headers-both-set
   (testing "both env vars set yields the two CF-Access service-token headers"
@@ -89,30 +89,22 @@
     (let [secret "supersecretvalue"
           {:keys [message data]}
           (auth-failure {"ADSB_FEEDER_AUTH_SECRET" secret})]
-      (is (not (re-find (re-pattern secret) (str message)))
-          "the secret must not appear in the exception message")
-      (is (not (re-find (re-pattern secret) (pr-str data)))
-          "the secret must not appear in the ex-data"))))
+      (is (not (re-find (re-pattern secret) (str message))))
+      (is (not (re-find (re-pattern secret) (pr-str data)))))))
 
 (deftest replay-source-selection
   (testing "ADSB_SOURCE=replay selects the fixture-replay Source, case-
             and whitespace-insensitively"
     (doseq [value ["replay" "REPLAY" "  replay  "]]
-      (is (config/replay-source? value) (str "should select replay: " value))))
+      (is (config/replay-source? value))))
   (testing "unset (the default) and any other value keep the live feeder"
     (doseq [value [nil "" "ultrafeeder" "live"]]
-      (is (not (config/replay-source? value))
-          (str "should keep the ultrafeeder: " (pr-str value))))))
-
-;; ---------------------------------------------------------------------
-;; ADSB_SOURCE classification — poll (the default) vs the streaming/fixture
-;; Sources the boot path builds.
+      (is (not (config/replay-source? value))))))
 
 (deftest source-kind-classifies-each-source
   (testing "unset and \"poll\" both select the HTTP poll Source — the default"
     (doseq [value [nil "" "  " "poll" "POLL" "  Poll  "]]
-      (is (= :poll (config/source-kind value))
-          (str "should be :poll: " (pr-str value)))))
+      (is (= :poll (config/source-kind value)))))
   (testing "sbs, beast, and replay each select their Source, case-
             and whitespace-insensitively"
     (is (= :sbs (config/source-kind "sbs")))
@@ -126,15 +118,11 @@
             fails loudly, naming the env var and the value"
     (let [{:keys [message data]}
           (try (config/source-kind "socket")
-               (catch clojure.lang.ExceptionInfo e
+               (catch ExceptionInfo e
                  {:message (ex-message e) :data (ex-data e)}))]
       (is (re-find #"ADSB_SOURCE" (str message)))
       (is (re-find #"socket" (str message)))
       (is (= config/source-env (:env data))))))
-
-;; ---------------------------------------------------------------------
-;; ADSB_FEED_URL — the streaming feed endpoint for sbs/beast, parsed into a
-;; transport descriptor (tcp:// plain socket vs wss:// through the tunnel).
 
 (deftest parse-feed-url-tcp
   (testing "tcp://host:port yields the plain-socket descriptor"
@@ -153,11 +141,7 @@
     (is (= 8443 (:port (config/parse-feed-url "wss://sbs.bwawan.com:8443"))))))
 
 (defn- feed-rejection [url]
-  (try
-    (config/parse-feed-url url)
-    ::no-throw
-    (catch clojure.lang.ExceptionInfo e
-      {:message (ex-message e) :data (ex-data e)})))
+  (try-or-ex (config/parse-feed-url url)))
 
 (deftest parse-feed-url-fails-fast
   (testing "a blank or missing URL fails loudly, naming the env var"
@@ -167,8 +151,7 @@
         (is (= config/feed-url-env (:env data))))))
   (testing "a wrong scheme (http/https/ws) is rejected — only tcp and wss"
     (doseq [bad ["http://feeder:8100" "https://feeder" "ws://feeder"]]
-      (is (re-find #"tcp:// or wss://" (str (:message (feed-rejection bad))))
-          (str "should reject " bad))))
+      (is (re-find #"tcp:// or wss://" (str (:message (feed-rejection bad)))))))
   (testing "a tcp URL with no port is rejected — the socket needs one"
     (is (re-find #"must include a port"
                  (str (:message (feed-rejection "tcp://dietpi.local"))))))

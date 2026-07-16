@@ -1,27 +1,17 @@
 (ns adsb.ingest.sbs-test
-  "The SBS Source and its line parser, driven by the SYNTHETIC BaseStation
-  fixture (test/resources/sbs-sample.txt) served over a local in-process
-  TCP socket — never the live feeder (docs/CLAUDE.md: the sky is not a
-  fixture; a localhost socket we serve ourselves is the sanctioned stand-in,
-  bead adsb-c75 tracks a real capture)."
-  (:require
-    [adsb.ingest.sbs :as sbs]
-    [adsb.ingest.source :as source]
-    [adsb.ingest.tcp :as tcp]
-    [adsb.stats :as stats]
-    [clojure.string :as str]
-    [clojure.test :refer [deftest testing is]])
-  (:import
-    (clojure.lang ExceptionInfo)
-    (java.io OutputStreamWriter)
-    (java.net InetSocketAddress ServerSocket)
-    (java.nio.charset StandardCharsets)))
+  (:require [adsb.ingest.sbs :as sbs]
+            [adsb.ingest.source :as source]
+            [adsb.ingest.tcp :as tcp]
+            [adsb.stats :as stats]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]])
+  (:import (clojure.lang ExceptionInfo)
+           (java.io OutputStreamWriter)
+           (java.net InetSocketAddress ServerSocket)
+           (java.nio.charset StandardCharsets)))
 
 (def ^:private fixture-lines
   (str/split-lines (slurp "test/resources/sbs-sample.txt")))
-
-;; ---------------------------------------------------------------------
-;; line->delta — the pure trust boundary for the SBS wire format
 
 (deftest parses-each-consumed-message-type
   (testing "MSG,1 identification yields a trimmed callsign"
@@ -29,16 +19,16 @@
            (sbs/line->delta
              "MSG,1,1,1,A1B2C3,1,,,,,UAL123  ,,,,,,,,,,,"))))
   (testing "MSG,3 airborne position yields position and altitude"
-    (is (= #:aircraft{:icao "a1b2c3"
-                      :position #:geo{:lat 39.8721 :lon -104.6702}
+    (is (= #:aircraft{:icao        "a1b2c3"
+                      :position    #:geo{:lat 39.8721 :lon -104.6702}
                       :altitude-ft 37000}
            (sbs/line->delta
              "MSG,3,1,1,A1B2C3,1,,,,,,37000,,,39.8721,-104.6702,,,,,,"))))
   (testing "MSG,4 velocity yields ground speed, track, and vertical rate"
-    (is (= #:aircraft{:icao "a1b2c3"
+    (is (= #:aircraft{:icao            "a1b2c3"
                       :ground-speed-kt 451.2
-                      :track-deg 268.5
-                      :baro-rate-fpm -1216}
+                      :track-deg       268.5
+                      :baro-rate-fpm   -1216}
            (sbs/line->delta
              "MSG,4,1,1,A1B2C3,1,,,,,,,451.2,268.5,,,-1216,,,,,"))))
   (testing "MSG,6 surveillance-id yields the squawk"
@@ -95,14 +85,13 @@
   (testing "an out-of-range latitude drops the position, never the aircraft"
     (let [delta (sbs/line->delta
                   "MSG,3,1,1,E5E5E5,1,,,,,,12000,,,199.0,-104.6,,,,,,")]
-      (is (= 12000 (:aircraft/altitude-ft delta)) "the good field survives")
-      (is (not (contains? delta :aircraft/position))
-          "the impossible coordinate is dropped, not clamped")))
+      (is (= 12000 (:aircraft/altitude-ft delta)))
+      (is (not (contains? delta :aircraft/position)))))
   (testing "an implausible altitude costs the field, not the aircraft"
     (let [delta (sbs/line->delta
                   "MSG,3,1,1,A1B2C3,1,,,,,,999999,,,39.8,-104.6,,,,,,")]
       (is (not (contains? delta :aircraft/altitude-ft)))
-      (is (contains? delta :aircraft/position) "the rest of the delta lives")))
+      (is (contains? delta :aircraft/position))))
   (testing "a non-finite numeric (NaN injection) is rejected"
     (let [delta (sbs/line->delta
                   "MSG,4,1,1,A1B2C3,1,,,,,,,NaN,268,,,,,,,,")]
@@ -116,16 +105,7 @@
       (is (nil? (try (sbs/line->delta line) nil (catch Throwable _ :threw)))
           (str "line->delta must not throw on: " (pr-str line))))))
 
-;; ---------------------------------------------------------------------
-;; The Source — open!/fetch!/close! over a local in-process TCP feed
-
-(defn- with-sbs-feed
-  "Serve `lines` over a local TCP socket on an ephemeral 127.0.0.1 port and
-  call (f host port). A localhost socket we serve ourselves is NOT a live
-  feeder (docs/CLAUDE.md). The connection is held open until the client (the
-  Source under test) hangs up, so a connected-but-silent feed can be
-  exercised too."
-  [lines f]
+(defn- with-sbs-feed [lines f]
   (let [server (doto (ServerSocket.)
                  (.bind (InetSocketAddress. "127.0.0.1" 0)))
         port   (.getLocalPort server)
@@ -135,7 +115,6 @@
                                                 StandardCharsets/US_ASCII)]
                      (doseq [line lines] (.write w (str line "\n")))
                      (.flush w)
-                     ;; Block until the client closes, holding the socket up.
                      (.read (.getInputStream client)))))]
     (try
       (f "127.0.0.1" port)
@@ -145,11 +124,7 @@
 
 (def ^:private wait-timeout-ms 2000)
 
-(defn- wait-until
-  "Poll `thunk` until it returns a truthy value or the timeout elapses,
-  giving the async reader thread time to connect and consume. Returns the
-  truthy value, or nil on timeout."
-  [thunk]
+(defn- wait-until [thunk]
   (let [deadline (+ (System/currentTimeMillis) wait-timeout-ms)]
     (loop []
       (or (thunk)
@@ -158,7 +133,7 @@
             (recur))))))
 
 (defn- fetch-quietly [src]
-  (try (source/fetch! src) (catch ExceptionInfo _ nil)))
+  (try (source/fetch! src) (catch ExceptionInfo _)))
 
 (deftest streams-and-accumulates-the-fixture
   (testing "open!/fetch!/close! stream the fixture through the accumulator,
@@ -182,23 +157,13 @@
                 (is (= 451.2 (get-in by-icao ["a1b2c3" :aircraft/ground-speed-kt])))
                 (is (= "7700" (get-in by-icao ["a1b2c3" :aircraft/squawk]))))
               (testing "only real aircraft reach the picture"
-                (is (= #{"a1b2c3" "abcdef" "d00d1e" "e5e5e5"}
-                       (set (keys by-icao)))
-                    "garbage, the non-MSG class, and the empty-ICAO line vanish"))
+                (is (= #{"a1b2c3" "abcdef" "d00d1e" "e5e5e5"} (set (keys by-icao)))))
               (testing "a bad field costs the field, never the aircraft"
                 (is (not (contains? (by-icao "e5e5e5") :aircraft/position)))
                 (is (= 12000 (get-in by-icao ["e5e5e5" :aircraft/altitude-ft])))))
             (finally (source/close! src))))))))
 
-;; ---------------------------------------------------------------------
-;; The message count (adsb-3mw) — Metadata, the same side-channel the poll
-;; Source fills from aircraft.json, here counted off the wire.
-
-(def ^:private fixture-message-count
-  "The fixture's eleven lines, less the three that decode to nothing: the
-  garbage line, the STA class, and the MSG line with no ICAO. The count is
-  of MESSAGES DECODED, not lines read and not aircraft tracked (four)."
-  8)
+(def ^:private fixture-message-count 8)
 
 (deftest metadata-reports-the-decoded-message-count
   (testing "a streaming Source counts every message it decodes and exposes
@@ -212,8 +177,7 @@
                    (wait-until
                      (fn []
                        (let [m (source/metadata src)]
-                         (when (= fixture-message-count (:messages m)) m)))))
-                "the four dropped-at-the-boundary lines are not messages")
+                         (when (= fixture-message-count (:messages m)) m))))))
             (finally (source/close! src))))))))
 
 (deftest the-counter-differences-into-a-message-rate
@@ -230,14 +194,11 @@
                                           :messages (:messages
                                                       (source/metadata src))})))
           t0     1720713600000]
-      (is (nil? (sample t0)) "the first sample has nothing to difference")
+      (is (nil? (sample t0)))
       (dotimes [_ 12]
         (tcp/accumulate! src {:aircraft/icao "a1b2c3"} t0))
-      (is (= 12 (sample (+ t0 1000)))
-          "twelve messages in the second between samples")
-      (is (= 0 (sample (+ t0 2000)))
-          "a silent second reads as zero, the signal :feeder/silent-frames
-           counts on (adsb.stream/silent-frames)"))))
+      (is (= 12 (sample (+ t0 1000))))
+      (is (= 0 (sample (+ t0 2000)))))))
 
 (deftest quiet-feed-returns-a-snapshot-not-a-throw
   (testing "a connected feed that has said nothing yet is not unreachable —
@@ -247,8 +208,8 @@
         (let [src (source/open! (sbs/->source host port))]
           (try
             (let [batch (wait-until #(fetch-quietly src))]
-              (is (vector? batch) "a live but silent feed yields a snapshot")
-              (is (empty? batch) "with nothing heard, the snapshot is empty"))
+              (is (vector? batch))
+              (is (empty? batch)))
             (finally (source/close! src))))))))
 
 (deftest fetch-throws-while-unreachable
@@ -257,15 +218,11 @@
     (let [server (doto (ServerSocket.)
                    (.bind (InetSocketAddress. "127.0.0.1" 0)))
           port   (.getLocalPort server)]
-      (.close server) ;; free the port so nothing is listening
+      (.close server)
       (let [src (source/open! (sbs/->source "127.0.0.1" port {:reconnect-ms 50}))]
         (try
           (is (thrown? ExceptionInfo (source/fetch! src)))
           (finally (source/close! src)))))))
-
-;; ---------------------------------------------------------------------
-;; The optional :on-delta hook (adsb-jpf) — shared tcp/accumulate!, so
-;; exercising it through the SBS pump covers the Beast pump too.
 
 (def ^:private identification-line
   "MSG,1,1,1,A1B2C3,1,,,,,UAL123  ,,,,,,,,,,,")
@@ -291,24 +248,17 @@
               (is (some? (wait-until #(= 2 (count @heard)))))
               (let [[[first-aircraft _] [second-aircraft now-ms]] @heard]
                 (is (= "UAL123" (:aircraft/callsign first-aircraft)))
-                (is (= {:aircraft/icao      "a1b2c3"
-                        :aircraft/callsign  "UAL123"
-                        :aircraft/position  #:geo{:lat 39.8721
-                                                  :lon -104.6702}
-                        :aircraft/altitude-ft   37000
+                (is (= {:aircraft/icao           "a1b2c3"
+                        :aircraft/callsign       "UAL123"
+                        :aircraft/position       #:geo{:lat 39.8721
+                                                       :lon -104.6702}
+                        :aircraft/altitude-ft    37000
                         :aircraft/seen-at-ms     42
                         :aircraft/position-at-ms 42}
-                       second-aircraft)
-                    "the position message arrives merged with the earlier
-                     callsign, stamped at its arrival instant — and, because
-                     THIS message is the one carrying a position, stamped
-                     with when the position moved too (adsb-zxk)")
-                (is (= 42 now-ms) "the hook gets the accumulate's clock"))
+                       second-aircraft))
+                (is (= 42 now-ms)))
               (finally (source/close! src)))))))))
 
-;; A teleport on the wire: a1b2c3 over Colorado, then — one message later
-;; — over Kansas, ~250 nm east. No aircraft crosses that in a second, and
-;; the fast lane must not broadcast it as a clean track (adsb-b36).
 (def ^:private teleported-position-line
   "MSG,3,1,1,A1B2C3,1,,,,,,37000,,,39.8721,-99.2000,,,,,,")
 
@@ -322,8 +272,6 @@
             state store, so an unflagged delta would be a spoof broadcast
             as a clean track"
     (let [heard (atom [])
-          ;; The reader's clock: one second per message, so the hop is a
-          ;; one-second one. Two messages precede the jump.
           ticks (atom 0)]
       (with-sbs-feed [position-line teleported-position-line velocity-line]
         (fn [host port]
@@ -335,26 +283,18 @@
             (try
               (is (some? (wait-until #(= 3 (count @heard)))))
               (let [[origin jumped after] @heard]
-                (is (not (contains? origin :aircraft/position-suspect?))
-                    "the first position has nothing to jump from")
-                (is (true? (:aircraft/position-suspect? jumped))
-                    "the teleport is flagged on the upsert that carries it")
+                (is (not (contains? origin :aircraft/position-suspect?)))
+                (is (true? (:aircraft/position-suspect? jumped)))
                 (is (= {:geo/lat 39.8721 :geo/lon -99.2}
-                       (:aircraft/position jumped))
-                    "flagged, never dropped and never clamped")
+                       (:aircraft/position jumped)))
                 (testing "and the flag SURVIVES the next upsert — a client
                           upsert is a full-state replacement, so an
                           unflagged velocity message would erase the
                           indicator the flag exists to raise"
                   (is (true? (:aircraft/position-suspect? after)))
-                  (is (= 451.2 (:aircraft/ground-speed-kt after))
-                      "the velocity message did land; it just cleared
-                       nothing")))
+                  (is (= 451.2 (:aircraft/ground-speed-kt after)))))
               (finally (source/close! src)))))))))
 
-;; ~12 nm north of position-line — 100 s of flight at ~430 kt, or one
-;; impossible second at ~43,000 kt. Which one it reads as is the bug
-;; adsb-0g0 fixed and this test pins.
 (def ^:private moved-on-position-line
   "MSG,3,1,1,A1B2C3,1,,,,,,37000,,,40.0721,-104.6702,,,,,,")
 
@@ -380,10 +320,8 @@
             (try
               (is (some? (wait-until #(= 2 (count @heard)))))
               (let [aircraft (second @heard)]
-                (is (= (+ 1000 gap-ms) (:aircraft/seen-at-ms aircraft))
-                    "measured from when it was heard, both ends")
-                (is (not (contains? aircraft :aircraft/position-suspect?))
-                    "~430 kt across the gap is an airliner, not a spoof"))
+                (is (= (+ 1000 gap-ms) (:aircraft/seen-at-ms aircraft)))
+                (is (not (contains? aircraft :aircraft/position-suspect?))))
               (finally (source/close! src)))))))))
 
 (deftest a-throwing-on-delta-hook-never-kills-the-reader
@@ -395,29 +333,17 @@
         (let [src (source/open!
                     (sbs/->source host port
                                   {:on-delta (fn [_aircraft _now-ms]
-                                               (throw (ex-info "broken hook"
-                                                               {})))}))]
+                                               (throw (ex-info "broken hook" {})))}))]
           (try
             (let [batch (wait-until
                           (fn []
                             (let [b (fetch-quietly src)]
                               (when (some :aircraft/position b) b))))]
-              (is (some? batch)
-                  "the message AFTER the first throw still accumulated")
-              (is (= "UAL123" (:aircraft/callsign (first batch)))
-                  "and so did the one that provoked it"))
+              (is (some? batch))
+              (is (= "UAL123" (:aircraft/callsign (first batch)))))
             (finally (source/close! src))))))))
 
-;; ---------------------------------------------------------------------
-;; Stall detection on the plain-socket transport — the SO_TIMEOUT half of
-;; the uniform stall handling adsb.ingest.wss-test exercises for websockets.
-
-(defn- with-restarting-sbs-feed
-  "Serve successive connections on one ephemeral 127.0.0.1 port, giving each
-  its own lines from (next-lines!), then holding it open and silent — so a
-  reader that stalls on the silence and reconnects lands on a fresh
-  connection with fresh lines. Runs until (f host port) returns."
-  [next-lines! f]
+(defn- with-restarting-sbs-feed [next-lines! f]
   (let [server  (doto (ServerSocket.)
                   (.bind (InetSocketAddress. "127.0.0.1" 0)))
         port    (.getLocalPort server)
@@ -456,11 +382,10 @@
             (try
               (let [picture (wait-until
                               (fn []
-                                (let [planes (into {} (map (juxt :aircraft/icao
-                                                                 identity))
-                                                   (fetch-quietly src))]
+                                (let [planes (->> (fetch-quietly src)
+                                                  (map (juxt :aircraft/icao identity))
+                                                  (into {}))]
                                   (when (contains? planes "bbbbbb") planes))))]
-                (is (some? picture)
-                    "the reconnect's aircraft appears, so the reader re-dialed")
-                (is (< 1 @connections) "the server saw more than one connection"))
+                (is (some? picture))
+                (is (< 1 @connections)))
               (finally (source/close! src)))))))))

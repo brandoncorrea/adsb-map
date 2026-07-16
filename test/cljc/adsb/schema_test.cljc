@@ -1,15 +1,22 @@
 (ns adsb.schema-test
-  (:require
-    [adsb.schema :as schema]
-    [malli.core :as m]
-    #?(:clj [clojure.test :refer [deftest testing is]]
-       :cljs [cljs.test :refer-macros [deftest testing is]])))
+  (:require [adsb.schema :as schema]
+            [clojure.test :refer [deftest is testing]]
+            [malli.core :as m]))
 
 (def cruising
-  "A complete, well-formed raw entry, shaped like the real capture."
-  {:hex "abc0e4" :type "adsb_icao" :flight "UPS2717 " :alt_baro 34775
-   :gs 450.5 :track 97.14 :baro_rate -960 :squawk "6040"
-   :lat 27.961166 :lon -83.975953 :messages 1848 :seen 0.4 :rssi -26.2})
+  {:hex       "abc0e4"
+   :type      "adsb_icao"
+   :flight    "UPS2717 "
+   :alt_baro  34775
+   :gs        450.5
+   :track     97.14
+   :baro_rate -960
+   :squawk    "6040"
+   :lat       27.961166
+   :lon       -83.975953
+   :messages  1848
+   :seen      0.4
+   :rssi      -26.2})
 
 (deftest raw-aircraft
   (testing "accepts a complete, well-formed entry"
@@ -17,25 +24,25 @@
 
   (testing "accepts alt_baro as a number or as the string \"ground\""
     (is (m/validate schema/raw-aircraft (assoc cruising :alt_baro 700)))
-    (is (m/validate schema/raw-aircraft
-                    (assoc cruising :alt_baro "ground"))))
+    (is (m/validate schema/raw-aircraft (assoc cruising :alt_baro "ground"))))
 
   (testing "accepts a bare mode_s target that carries no alt_baro at all"
     (is (m/validate schema/raw-aircraft
-                    {:hex "a10202" :type "mode_s"
-                     :messages 74 :seen 3.5 :rssi -29.7})))
+                    {:hex      "a10202"
+                     :type     "mode_s"
+                     :messages 74
+                     :seen     3.5
+                     :rssi     -29.7})))
 
   (testing "rejects alt_baro strings other than \"ground\""
-    (is (not (m/validate schema/raw-aircraft
-                         (assoc cruising :alt_baro "36000")))))
+    (is (not (m/validate schema/raw-aircraft (assoc cruising :alt_baro "36000")))))
 
   (testing "accepts an entry that has never reported lat/lon"
     (is (m/validate schema/raw-aircraft (dissoc cruising :lat :lon))))
 
   (testing "rejects coordinates that are off the planet"
     (is (not (m/validate schema/raw-aircraft (assoc cruising :lat 91))))
-    (is (not (m/validate schema/raw-aircraft
-                         (assoc cruising :lon -180.5)))))
+    (is (not (m/validate schema/raw-aircraft (assoc cruising :lon -180.5)))))
 
   (testing "accepts a space-padded callsign, and an absent one"
     (is (m/validate schema/raw-aircraft (assoc cruising :flight "SWA349  ")))
@@ -47,53 +54,49 @@
   (testing "rejects an entry with no usable hex identity"
     (is (not (m/validate schema/raw-aircraft (dissoc cruising :hex))))
     (is (not (m/validate schema/raw-aircraft (assoc cruising :hex nil))))
-    (is (not (m/validate schema/raw-aircraft
-                         (assoc cruising :hex "not-hex")))))
+    (is (not (m/validate schema/raw-aircraft (assoc cruising :hex "not-hex")))))
 
   (testing "squawk is a string of four octal digits; \"0000\" is
             meaningful and is not nil"
     (is (m/validate schema/raw-aircraft (assoc cruising :squawk "0000")))
     (is (m/validate schema/raw-aircraft (assoc cruising :squawk "7700")))
     (is (not (m/validate schema/raw-aircraft (assoc cruising :squawk 7700))))
-    (is (not (m/validate schema/raw-aircraft
-                         (assoc cruising :squawk "78AB"))))
-    (is (not (m/validate schema/raw-aircraft
-                         (assoc cruising :squawk "770")))))
+    (is (not (m/validate schema/raw-aircraft (assoc cruising :squawk "78AB"))))
+    (is (not (m/validate schema/raw-aircraft (assoc cruising :squawk "770")))))
 
   (testing "gs, track and baro_rate may each be absent independently"
     (doseq [field [:gs :track :baro_rate]]
-      (is (m/validate schema/raw-aircraft (dissoc cruising field))
-          (str field " absent must still validate"))))
+      (is (m/validate schema/raw-aircraft (dissoc cruising field)))))
 
   (testing "any field may be an explicit null"
     (doseq [field [:alt_baro :flight :lat :lon :squawk :gs :track
                    :baro_rate :seen :rssi]]
-      (is (m/validate schema/raw-aircraft (assoc cruising field nil))
-          (str field " null must still validate"))))
+      (is (m/validate schema/raw-aircraft (assoc cruising field nil)))))
 
   (testing "tolerates the dozens of extra keys real payloads carry"
     (is (m/validate schema/raw-aircraft
-                    (assoc cruising :nav_qnh 1013.6 :mlat [] :tisb []
-                           :category "A3" :emergency "none")))))
+                    (assoc cruising :nav_qnh 1013.6
+                                    :mlat []
+                                    :tisb []
+                                    :category "A3"
+                                    :emergency "none")))))
 
 (deftest emitter-category
   (testing "the three sets the sky actually transmits, eight codes each"
     (doseq [category ["A0" "A1" "A5" "A7" "B0" "B7" "C0" "C2" "C7"]]
-      (is (m/validate schema/emitter-category category)
-          (str category " is a category the sky really transmits"))))
+      (is (m/validate schema/emitter-category category))))
 
   (testing "the enum is CLOSED — the feeder is unauthenticated radio, and
             only these 24 values may enter the domain (adsb-rnp). What is
             refused here becomes ABSENCE at the boundary, never a reject
             of the aircraft: see adsb.ingest.coerce."
     (is (= 24 (count (rest schema/emitter-category))))
-    (doseq [refused ["A8"           ; the codes stop at 7
-                     "D0" "D1"      ; set D is reserved; nothing emits it
-                     "E1" "a3" "A"  ; junk, wrong case, half a category
+    (doseq [refused ["A8"                                   ; the codes stop at 7
+                     "D0" "D1"                              ; set D is reserved; nothing emits it
+                     "E1" "a3" "A"                          ; junk, wrong case, half a category
                      "" "A3 " "A3; DROP TABLE"
                      42 nil {:evil true} ["A3"]]]
-      (is (not (m/validate schema/emitter-category refused))
-          (str (pr-str refused) " must never enter the domain")))))
+      (is (not (m/validate schema/emitter-category refused))))))
 
 (deftest plausibility
   (testing "cruise altitudes and below-sea-level fields are plausible"

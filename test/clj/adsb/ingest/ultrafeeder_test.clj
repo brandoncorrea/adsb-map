@@ -1,12 +1,9 @@
 (ns adsb.ingest.ultrafeeder-test
-  "Exercises the ultrafeeder Source against a local stub server serving the
-  recorded fixture — never the live feeder (docs/CLAUDE.md: the sky is not a
-  fixture)."
-  (:require
-    [adsb.ingest.source :as source]
-    [adsb.ingest.ultrafeeder :as ultrafeeder]
-    [clojure.test :refer [deftest testing is]]
-    [org.httpkit.server :as http-kit]))
+  (:require [adsb.ingest.source :as source]
+            [adsb.ingest.ultrafeeder :as ultrafeeder]
+            [clojure.test :refer [deftest is testing]]
+            [org.httpkit.server :as http-kit])
+  (:import (clojure.lang ExceptionInfo)))
 
 (def ^:private fixture (slurp "test/resources/aircraft-sample.json"))
 
@@ -15,9 +12,7 @@
     {:status 200 :headers {"Content-Type" "application/json"} :body fixture}
     {:status 404 :body "not here"}))
 
-(defn- with-server
-  "Run f with a base URL pointing at a stub server that returns `handler`."
-  [handler f]
+(defn- with-server [handler f]
   (let [srv  (http-kit/run-server handler {:port 0 :legacy-return-value? false})
         port (http-kit/server-port srv)]
     (try
@@ -30,22 +25,19 @@
       stub-handler
       (fn [base-url]
         (let [batch (source/fetch! (ultrafeeder/->source base-url))]
-          (is (seq batch) "the recorded fixture yields aircraft")
-          (is (every? :aircraft/icao batch)
-              "every entry is a coerced, namespaced domain aircraft")
-          ;; The fixture has heard-but-never-positioned targets; keep them.
-          (is (some (complement :aircraft/position) batch)
-              "position-less aircraft are kept, not dropped"))))))
+          (is (seq batch))
+          (is (every? :aircraft/icao batch))
+          (is (some (complement :aircraft/position) batch)))))))
 
-(defn- capturing-handler
-  "A stub that records the request headers it saw into `seen` before
-  serving the fixture. http-kit lowercases inbound header names."
-  [seen]
+(defn- capturing-handler [seen]
   (fn [{:keys [uri headers]}]
     (reset! seen headers)
     (if (= "/data/aircraft.json" uri)
-      {:status 200 :headers {"Content-Type" "application/json"} :body fixture}
-      {:status 404 :body "not here"})))
+      {:status  200
+       :headers {"Content-Type" "application/json"}
+       :body    fixture}
+      {:status 404
+       :body   "not here"})))
 
 (deftest sends-auth-headers-when-configured
   (testing "the feeder-auth headers ride every request to the tunnel"
@@ -59,8 +51,7 @@
               {"CF-Access-Client-Id"     "abc123.access"
                "CF-Access-Client-Secret" "supersecretvalue"}))
           (is (= "abc123.access" (get @seen "cf-access-client-id")))
-          (is (= "supersecretvalue"
-                 (get @seen "cf-access-client-secret"))))))))
+          (is (= "supersecretvalue" (get @seen "cf-access-client-secret"))))))))
 
 (deftest omits-auth-headers-when-not-configured
   (testing "no service token means no CF-Access headers on the wire"
@@ -82,23 +73,21 @@
       (try
         (source/fetch! src)
         (is false "the unreachable feeder should throw")
-        (catch clojure.lang.ExceptionInfo e
+        (catch ExceptionInfo e
           (let [dump (str (ex-message e) " "
                           (pr-str (ex-data e)) " "
                           (ex-message (or (ex-cause e) e)))]
-            (is (not (re-find (re-pattern secret) dump))
-                "the service-token secret must never surface in an exception")))))))
+            (is (not (re-find (re-pattern secret) dump)))))))))
 
 (deftest non-200-throws
   (testing "a non-200 status becomes an ex-info the poll loop can catch"
     (with-server
       (fn [_] {:status 503 :body "unavailable"})
       (fn [base-url]
-        (is (thrown? clojure.lang.ExceptionInfo
+        (is (thrown? ExceptionInfo
                      (source/fetch! (ultrafeeder/->source base-url))))))))
 
 (deftest unreachable-host-throws
   (testing "a request error (nothing listening) throws, not returns nil"
-    ;; Reserved TEST-NET-1 address; connection fails fast within the timeout.
     (let [src (ultrafeeder/->source "http://192.0.2.1:1" 200)]
-      (is (thrown? clojure.lang.ExceptionInfo (source/fetch! src))))))
+      (is (thrown? ExceptionInfo (source/fetch! src))))))

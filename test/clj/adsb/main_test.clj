@@ -1,20 +1,16 @@
 (ns adsb.main-test
-  (:require
-    [adsb.http.server :as server]
-    [adsb.main :as main]
-    [adsb.state :as state]
-    [clojure.string :as str]
-    [clojure.test :refer [deftest testing is]]
-    [muuntaja.core :as muuntaja]
-    [org.httpkit.client :as http]
-    [org.httpkit.server :as http-kit])
-  (:import
-    (clojure.lang ExceptionInfo)
-    (java.net URI)
-    (java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers)))
+  (:require [adsb.http.server :as server]
+            [adsb.main :as main]
+            [adsb.state :as state]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
+            [muuntaja.core :as muuntaja]
+            [org.httpkit.client :as http]
+            [org.httpkit.server :as http-kit])
+  (:import (clojure.lang ExceptionInfo)
+           (java.net BindException URI)
+           (java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers)))
 
-;; A port nothing listens on, so the poller sees an immediately refused
-;; connection: real outage behavior, never a live feeder.
 (def ^:private unreachable-feeder "http://localhost:1")
 
 (deftest env->config-defaults
@@ -52,8 +48,7 @@
 
   (testing "and on when it does — `bb dev` sets it; no deployment does"
     (is (true? (:dev-csp? (main/env->config {"ADSB_DEV_CSP" "true"}))))
-    (is (true? (:dev-csp? (main/env->config {"ADSB_DEV_CSP" " TRUE "})))
-        "tolerant of shell whitespace and case, strict about meaning")))
+    (is (true? (:dev-csp? (main/env->config {"ADSB_DEV_CSP" " TRUE "}))))))
 
 (deftest env->config-captures-source
   (testing "ADSB_SOURCE is captured so start! can pick the ingest Source"
@@ -101,16 +96,13 @@
                                   :env             {}})
           taken     (http-kit/server-port (:system/server incumbent))]
       (try
-        (is (thrown? java.net.BindException
+        (is (thrown? BindException
                      (main/start! {:port   taken
                                    :source "replay"
-                                   :env    {}}))
-            "the boot dies loudly — cleaning up is not swallowing")
+                                   :env    {}})))
         (state/clear!)
-        (Thread/sleep 1500)          ; several poll intervals
-        (is (empty? (state/snapshot))
-            "nothing repopulates the picture: the failed boot's poller is
-             stopped, not orphaned")
+        (Thread/sleep 1500)
+        (is (empty? (state/snapshot)))
         (finally
           (main/stop! incumbent)
           (state/clear!))))))
@@ -128,12 +120,10 @@
                      :method  :get
                      :headers {"Accept" "application/json"}})]
     (assoc response
-           :json (muuntaja/decode muuntaja/instance "application/json"
-                                  (:body response)))))
+      :json (muuntaja/decode muuntaja/instance "application/json"
+                             (:body response)))))
 
-(defn- head-stream
-  "Open /api/stream just far enough to see its status and content type."
-  [port]
+(defn- head-stream [port]
   (let [request  (-> (HttpRequest/newBuilder
                        (URI. (str "http://localhost:" port "/api/stream")))
                      (.GET)

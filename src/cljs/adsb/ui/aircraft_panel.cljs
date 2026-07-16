@@ -1,27 +1,6 @@
 (ns adsb.ui.aircraft-panel
-  "The selected-aircraft detail panel — Reagent chrome, and unlike the map
-  layer this genuinely IS React territory: it is low-churn (it changes when
-  the user clicks something, not sixty times a second), so a component tree
-  is exactly right here.
-
-  BOUNDARY 4 (docs/validation-boundaries.md). Every string this panel shows —
-  callsign, icao, squawk — arrived off an unauthenticated radio. It passed
-  the ingest schema, so it is well-TYPED; it did not become trust-WORTHY on
-  the way. We render it as plain hiccup text and let Reagent escape it. No
-  `:dangerouslySetInnerHTML`, no href built from feeder data, no escape hatch
-  of any kind. A hostile callsign is a string on the screen, never markup.
-
-  ABSENT IS NOT ZERO. A fact the sky never reported renders as an em-dash —
-  never a fabricated 0, which would draw a 747 parked at sea level. A genuine
-  reported 0 is shown; only true absence dashes.
-
-  ESC clears the selection and closes this panel (adsb-rsm) — same intent
-  as the close mark. Wired once for the app lifetime via `start-keyboard!`.
-
-  Styling is a NEUTRAL PLACEHOLDER: class names are the re-skin hooks and the
-  visual pass is bead adsb-dgb.5. This namespace commits to structure, not a
-  look."
   (:require [adsb.aircraft :as aircraft]
+            [adsb.corejs :as cjs]
             [adsb.enrich :as enrich]
             [adsb.ui.alert :as alert]
             [adsb.ui.icon :refer [icon]]
@@ -29,133 +8,73 @@
             [clojure.string :as str]
             [re-frame.core :as rf]))
 
-;; The em-dash stands in for every fact the sky never reported.
 (def ^:const em-dash "—")
 (def ^:const clock-interval-ms 1000)
-
-;; ---------------------------------------------------------------------
-;; The coarse UI clock. Time is not allowed into the pure domain, but the
-;; UI edge is exactly where a wall clock belongs: it drives seen-age and,
-;; on each tick, prunes a selection whose aircraft has left the sky (see
-;; :ui/tick in adsb.events). One interval for the app's lifetime.
-
 (defonce ^:private !clock (atom nil))
 
-(defn start-clock!
-  "Start the 1 Hz UI clock. Idempotent — a second call is a no-op, so hot
-  reload never stacks intervals. Called once from adsb.core/init!; tests
-  never call it and drive :ui/tick explicitly instead."
-  []
+(defn start-clock! []
   (when (nil? @!clock)
-    (rf/dispatch [:ui/tick (.now js/Date)])
+    (rf/dispatch [:ui/tick (cjs/now-ms)])
     (reset! !clock
-            (js/setInterval #(rf/dispatch [:ui/tick (.now js/Date)])
+            (js/setInterval #(rf/dispatch [:ui/tick (cjs/now-ms)])
                             clock-interval-ms))))
-
-;; ---------------------------------------------------------------------
-;; Escape — deselect. Document-level so it works whether focus is on the
-;; map canvas, the roster, or nowhere in particular. Skips when the user
-;; is typing in a field (search) so Escape can still mean "clear the
-;; field" to the browser first; a second Escape with an empty field (or
-;; focus elsewhere) then closes the panel.
 
 (defonce ^:private !keyboard (atom nil))
 
-(defn escape-deselect?
-  "True when this key event should clear the selection. Pure of re-frame
-  so tests can pin the guard without a document listener."
-  [^js e]
+(defn escape-deselect? [e]
   (and (= "Escape" (.-key e))
-       (let [t (.-target e)
-             tag (some-> t .-tagName str/lower-case)]
+       (let [target (.-target e)
+             tag    (some-> target .-tagName str/lower-case)]
          (not (or (= tag "input")
                   (= tag "textarea")
                   (= tag "select")
-                  (and t (.-isContentEditable t)))))))
+                  (and target (.-isContentEditable target)))))))
 
-(defn- on-document-key!
-  [^js e]
+(defn- on-document-key! [e]
   (when (escape-deselect? e)
     (rf/dispatch [:aircraft/clear-selection])))
 
-(defn start-keyboard!
-  "Listen for Escape → clear selection. Idempotent under hot reload."
-  []
+(defn start-keyboard! []
   (when (nil? @!keyboard)
-    (.addEventListener js/document "keydown" on-document-key!)
+    (cjs/add-listener "keydown" on-document-key!)
     (reset! !keyboard true)))
 
-;; ---------------------------------------------------------------------
-;; Presentation — pure. Absent (nil) becomes the em-dash; everything else
-;; is stringified and handed to hiccup, which escapes it.
-
-(defn- altitude-display
-  "Altitude for the panel: \"ground\" on the tarmac, the number when the
-  sky reported one, nil (→ dash) when it never did. A missing altitude is
-  never coerced to 0."
-  [{:aircraft/keys [on-ground? altitude-ft]}]
+(defn- altitude-display [{:aircraft/keys [on-ground? altitude-ft]}]
   (if on-ground?
     "ground"
     altitude-ft))
 
-(defn- seen-age-s
-  "Whole seconds since the aircraft was last heard, from its durable
-  :aircraft/seen-at-ms against the coarse UI `now-ms`. nil (→ dash) when
-  either is absent — we do not invent a freshness we cannot measure.
-  Clamped at 0 so clock skew never shows a negative age."
-  [{:aircraft/keys [seen-at-ms]} now-ms]
+(defn- seen-age-s [{:aircraft/keys [seen-at-ms]} now-ms]
   (when (and seen-at-ms now-ms)
     (max 0 (quot (- now-ms seen-at-ms) 1000))))
 
-(defn- close!
-  "Dismiss the panel by clearing the selection."
-  [_event]
+(defn- close! []
   (rf/dispatch [:aircraft/clear-selection]))
 
-(defn- toggle-expand!
-  [_event]
+(defn- toggle-expand! []
   (rf/dispatch [:panel/toggle-expanded]))
 
-(defn- fact
-  "One labelled fact row. A nil value renders as the em-dash; any other
-  value is stringified and escaped as hiccup text. The value carries a
-  data-testid so a test can pin one specific field's rendering — the only
-  clean way to target a single value inside the list."
-  [label value]
+(defn- fact [label value]
   [:div.adsb-fact
    [:span.adsb-fact-label label]
    [:span.adsb-fact-value {:data-testid (str "fact:" label)}
     (if (nil? value) em-dash (str value))]])
 
-(defn- badge
-  "A small status flag, shown only when its condition is true. `kind` is a
-  class-name hook for the visual pass; `label` is escaped text."
-  [kind label]
+(defn- badge [kind label]
   [:span.adsb-badge {:class (str "adsb-badge-" kind) :role "status"} label])
 
-(defn- type-display
-  "Type for the panel: the long description when the database carries one
-  (\"Boeing 737-800\"), else the bare ICAO type code (\"B738\"), else nil
-  (→ dash). Reference data, so absence is ordinary, never an error."
-  [enrichment]
+(defn- type-display [enrichment]
   (or (enrich/type-desc enrichment)
       (enrich/type-code enrichment)))
 
-(defn- altitude-chip
-  "Collapsed-card meta: altitude in a short form, or the em-dash."
-  [aircraft]
-  (let [v (altitude-display aircraft)]
+(defn- altitude-chip [aircraft]
+  (let [alt (altitude-display aircraft)]
     (cond
-      (nil? v)     em-dash
-      (= v "ground") "GND"
-      :else        (str v " ft"))))
+      (nil? alt) em-dash
+      (= alt "ground") "GND"
+      :else (str alt " ft"))))
 
-(defn- panel-body
-  "The panel for one selected aircraft. Collapsible: expanded = full fact
-  sheet; collapsed = a chip with callsign + altitude so the map can breathe.
-  The close mark deselects; the chevron only collapses (adsb-66h). Free/Follow
-  lives on the map chrome (adsb.ui.follow), not here."
-  [aircraft now-ms enrichment expanded?]
+(defn- panel-body [aircraft now-ms enrichment expanded?]
   (let [{:aircraft/keys [icao callsign ground-speed-kt track-deg squawk
                          baro-rate-fpm position-suspect? mlat?]} aircraft
         seen           (seen-age-s aircraft now-ms)
@@ -176,17 +95,16 @@
         :aria-label    (if expanded? "Collapse detail" "Expand detail")
         :data-testid   "panel-toggle"
         :on-click      toggle-expand!}
-       ;; A MATCHED PAIR, which the ▾/▸ these replace were not: two unrelated
-       ;; geometric characters, different optical weights, different vertical
-       ;; centring — the control twitched every time it toggled.
        [:span.adsb-panel-chevron
         [icon (if expanded? :chevron-down :chevron-right)]]
        [:span.adsb-panel-title {:data-testid "panel-title"} title]
        (when-not expanded?
          [:span.adsb-panel-chip-meta (altitude-chip aircraft)])]
       [:button.adsb-panel-close
-       {:type "button" :aria-label "Close" :data-testid "panel-close"
-        :on-click close!}
+       {:type        "button"
+        :aria-label  "Close"
+        :data-testid "panel-close"
+        :on-click    close!}
        [icon :xmark]]]
      (when expanded?
        [:<>
@@ -202,32 +120,19 @@
          [fact "Registration" (enrich/registration enrichment)]
          [fact "Operator" (enrich/operator enrichment)]
          [fact "Altitude" (altitude-display aircraft)]
-         ;; Whole knots, three-digit bearing — aviation's own precision, not
-         ;; the feeder's (adsb.ui.units). nil stays nil, so absent still dashes.
          [fact "Ground speed" (units/knots ground-speed-kt)]
          [fact "Track" (units/track track-deg)]
          [fact "Squawk" squawk]
          [fact "Vertical rate" baro-rate-fpm]
          [fact "Seen" (when seen (str seen "s ago"))]]])]))
 
-(defn aircraft-panel
-  "The detail panel, mounted permanently in the app root. Renders nothing
-  when no aircraft is selected OR the selected aircraft has left the
-  picture — the derived :aircraft/selected sub is the single gate, so the
-  panel closes the instant its subject ages out of the sky. A form-2
-  component: subscribe once, deref per render."
-  []
+(defn aircraft-panel []
   (let [selected  (rf/subscribe [:aircraft/selected])
         now       (rf/subscribe [:ui/now-ms])
         expanded? (rf/subscribe [:panel/expanded?])]
     (fn []
       (when-let [aircraft @selected]
         (let [icao (:aircraft/icao aircraft)]
-          ;; Warm this hex's shard. Idempotent (adsb.enrich/:enrich/ensure is
-          ;; a no-op once the prefix is known) and async, so re-dispatching on
-          ;; each render neither blocks the render nor loops. The record fills
-          ;; in a beat later when the shard resolves; until then it is nil and
-          ;; the rows dash.
           (rf/dispatch [:enrich/ensure icao])
           (panel-body aircraft @now
                       @(rf/subscribe [:enrich/record icao])

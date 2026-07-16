@@ -1,39 +1,33 @@
 (ns adsb.map.crop-test
-  "The published-coverage boundary, proven at the map seam. A recording
-  fake stands in for MapLibre (docs/testing-setup.md, \"The Map Seam\"),
-  and the wire round-trip plays the part of the server — the boundary the
-  browser draws is the one a real `config` event would have delivered."
-  (:require
-    [adsb.geo :as geo]
-    [adsb.map.crop :as crop]
-    [adsb.map.maplibre :as maplibre]
-    [adsb.stream :as stream]
-    [adsb.wire :as wire]
-    [cljs.test :refer-macros [deftest is testing]]
-    [day8.re-frame.test :as rf-test]
-    [re-frame.core :as rf]
-    [reagent.core :as r]))
+  (:require [adsb.geo :as geo]
+            [adsb.map.crop :as crop]
+            [adsb.map.maplibre :as maplibre]
+            [adsb.stream :as stream]
+            [adsb.wire :as wire]
+            [clojure.test :refer-macros [deftest is testing]]
+            [day8.re-frame.test :as rf-test]
+            [re-frame.core :as rf]
+            [reagent.core :as r]))
 
 (def ^:private captured-at-ms 1720713600000)
 
 (def ^:private declared-crop
-  {:crop/center {:geo/lat 27.9753 :geo/lon -82.5331}
+  {:crop/center   {:geo/lat 27.9753 :geo/lon -82.5331}
    :crop/radius-m 100000})
 
-;; A DIFFERENT declared crop, for the frame-once proof: if the camera ever
-;; re-framed on a later config event, it would land here instead.
 (def ^:private elsewhere-crop
-  {:crop/center {:geo/lat 40.6413 :geo/lon -73.7781}
+  {:crop/center   {:geo/lat 40.6413 :geo/lon -73.7781}
    :crop/radius-m 50000})
 
-;; Server impersonation: the `config` event's data string, exactly as the
-;; backend builds it — the shared adsb.wire codec, then JSON.
 (defn- config-frame [crop]
   (js/JSON.stringify
     (clj->js (wire/config-event->wire crop captured-at-ms))))
 
 (defn- recording-map []
-  (let [!rec (atom {:on-load nil :sources {} :layers [] :set-data []
+  (let [!rec (atom {:on-load    nil
+                    :sources    {}
+                    :layers     []
+                    :set-data   []
                     :fit-bounds []})]
     {:rec !rec
      :m   (reify maplibre/Map
@@ -45,8 +39,7 @@
             (set-source-data! [_ id data]
               (swap! !rec update :set-data conj {:source id :data data}))
             (fit-bounds! [_ bounds padding]
-              (swap! !rec update :fit-bounds conj
-                     {:bounds bounds :padding padding})))}))
+              (swap! !rec update :fit-bounds conj {:bounds bounds :padding padding})))}))
 
 (defn- fire-load! [{:keys [rec]}] ((:on-load @rec)))
 
@@ -55,9 +48,6 @@
 
 (defn- ring [fake]
   (get-in (first (last-features fake)) [:geometry :coordinates 0]))
-
-;; ---------------------------------------------------------------------
-;; The GeoJSON
 
 (deftest crop->feature-collection
   (testing "a declared crop becomes ONE Polygon whose ring is the geodesic
@@ -70,8 +60,6 @@
       (is (= "Polygon" (get-in (first features) [:geometry :type])))
       (is (= (inc geo/default-circle-segments) (count coords)))
       (is (= (first coords) (last coords)) "the ring is closed")
-      ;; [lon lat], not [lat lon] — the classic GeoJSON transposition, and
-      ;; it would silently put the boundary in the wrong hemisphere.
       (let [[lon lat] lon-lat]
         (is (< -83 lon -82))
         (is (< 28 lat 30)))
@@ -83,16 +71,11 @@
 
   (testing "no crop yields an EMPTY collection, never a default ring — a
             boundary we cannot state is one we must not draw"
-    (is (= crop/empty-feature-collection
-           (crop/crop->feature-collection nil)))
+    (is (= crop/empty-feature-collection (crop/crop->feature-collection nil)))
     (is (= crop/empty-feature-collection
            (crop/crop->feature-collection {:crop/radius-m 100000})))
     (is (= crop/empty-feature-collection
-           (crop/crop->feature-collection
-             {:crop/center {:geo/lat 27.9 :geo/lon -82.4}})))))
-
-;; ---------------------------------------------------------------------
-;; The seam
+           (crop/crop->feature-collection {:crop/center {:geo/lat 27.9 :geo/lon -82.4}})))))
 
 (deftest boundary-reaches-the-map
   (testing "a config event carrying a crop puts the ring into the source"
@@ -101,10 +84,9 @@
         (crop/attach! (:m fake) :day)
         (fire-load! fake)
         (rf/dispatch [:stream/config (config-frame declared-crop)])
-        (r/flush)  ;; reaction propagation rides Reagent's batch
+        (r/flush)
         (is (contains? (:sources @(:rec fake)) crop/source-id))
-        (is (= (inc geo/default-circle-segments) (count (ring fake)))
-            "the declared boundary crossed the seam as a closed ring"))))
+        (is (= (inc geo/default-circle-segments) (count (ring fake)))))))
 
   (testing "a crop-DISABLED deployment draws no boundary at all"
     (rf-test/run-test-sync
@@ -126,11 +108,7 @@
           (crop/detach! handle)
           (rf/dispatch [:stream/config (config-frame nil)])
           (r/flush)
-          (is (= pushes (count (:set-data @(:rec fake))))
-              "no push after detach!"))))))
-
-;; ---------------------------------------------------------------------
-;; The opening frame
+          (is (= pushes (count (:set-data @(:rec fake))))))))))
 
 (defn- fits [{:keys [rec]}] (:fit-bounds @rec))
 
@@ -147,7 +125,6 @@
         (is (= 1 (count (fits fake))))
         (let [{:keys [bounds padding]} (first (fits fake))]
           (is (= crop/frame-padding-px padding))
-          ;; The box brackets the centre: the crop is INSIDE the frame.
           (is (< (:geo/min-lat bounds) 27.9753 (:geo/max-lat bounds)))
           (is (< (:geo/min-lon bounds) -82.5331 (:geo/max-lon bounds)))))))
 
@@ -161,8 +138,7 @@
         (r/flush)
         (rf/dispatch [:stream/config (config-frame elsewhere-crop)])
         (r/flush)
-        (is (= 1 (count (fits fake)))
-            "still just the one fit, from the first crop"))))
+        (is (= 1 (count (fits fake)))))))
 
   (testing "a crop-DISABLED deployment frames nothing — the map keeps the
             fixed regional fallback it booted on (adsb.map.view)"
@@ -184,10 +160,8 @@
         (fire-load! fake)
         (rf/dispatch [:stream/config (config-frame declared-crop)])
         (r/flush)
-        (is (empty? (fits fake)) "no fit-bounds on the re-print")
-        (is (seq (last-features fake))
-            "the boundary is still drawn — it is the frame that is spent,
-             not the ring")))))
+        (is (empty? (fits fake)))
+        (is (seq (last-features fake)))))))
 
 (deftest crop-bounds-box
   (testing "the box is derived from the RING, so it is wider in longitude
@@ -200,9 +174,6 @@
   (testing "no crop, no box"
     (is (nil? (crop/crop-bounds nil)))
     (is (nil? (crop/crop-bounds {:crop/radius-m 100000})))))
-
-;; ---------------------------------------------------------------------
-;; The decode
 
 (deftest config-decode
   (testing "the wire's config frame decodes to the domain crop"

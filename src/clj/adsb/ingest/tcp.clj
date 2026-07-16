@@ -1,120 +1,24 @@
 (ns adsb.ingest.tcp
-  "The reconnecting stream reader shared by the streaming Sources.
-
-  SBS on :30003 and Beast on :30005 are different wire formats over the
-  same transport: a byte stream held open across polls, read on a daemon
-  thread, folding each message into a per-ICAO accumulator picture at its
-  arrival instant. This namespace owns everything transport but format —
-  dialing, reconnecting after a drop, the reader thread lifecycle, stall
-  detection, and the unreachable-vs-quiet fetch! contract — so each Source
-  ns is left with only its own parsing (adsb.ingest.sbs,
-  adsb.ingest.beast-source).
-
-  THE TRANSPORT SEAM is `:transport`, a connect step. Called
-  (transport host port {:keys [connect-timeout-ms idle-timeout-ms]}) it
-  dials the feed and returns a connection map {:in InputStream :close!
-  0-arg-fn}. The default is `socket-transport`, today's plain TCP socket,
-  so the SBS/Beast Sources stream unchanged; the wss transport
-  (adsb.ingest.wss) is the same shape over a websocket. The pumps keep
-  reading a plain InputStream, oblivious to which transport produced it.
-
-  THE FORMAT SEAM is `:consume!`, a per-connection pump. Given the
-  connection's InputStream and the reader state, it reads until
-  EOF/close/stop and folds what it decodes into `:picture` (the
-  accumulator atom the Source owns) at `(clock)`. serve-connection! wraps
-  it with connect/mark-connected/mark-disconnected/close; the format ns
-  supplies only the pump.
-
-  STALL DETECTION. A dead tunnel can leave the connection open but silent.
-  Every transport arms its InputStream with an :idle-timeout-ms read
-  deadline (the plain socket via SO_TIMEOUT, the websocket via a queue
-  poll) so that :idle-timeout-ms of total silence throws out of the read,
-  ending the connection exactly like a drop — the reader then reconnects,
-  and a persistent stall converges to connected? = false and a throwing
-  fetch!.
-
-  UNREACHABLE vs QUIET (source/fetch!). While the stream is not connected
-  — never established, or dropped and not yet reconnected — fetch! throws
-  ::unreachable so the poll loop's backoff engages (adsb.ingest.poll). A
-  connected-but-silent feed is NOT unreachable: fetch! returns the current
-  snapshot, which ages out on its own as the silence lengthens. The reader
-  reconnects after a drop, so a transient outage self-heals into a fetch!
-  that stops throwing.
-
-  THE DELTA HOOK is `:on-delta`, an OPTIONAL capability in the Metadata
-  mould (adsb.ingest.source): a fn of [merged-aircraft now-ms] fired
-  after every accumulate with the aircraft's FULL post-merge state — the
-  seam the composition root uses to push each message to SSE clients the
-  instant it lands (adsb-jpf, adsb.stream.broadcast/offer-delta!).
-  Sources that take no hook (fn-source, replay, ultrafeeder — and any
-  streaming Source constructed without one) need nothing: accumulate!
-  no-ops on a nil hook. The hook RUNS ON THE READER THREAD, so it must
-  never block; production hands off through a bounded queue and drops
-  under pressure rather than stall the radio.
-
-  THE MESSAGE COUNT is the streaming Sources' answer to the ultrafeeder
-  payload's cumulative `messages` field (adsb.ingest.source/Metadata): a
-  counter accumulate! advances once per decoded message, which
-  adsb.stats differences into a rate exactly as it does the poll source's
-  (adsb-3mw). A streaming reader sees every individual message, so it is
-  better placed to count than the poll source ever was; each Source
-  exposes the tally through last-metadata below."
   (:require [adsb.accumulator :as accumulator]
             [adsb.ingest.plausibility :as plausibility]
             [clojure.tools.logging :as log])
   (:import (java.net InetSocketAddress Socket)))
 
 (def ^:const default-connect-timeout-ms 5000)
+(def ^:const default-reconnect-ms 1000)
+(def ^:const default-idle-timeout-ms 60000)
+(def ^:const default-sweep-interval-ms 60000)
 
-(def ^:const default-reconnect-ms
-  "How long the reader waits before re-dialing a dropped connection. The
-  poll loop backs off on its own while fetch! throws; this just keeps the
-  reader from hot-looping a refused connection."
-  1000)
-
-(def ^:const default-idle-timeout-ms
-  "How long a connected stream may fall totally silent before the reader
-  treats it as dead and reconnects. A live SBS/Beast feed emits many
-  messages a second, so a full minute of silence means the transport (or,
-  through the tunnel, the tunnel) has gone away without closing the
-  socket — the stall this timeout exists to surface."
-  60000)
-
-(def ^:const default-sweep-interval-ms
-  "How often the reader drops what has aged out of the state it carries —
-  the picture atom here, and cpr-state in the Beast reader. Both retire
-  an aircraft at the age-out threshold, so sweeping a minute at a time
-  keeps the eviction close behind it without putting a scan of the whole
-  picture in the path of every message."
-  60000)
-
-(defn sweep-due?
-  "true when a sweep stamped `swept-at-ms` (nil = never swept) is due at
-  now-ms. Pure: the caller stamps and keeps the new time, whether in an
-  atom (the picture) or threaded through its read loop (cpr-state)."
-  [swept-at-ms now-ms]
+(defn sweep-due? [swept-at-ms now-ms]
   (or (nil? swept-at-ms)
       (<= default-sweep-interval-ms (- now-ms swept-at-ms))))
 
-;; ---------------------------------------------------------------------
-;; The default transport: a plain TCP socket
-
-(defn close-quietly!
-  "Close a Closeable, swallowing any failure — used to abort a blocked
-  read, where the underlying resource may already be gone."
-  [closeable]
+(defn close-quietly! [closeable]
   (try
     (some-> closeable .close)
-    (catch Throwable _ nil)))
+    (catch Throwable _)))
 
-(defn socket-transport
-  "The default `:transport`: dial a plain TCP socket to host:port within
-  the connect timeout and return the shared connection map {:in :close!}.
-  SO_TIMEOUT is set to :idle-timeout-ms so a read that hears nothing for
-  that long throws SocketTimeoutException — the stall signal
-  serve-connection! turns into a drop and reconnect. Throws if the socket
-  cannot be opened."
-  [host port {:keys [connect-timeout-ms idle-timeout-ms]}]
+(defn socket-transport [host port {:keys [connect-timeout-ms idle-timeout-ms]}]
   (let [socket (doto (Socket.)
                  (.connect (InetSocketAddress. ^String host (int port))
                            (int connect-timeout-ms))
@@ -122,66 +26,22 @@
     {:in     (.getInputStream socket)
      :close! #(close-quietly! socket)}))
 
-;; ---------------------------------------------------------------------
-;; Connection plumbing
-
-(defn- close-connection!
-  "Run a connection's :close! step, swallowing any failure — safe to call
-  more than once (an already-closed transport is a no-op)."
-  [connection]
+(defn- close-connection! [connection]
   (try
     (some-> connection :close! (as-> close! (close!)))
-    (catch Throwable _ nil)))
+    (catch Throwable _)))
 
-(defn- sleep-quietly!
-  "Sleep ms, returning nil early (not throwing) if the thread is
-  interrupted — close! interrupts the reader to abort a reconnect wait."
-  [ms]
+(defn- sleep-quietly! [ms]
   (try
     (Thread/sleep (long ms))
-    (catch InterruptedException _ nil)))
+    (catch InterruptedException _)))
 
-;; ---------------------------------------------------------------------
-;; The accumulate step the format pumps share
-
-(defn- sweep-picture!
-  "Evict the aged-out aircraft from the picture, at most once every
-  default-sweep-interval-ms.
-
-  accumulator/snapshot hides an aged-out aircraft from every fetch!, but
-  the atom behind it kept every ICAO the process had ever heard — a busy
-  site hears thousands of airframes a day, and the reader runs for weeks
-  (adsb-gq3). Swept BEFORE the fold, so a returning aircraft merges into
-  nothing rather than into its own stale entry. Only the reader thread
-  calls this, so the read-then-stamp of :swept-at-ms needs no CAS."
-  [{:keys [picture swept-at-ms]} now-ms]
+(defn- sweep-picture! [{:keys [picture swept-at-ms]} now-ms]
   (when (sweep-due? @swept-at-ms now-ms)
     (reset! swept-at-ms now-ms)
     (swap! picture accumulator/sweep now-ms)))
 
-(defn accumulate!
-  "Fold one coerced delta, heard at now-ms, into the Source's picture —
-  FLAGGING IMPOSSIBLE POSITION JUMPS against the aircraft's previous
-  entry as it goes (adsb.ingest.plausibility/accumulate-flagging-jumps,
-  adsb-b36) — then hand the aircraft's FULL MERGED post-accumulate state
-  to the optional :on-delta hook (ns docstring).
-
-  Also the count step: every format pump reaches this fold once per
-  message it decodes, so the message counter (ns docstring) is advanced
-  here rather than in each pump.
-
-  The flagging belongs to this fold and not to the hook's far end: the
-  hook receives an aircraft already merged, its previous position gone,
-  and it feeds a fast lane (offer-delta!) that never consults the state
-  store. Flag here and the mark rides every upsert the aircraft's stream
-  produces, and every snapshot fetch! takes.
-
-  Runs on the reader thread — the try is load-bearing: a hook that throws
-  must cost that one notification, never the connection, or a broken
-  subscriber would turn every message into a reconnect. The reader also
-  sweeps the picture here (sweep-picture!), on the interval, since this
-  is the one step every format pump shares."
-  [{:keys [picture on-delta messages] :as state} delta now-ms]
+(defn accumulate! [{:keys [picture on-delta messages] :as state} delta now-ms]
   (sweep-picture! state now-ms)
   (swap! messages inc)
   (let [merged (-> (swap! picture plausibility/accumulate-flagging-jumps
@@ -193,25 +53,7 @@
         (catch Throwable e
           (log/error e "on-delta hook threw; delta not propagated"))))))
 
-;; ---------------------------------------------------------------------
-;; The reader thread: dial via :transport, pump via :consume!, reconnect
-;; on drop.
-
 (defn- serve-connection!
-  "Dial the feed through :transport and run its :consume! pump on the
-  connection's InputStream until the connection ends. Marks the Source
-  connected on success and disconnected on the way out, closing the
-  connection and storing any failure for fetch! to surface. Never throws.
-
-  A close! landing MID-DIAL is the case the running? check exists for
-  (adsb-12j). close! closes the connection it can see — which, mid-dial,
-  is still the old one (nil) — and interrupts the reader; but a dial is
-  not interrupt-responsive (Socket.connect ignores the flag outright), so
-  it completes anyway and hands back a live connection nobody is left to
-  close. Pumping it would then hold the socket open until the next message
-  or the 60s idle timeout, well after the Source was told to stop. Storing
-  the connection BEFORE the check and closing in the finally means the
-  fresh socket is released whichever side of the check the dial lands on."
   [{:keys [host port connect-timeout-ms idle-timeout-ms transport consume!
            running? connected? last-error connection] :as state}]
   (try
@@ -228,11 +70,7 @@
       (reset! connected? false)
       (close-connection! @connection))))
 
-(defn- run-reader!
-  "The reader thread's body: serve the connection, and while the Source is
-  still open, wait and reconnect after it ends. A dropped connection
-  therefore self-heals without the poll loop re-opening the Source."
-  [{:keys [running? reconnect-ms] :as state}]
+(defn- run-reader! [{:keys [running? reconnect-ms] :as state}]
   (loop []
     (when @running?
       (serve-connection! state)
@@ -246,48 +84,21 @@
     (.start thread)
     thread))
 
-;; ---------------------------------------------------------------------
-;; The Source lifecycle — shared open!/fetch!/close! bodies. Each Source's
-;; protocol methods delegate here; the record is the reader state map.
-
-(defn open!
-  "Start the reader thread and return the ready Source. Called once before
-  the first fetch!."
-  [{:keys [running? reader-thread] :as state}]
+(defn open! [{:keys [running? reader-thread] :as state}]
   (reset! running? true)
   (reset! reader-thread (start-reader! state))
   state)
 
-(defn snapshot-or-throw!
-  "fetch!: the current accumulator snapshot while connected (a live but
-  silent feed still yields its aging snapshot), or an ::unreachable
-  ex-info while disconnected so the poll loop backs off."
-  [{:keys [connected? picture clock last-error host port]}]
+(defn snapshot-or-throw! [{:keys [connected? picture clock last-error host port]}]
   (if @connected?
     (accumulator/snapshot @picture (clock))
     (throw (ex-info "TCP feed unreachable"
                     {:type ::unreachable :host host :port port}
                     @last-error))))
 
-(defn last-metadata
-  "Metadata (adsb.ingest.source/Metadata): {:messages n}, the messages this
-  reader has decoded since the Source was constructed.
+(defn last-metadata [{:keys [messages]}] {:messages @messages})
 
-  CUMULATIVE AND MONOTONIC, exactly like the ultrafeeder payload's counter,
-  because that is the shape adsb.stats/compute! differences into a rate — a
-  count that reset on each reconnect would read as a feeder restart and
-  blank the rate every time the tunnel hiccuped. It counts DECODED messages,
-  not bytes or lines: a stream of pure garbage folds nothing and so reports
-  no rate, which is the honest answer for :feeder/silent-frames (a radio
-  hearing only noise is not hearing)."
-  [{:keys [messages]}]
-  {:messages @messages})
-
-(defn close!
-  "Stop the reader and close the connection. Interrupts the reader so a
-  blocked read or reconnect wait aborts at once. Called once after the last
-  fetch!."
-  [{:keys [running? connection reader-thread] :as state}]
+(defn close! [{:keys [running? connection reader-thread] :as state}]
   (reset! running? false)
   (close-connection! @connection)
   (some-> ^Thread @reader-thread .interrupt)
@@ -318,11 +129,11 @@
                          docstring; adsb-jpf). Default nil — no hook."
   [host port {:keys [transport connect-timeout-ms idle-timeout-ms
                      reconnect-ms clock on-delta]
-              :or   {transport           socket-transport
-                     connect-timeout-ms  default-connect-timeout-ms
-                     idle-timeout-ms     default-idle-timeout-ms
-                     reconnect-ms        default-reconnect-ms
-                     clock               #(System/currentTimeMillis)}}
+              :or   {transport          socket-transport
+                     connect-timeout-ms default-connect-timeout-ms
+                     idle-timeout-ms    default-idle-timeout-ms
+                     reconnect-ms       default-reconnect-ms
+                     clock              #(System/currentTimeMillis)}}
    consume! thread-name]
   {:host               host
    :port               port

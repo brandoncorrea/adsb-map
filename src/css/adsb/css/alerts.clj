@@ -1,10 +1,4 @@
 (ns adsb.css.alerts
-  "The NOTAM strip (§7) — the loudest chrome the app owns.
-
-  Sits directly under the header, spanning the shell, while ANY aircraft
-  squawks distress. Every emergency STACKS as its own row rather than cycling
-  behind a timer. Grave, drawn once: red field, plain mono language, a stamped
-  NOTAM tab — and ZERO motion. Ink does not blink."
   (:require [adsb.css.decl :refer [decl]]))
 
 (def styles

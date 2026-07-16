@@ -1,27 +1,15 @@
 (ns adsb.geo-test
-  (:require
-    [adsb.aircraft :as aircraft]
-    [adsb.fixtures :as fixtures]
-    [adsb.geo :as geo]
-    ;; The whole-fixture test needs file I/O, so it is JVM-only — as are
-    ;; the requires that exist solely to serve it.
-    #?@(:clj [[adsb.ingest.coerce :as coerce]
-              [cheshire.core :as json]])
-    #?(:clj  [clojure.test :refer [deftest testing is]]
-       :cljs [cljs.test :refer-macros [deftest testing is]])))
+  (:require [adsb.aircraft :as aircraft]
+            [adsb.fixtures :as fixtures]
+            [adsb.geo :as geo]
+            [clojure.test :refer [deftest testing is]]
+            #?@(:clj [[adsb.ingest.coerce :as coerce]
+                      [cheshire.core :as json]])))
 
-(defn- close?
-  "Within `tol` of `expected` — floating-point geo math never lands on a
-  literal, so assertions are tolerance-based."
-  [expected actual tol]
+(defn- close? [expected actual tol]
   (< (abs (- expected actual)) tol))
 
-;; A degree of longitude at the equator, in meters — the haversine of
-;; two points one degree apart along the equator (R * pi / 180).
 (def ^:private equator-degree-m 111194.9)
-
-;; ---------------------------------------------------------------------
-;; Great-circle math against published real-world values
 
 (deftest distance-haversine
   (testing "Cambridge -> Paris matches the published great-circle 404 km
@@ -54,24 +42,18 @@
                              {:geo/lat 48.857 :geo/lon 2.351})
                 0.5)))
 
-  (testing "the four cardinal directions from the origin, normalized to
-            [0, 360)"
+  (testing "the four cardinal directions from the origin, normalized to [0, 360)"
     (let [origin {:geo/lat 0 :geo/lon 0}]
-      (is (close? 0   (geo/bearing origin {:geo/lat 1 :geo/lon 0}) 0.01))
-      (is (close? 90  (geo/bearing origin {:geo/lat 0 :geo/lon 1}) 0.01))
+      (is (close? 0 (geo/bearing origin {:geo/lat 1 :geo/lon 0}) 0.01))
+      (is (close? 90 (geo/bearing origin {:geo/lat 0 :geo/lon 1}) 0.01))
       (is (close? 180 (geo/bearing origin {:geo/lat -1 :geo/lon 0}) 0.01))
       (is (close? 270 (geo/bearing origin {:geo/lat 0 :geo/lon -1}) 0.01)))))
-
-;; ---------------------------------------------------------------------
-;; Spherical destination — travel a distance along a bearing
 
 (deftest destination-known-values
   (testing "the canonical Movable-Type worked example: 124.8 km on an
             initial bearing of 96°01′18″ from 53°19′14″N 1°43′47″W lands
             at 53°11′18″N 0°08′00″E"
-    (let [reached (geo/destination {:geo/lat 53.320556 :geo/lon -1.729722}
-                                   96.021667
-                                   124800)]
+    (let [reached (geo/destination {:geo/lat 53.320556 :geo/lon -1.729722} 96.021667 124800)]
       (is (close? 53.18833 (:geo/lat reached) 0.001))
       (is (close? 0.13333 (:geo/lon reached) 0.001))))
 
@@ -87,8 +69,7 @@
 
   (testing "zero distance goes nowhere"
     (let [from {:geo/lat 27.961166 :geo/lon -83.975953}]
-      (is (close? 0 (geo/distance from (geo/destination from 97.14 0))
-                  0.001))))
+      (is (close? 0 (geo/distance from (geo/destination from 97.14 0)) 0.001))))
 
   (testing "destination inverts distance + bearing: going the measured
             distance on the measured bearing reaches the measured point"
@@ -112,9 +93,6 @@
     (is (close? 231.757 (geo/knots->mps 450.5) 0.01))
     (is (zero? (geo/knots->mps 0)))))
 
-;; ---------------------------------------------------------------------
-;; Bounds
-
 (deftest bounds-box
   (testing "the box spans the extremes of a seq of positions"
     (is (= {:geo/min-lat 10 :geo/max-lat 40
@@ -132,20 +110,16 @@
     (is (nil? (geo/bounds [])))
     (is (nil? (geo/bounds nil)))))
 
-;; ---------------------------------------------------------------------
-;; The viewport edge annotation (§7's off-screen arrow, Q13c)
-
-;; A square-ish regional viewport around the app's default centre:
-;; centre (28, -82), one degree of half-span each way.
 (def ^:private viewport
-  {:geo/min-lat 27.0 :geo/max-lat 29.0
-   :geo/min-lon -83.0 :geo/max-lon -81.0})
+  {:geo/min-lat 27.0
+   :geo/max-lat 29.0
+   :geo/min-lon -83.0
+   :geo/max-lon -81.0})
 
 (deftest edge-annotation-known-geometry
   (testing "a target INSIDE the viewport needs no arrow"
     (is (nil? (geo/edge-annotation viewport {:geo/lat 28.0 :geo/lon -82.0})))
-    (is (nil? (geo/edge-annotation viewport {:geo/lat 28.9 :geo/lon -81.1}))
-        "inside near a corner is still inside"))
+    (is (nil? (geo/edge-annotation viewport {:geo/lat 28.9 :geo/lon -81.1}))))
 
   (testing "a target due NORTH exits through the top edge's midpoint,
             bearing 0 along the meridian"
@@ -169,13 +143,10 @@
 
   (testing "the tighter half-span wins: a target far east and a little
             north pins to the RIGHT edge, part-way up"
-    ;; fractions: x = 2.5, y = 0.25 -> dx = 2.0, dy = -0.25;
-    ;; t = min(0.5/2.0, 0.5/0.25) = 0.25 -> edge (1.0, 0.4375).
     (let [edge (geo/edge-annotation viewport {:geo/lat 28.5 :geo/lon -78.0})]
       (is (close? 1.0 (:edge/x edge) 1e-9))
       (is (close? 0.4375 (:edge/y edge) 1e-9))
-      (is (< 80 (:edge/bearing-deg edge) 90)
-          "east and slightly north of the centre")))
+      (is (< 80 (:edge/bearing-deg edge) 90))))
 
   (testing "the distance is the great-circle distance from the viewport
             centre, so the arrow's label agrees with geo/distance"
@@ -189,11 +160,9 @@
             reads in the viewport's frame, not 360° away"
     (let [across {:geo/min-lat 27.0 :geo/max-lat 29.0
                   :geo/min-lon 178.0 :geo/max-lon 182.0}]
-      (is (nil? (geo/edge-annotation across {:geo/lat 28.0 :geo/lon -179.0}))
-          "lon -179 IS 181 in this viewport — inside, no arrow")
+      (is (nil? (geo/edge-annotation across {:geo/lat 28.0 :geo/lon -179.0})))
       (let [edge (geo/edge-annotation across {:geo/lat 28.0 :geo/lon -175.0})]
-        (is (close? 1.0 (:edge/x edge) 1e-9)
-            "lon -175 is 185 here — off the right edge"))))
+        (is (close? 1.0 (:edge/x edge) 1e-9)))))
 
   (testing "a degenerate viewport has no edge worth annotating"
     (is (nil? (geo/edge-annotation
@@ -201,22 +170,15 @@
                  :geo/min-lon -82.0 :geo/max-lon -82.0}
                 {:geo/lat 31.0 :geo/lon -82.0})))))
 
-;; ---------------------------------------------------------------------
-;; Domain aircraft -> GeoJSON
-
 (def cruising
-  "A positioned, airborne aircraft — the common case."
-  {:aircraft/icao "abc0e4"
-   :aircraft/callsign "UPS2717"
-   :aircraft/position {:geo/lat 27.961166 :geo/lon -83.975953}
+  {:aircraft/icao        "abc0e4"
+   :aircraft/callsign    "UPS2717"
+   :aircraft/position    {:geo/lat 27.961166 :geo/lon -83.975953}
    :aircraft/altitude-ft 34775
-   :aircraft/track-deg 97.14
-   :aircraft/squawk "6040"})
+   :aircraft/track-deg   97.14
+   :aircraft/squawk      "6040"})
 
-(def bare-mode-s
-  "A heard-but-never-positioned target — belongs in the sidebar, gets no
-  feature."
-  {:aircraft/icao "a10202"})
+(def bare-mode-s {:aircraft/icao "a10202"})
 
 (deftest aircraft->feature-geometry
   (testing "a positioned aircraft becomes a Point Feature with [lon lat]
@@ -253,7 +215,6 @@
                        (dissoc cruising :aircraft/altitude-ft) 0))]
       (is (= "ground" (:altitude ground)))
       (is (= 34775 (:altitude airborne)))
-      ;; Absent must be absent — not 0, not "ground", not nil-in-the-map.
       (is (not (contains? unknown :altitude)))))
 
   (testing "an absent callsign or track is omitted, never defaulted"
@@ -281,8 +242,7 @@
             the category is simply omitted, and the style layer reads that
             absence as the generic plane. No aircraft goes undrawn for
             want of a classification."
-    (let [feature (geo/aircraft->feature
-                    (dissoc fixtures/ups-2717 :aircraft/category) 0)]
+    (let [feature (geo/aircraft->feature (dissoc fixtures/ups-2717 :aircraft/category) 0)]
       (is (some? feature))
       (is (= "abc0e4" (:icao (:properties feature))))
       (is (not (contains? (:properties feature) :category))))))
@@ -291,37 +251,31 @@
   (testing "the three distress squawks each mark the aircraft as an
             emergency"
     (doseq [code ["7500" "7600" "7700"]]
-      (is (true? (:emergency
-                   (:properties
-                     (geo/aircraft->feature
-                       (assoc cruising :aircraft/squawk code) 0))))
-          (str code " must read as an emergency"))))
+      (is (-> (assoc cruising :aircraft/squawk code)
+              (geo/aircraft->feature 0)
+              :properties
+              :emergency))))
 
   (testing "an ordinary squawk, and an absent one, are not emergencies"
-    (is (false? (:emergency (:properties
-                              (geo/aircraft->feature cruising 0)))))
-    (is (false? (:emergency
-                  (:properties
-                    (geo/aircraft->feature
-                      (dissoc cruising :aircraft/squawk) 0)))))))
+    (is (not (:emergency (:properties (geo/aircraft->feature cruising 0)))))
+    (is (not (-> (dissoc cruising :aircraft/squawk)
+                 (geo/aircraft->feature 0)
+                 :properties
+                 :emergency)))))
 
 (deftest stale-property
   (let [heard (assoc cruising :aircraft/seen-at-ms 0)]
     (testing "stale is derived from the now-ms argument, not a clock"
-      (is (false? (:stale
-                    (:properties
-                      (geo/aircraft->feature
-                        heard aircraft/stale-threshold-ms)))))
-      (is (true? (:stale
-                   (:properties
-                     (geo/aircraft->feature
-                       heard (inc aircraft/stale-threshold-ms)))))))
+      (is (not (-> (geo/aircraft->feature heard aircraft/stale-threshold-ms)
+                   :properties
+                   :stale)))
+      (is (-> (geo/aircraft->feature heard (inc aircraft/stale-threshold-ms))
+              :properties
+              :stale)))
 
     (testing "an aircraft with no receive time carries no stale property —
               there is nothing to judge"
-      (is (not (contains?
-                 (:properties (geo/aircraft->feature cruising 0))
-                 :stale))))))
+      (is (not (contains? (:properties (geo/aircraft->feature cruising 0)) :stale))))))
 
 (deftest age-property
   (let [heard (assoc cruising :aircraft/seen-at-ms 0)]
@@ -346,37 +300,25 @@
 (deftest mlat-property
   (testing "a multilaterated aircraft carries :mlat true so the style can
             demote its lower-confidence position"
-    (is (true? (:mlat (:properties
-                        (geo/aircraft->feature fixtures/mlat-derived 0))))))
+    (is (:mlat (:properties (geo/aircraft->feature fixtures/mlat-derived 0)))))
 
   (testing "a self-reporting ADS-B aircraft omits :mlat entirely — absent,
             never false"
-    (is (not (contains?
-               (:properties (geo/aircraft->feature fixtures/ups-2717 0))
-               :mlat)))))
-
-;; ---------------------------------------------------------------------
-;; Client-side age-out: the long-silent cast member is the acceptance
-;; test. seen-at-ms is stamped by merge-batch, so we age the fixture
-;; through the real boundary rather than hand-write the receive time.
+    (is (not (contains? (:properties (geo/aircraft->feature fixtures/ups-2717 0)) :mlat)))))
 
 (deftest aged-out-aircraft-produce-no-feature
-  ;; Stamp a plane at the age-out line via the real merge boundary, then
-  ;; judge features at that same instant and one ms past it (adsb-rg1:
-  ;; threshold is 2 min; long-silent's 300 s is well past and still ages out).
-  (let [captured 1720713600000
-        at-line  (assoc fixtures/ups-2717
-                        :aircraft/seen-s
-                        (/ aircraft/age-out-threshold-ms 1000))
-        picture  (aircraft/merge-batch {} [at-line] captured)
-        planes   (vals picture)
+  (let [captured    1720713600000
+        at-line     (assoc fixtures/ups-2717
+                      :aircraft/seen-s
+                      (/ aircraft/age-out-threshold-ms 1000))
+        picture     (aircraft/merge-batch {} [at-line] captured)
+        planes      (vals picture)
         threshold-s (quot aircraft/age-out-threshold-ms 1000)]
     (testing "at the age-out line the aircraft still renders — faded, not gone"
       (let [coll     (geo/aircraft-picture->feature-collection planes captured)
             features (:features coll)]
         (is (= 1 (count features)))
-        (is (= threshold-s (:age-s (:properties (first features))))
-            "aged to the age-out line, where the fade bottoms out")))
+        (is (= threshold-s (:age-s (:properties (first features)))))))
 
     (testing "one millisecond past the age-out line it produces no feature —
               the client drops it even if the server has not yet"
@@ -407,14 +349,11 @@
     (is (= {:type "FeatureCollection" :features []}
            (geo/aircraft-picture->feature-collection [] 0)))))
 
-;; ---------------------------------------------------------------------
-;; Real fixture through coerce — positioned count in == features out
-
 #?(:clj
    (deftest real-fixture-round-trip
-     (let [payload (json/parse-string
-                     (slurp "test/resources/aircraft-sample.json") true)
-           batch   (coerce/->aircraft-batch (:aircraft payload))
+     (let [payload    (json/parse-string
+                        (slurp "test/resources/aircraft-sample.json") true)
+           batch      (coerce/->aircraft-batch (:aircraft payload))
            collection (geo/aircraft-picture->feature-collection batch 0)
            positioned (count (filter :aircraft/position batch))]
 
@@ -436,8 +375,7 @@
               which is what makes it a GEODESIC circle and not a planar one
               that sags with latitude"
       (doseq [p (geo/circle center radius)]
-        (is (< (abs (- (geo/distance center p) radius)) 1.0)
-            "vertex is within a metre of the declared radius")))
+        (is (< (abs (- (geo/distance center p) radius)) 1.0))))
 
     (testing "the ring is CLOSED — GeoJSON requires a LinearRing's first and
               last positions to be identical, and MapLibre drops a ring that

@@ -1,22 +1,14 @@
 (ns adsb.http.security-test
-  "The security headers ship from the APP, not the edge. These tests go
-  through the real assembled handler (adsb.http.routes/handler), because
-  the thing worth proving is not that a middleware function works — it is
-  that the headers actually reach a 404 and a static asset, the two
-  responses most likely to be forgotten when the policy lives in a proxy
-  config nobody re-reads."
-  (:require
-    [adsb.http.routes :as routes]
-    [adsb.http.security :as security]
-    [adsb.http.server :as server]
-    [clojure.java.io :as io]
-    [clojure.string :as str]
-    [clojure.test :refer [deftest testing is]]
-    [org.httpkit.client :as http]
-    [org.httpkit.server :as http-kit]))
+  (:require [adsb.http.routes :as routes]
+            [adsb.http.security :as security]
+            [adsb.http.server :as server]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
+            [org.httpkit.client :as http]
+            [org.httpkit.server :as http-kit]))
 
-(defn- response-for
-  [request]
+(defn- response-for [request]
   ((routes/handler {}) request))
 
 (defn- header-names [response]
@@ -59,11 +51,6 @@
   #"@font-face\s*\{[^}]*?url\(\s*[\"']?([^\"')]+)")
 
 (deftest the-policy-matches-the-fonts-the-app-actually-loads
-  ;; The regression this exists for: the §5 faces were self-hosted (Space
-  ;; Mono, Space Grotesk) AFTER this policy was first written, and under
-  ;; `default-src 'none'` with no font-src every one of them is refused —
-  ;; a failure a health check never sees and a test that only asserts a
-  ;; string would never have caught. So assert against the CSS itself.
   (let [css   (slurp (io/resource "public/app.css"))
         faces (map second (re-seq font-face-url css))]
     (testing "the stylesheet does host faces of its own, and they are

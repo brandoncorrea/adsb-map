@@ -1,7 +1,7 @@
 (ns adsb.ingest.source-test
-  (:require
-    [adsb.ingest.source :as source]
-    [clojure.test :refer [deftest testing is]]))
+  (:require [adsb.ingest.source :as source]
+            [clojure.test :refer [deftest is testing]])
+  (:import (clojure.lang ExceptionInfo)))
 
 (deftest fn-source-holds-the-seam
   (testing "a function-backed Source implements open!/fetch!/close!"
@@ -21,4 +21,4 @@
 (deftest fn-source-propagates-throws
   (testing "a Source that cannot reach its feed throws out of fetch!"
     (let [src (source/fn-source (fn [] (throw (ex-info "down" {}))))]
-      (is (thrown? clojure.lang.ExceptionInfo (source/fetch! src))))))
+      (is (thrown? ExceptionInfo (source/fetch! src))))))

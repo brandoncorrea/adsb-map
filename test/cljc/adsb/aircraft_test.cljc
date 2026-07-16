@@ -1,18 +1,11 @@
 (ns adsb.aircraft-test
-  (:require
-    [adsb.aircraft :as aircraft]
-    [adsb.fixtures :as fixtures]
-    #?(:clj  [clojure.test :refer [deftest testing is]]
-       :cljs [cljs.test :refer-macros [deftest testing is]])))
+  (:require [adsb.aircraft :as aircraft]
+            [adsb.fixtures :as fixtures]
+            [clojure.test :refer [deftest is testing]]))
 
 (def ^:private captured-at-ms 1720713600000)
-
-;; The cast's domain identities, so assertions read as lookups rather
-;; than repeated magic hex strings. ups-2717 arrives with seen 0.4,
-;; long-silent with seen 300 (see adsb.fixtures).
 (def ^:private ups-icao (:aircraft/icao fixtures/ups-2717))
-(def ^:private never-positioned-icao
-  (:aircraft/icao fixtures/never-positioned))
+(def ^:private never-positioned-icao (:aircraft/icao fixtures/never-positioned))
 (def ^:private long-silent-icao (:aircraft/icao fixtures/long-silent))
 
 (deftest stale?
@@ -37,9 +30,9 @@
     (is (aircraft/emergency? {:aircraft/squawk "7500"}))
     (is (aircraft/emergency? {:aircraft/squawk "7600"}))
     (is (aircraft/emergency? {:aircraft/squawk "7700"}))
-    (is (= :hijack        (aircraft/squawk->emergency-kind "7500")) "7500 is a hijack")
-    (is (= :radio-failure (aircraft/squawk->emergency-kind "7600")) "7600 is a comms failure")
-    (is (= :general       (aircraft/squawk->emergency-kind "7700")) "7700 is a general emergency"))
+    (is (= :hijack (aircraft/squawk->emergency-kind "7500")))
+    (is (= :radio-failure (aircraft/squawk->emergency-kind "7600")))
+    (is (= :general (aircraft/squawk->emergency-kind "7700"))))
 
   (testing "the squawking-7700 cast member is a general emergency, through
             the real ingest boundary"
@@ -60,8 +53,7 @@
     (let [picture (aircraft/merge-batch {} [fixtures/ups-2717]
                                         captured-at-ms)]
       (is (= [ups-icao] (keys picture)))
-      (is (= "UPS2717"
-             (get-in picture [ups-icao :aircraft/callsign])))))
+      (is (= "UPS2717" (get-in picture [ups-icao :aircraft/callsign])))))
 
   (testing "the observation instant is capture time minus the feeder's seen"
     (let [picture (aircraft/merge-batch {} [fixtures/long-silent]
@@ -84,8 +76,7 @@
                        (dissoc :aircraft/seen-s)
                        (assoc :aircraft/seen-at-ms heard-at))
           picture  (aircraft/merge-batch {} [streamed] captured-at-ms)]
-      (is (= heard-at
-             (get-in picture [ups-icao :aircraft/seen-at-ms])))))
+      (is (= heard-at (get-in picture [ups-icao :aircraft/seen-at-ms])))))
 
   (testing "a streamed aircraft silent past the threshold ages out of the
             merged picture — its true stamp, not the capture instant, is
@@ -107,21 +98,21 @@
 
   (testing "a field the feeder stopped reporting goes absent, not stale"
     (let [altitude-less (dissoc fixtures/ups-2717 :aircraft/altitude-ft)
-          picture (-> {}
-                      (aircraft/merge-batch [fixtures/ups-2717]
-                                            captured-at-ms)
-                      (aircraft/merge-batch [altitude-less]
-                                            (+ captured-at-ms 1000)))]
+          picture       (-> {}
+                            (aircraft/merge-batch [fixtures/ups-2717]
+                                                  captured-at-ms)
+                            (aircraft/merge-batch [altitude-less]
+                                                  (+ captured-at-ms 1000)))]
       (is (not (contains? (get picture ups-icao)
                           :aircraft/altitude-ft)))))
 
   (testing "last-known position is retained across a position-less update"
     (let [position-less (dissoc fixtures/ups-2717 :aircraft/position)
-          picture (-> {}
-                      (aircraft/merge-batch [fixtures/ups-2717]
-                                            captured-at-ms)
-                      (aircraft/merge-batch [position-less]
-                                            (+ captured-at-ms 1000)))]
+          picture       (-> {}
+                            (aircraft/merge-batch [fixtures/ups-2717]
+                                                  captured-at-ms)
+                            (aircraft/merge-batch [position-less]
+                                                  (+ captured-at-ms 1000)))]
       (is (= (:aircraft/position fixtures/ups-2717)
              (get-in picture [ups-icao :aircraft/position])))))
 
@@ -129,8 +120,7 @@
     (let [picture (aircraft/merge-batch {} [fixtures/never-positioned]
                                         captured-at-ms)]
       (is (contains? picture never-positioned-icao))
-      (is (not (aircraft/positioned?
-                 (get picture never-positioned-icao))))))
+      (is (not (aircraft/positioned? (get picture never-positioned-icao))))))
 
   (testing "no position is fabricated for a never-positioned aircraft"
     (let [picture (-> {}
@@ -138,8 +128,7 @@
                                             captured-at-ms)
                       (aircraft/merge-batch [fixtures/never-positioned]
                                             (+ captured-at-ms 1000)))]
-      (is (not (aircraft/positioned?
-                 (get picture never-positioned-icao))))))
+      (is (not (aircraft/positioned? (get picture never-positioned-icao))))))
 
   (testing "an aircraft missing from one poll is retained, not removed"
     (let [picture (-> {}
@@ -154,13 +143,12 @@
   (let [picture (aircraft/merge-batch {} [fixtures/ups-2717
                                           fixtures/long-silent]
                                       captured-at-ms)
-        ;; A plane stamped at exactly the age-out line (adsb-rg1: 2 min).
         at-line (aircraft/merge-batch
                   {}
                   [(assoc fixtures/ups-2717
-                          :aircraft/icao "aaedge"
-                          :aircraft/seen-s
-                          (/ aircraft/age-out-threshold-ms 1000.0))]
+                     :aircraft/icao "aaedge"
+                     :aircraft/seen-s
+                     (/ aircraft/age-out-threshold-ms 1000.0))]
                   captured-at-ms)]
     (testing "the long-silent aircraft (well past the line) ages out"
       (let [aged (aircraft/age-out picture (inc captured-at-ms))]

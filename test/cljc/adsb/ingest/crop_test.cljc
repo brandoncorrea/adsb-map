@@ -1,48 +1,31 @@
 (ns adsb.ingest.crop-test
-  (:require
-    [adsb.fixtures :as fixtures]
-    [adsb.geo :as geo]
-    [adsb.ingest.crop :as crop]
-    #?(:clj  [clojure.test :refer [deftest testing is]]
-       :cljs [cljs.test :refer-macros [deftest testing is]])))
+  (:require [adsb.fixtures :as fixtures]
+            [adsb.geo :as geo]
+            [adsb.ingest.crop :as crop]
+            [clojure.test :refer [deftest is testing]]))
 
-;; A DECOY centre, in the region of the cast but deliberately not the
-;; synthetic receiver position the plausibility tests use (28.0/-82.5).
-;; That is the whole contract: the crop centre is not the antenna.
 (def ^:private center {:geo/lat 27.9 :geo/lon -82.4})
-
-(def ^:private crop {:crop/center center :crop/radius-m 100000})   ; 100 km
+(def ^:private crop {:crop/center center :crop/radius-m 100000})
 
 (defn- at-position [aircraft position]
   (assoc aircraft :aircraft/position position))
 
-;; Due east of the centre, at a distance we choose per test.
 (defn- east-of-center [km]
   (geo/destination center 90 (* km geo/meters-per-km)))
 
-;; ---------------------------------------------------------------------
-;; The gate
-
 (deftest outside-crop?
   (testing "an aircraft at the centre is inside"
-    (is (false? (crop/outside-crop? (at-position fixtures/ups-2717 center)
-                                    crop))))
+    (is (not (crop/outside-crop? (at-position fixtures/ups-2717 center) crop))))
 
   (testing "just inside the radius is inside; just outside is outside —
             the boundary is the declared radius, nothing else"
-    (is (false? (crop/outside-crop?
-                  (at-position fixtures/ups-2717 (east-of-center 99))
-                  crop)))
-    (is (true? (crop/outside-crop?
-                 (at-position fixtures/ups-2717 (east-of-center 101))
-                 crop))))
+    (is (not (crop/outside-crop? (at-position fixtures/ups-2717 (east-of-center 99)) crop)))
+    (is (crop/outside-crop? (at-position fixtures/ups-2717 (east-of-center 101)) crop)))
 
   (testing "a POSITION-LESS aircraft is outside — we cannot place it
             inside the declared disc, and its bare presence in the feed
             still says this antenna hears it"
-    (is (true? (crop/outside-crop? (dissoc fixtures/ups-2717
-                                           :aircraft/position)
-                                   crop)))))
+    (is (crop/outside-crop? (dissoc fixtures/ups-2717 :aircraft/position) crop))))
 
 (deftest gate-crop
   (testing "keeps only what sits inside the disc"
@@ -59,17 +42,10 @@
     (is (= [] (crop/gate-crop [] crop)))
     (is (= [] (crop/gate-crop [] nil)))))
 
-;; ---------------------------------------------------------------------
-;; Configuration
-;;
-;; The failure that matters here is not a wrong crop, it is a crop that
-;; LOOKS configured and is off. Every partial/garbage case must throw
-;; rather than resolve to nil.
-
 (defn- env [lat lon radius-km]
   (cond-> {}
-          lat       (assoc crop/crop-lat-env lat)
-          lon       (assoc crop/crop-lon-env lon)
+          lat (assoc crop/crop-lat-env lat)
+          lon (assoc crop/crop-lon-env lon)
           radius-km (assoc crop/crop-radius-km-env radius-km)))
 
 (defn- throws? [f]
@@ -78,7 +54,7 @@
 
 (deftest env-crop
   (testing "all three set resolves to a crop, radius converted to metres"
-    (is (= {:crop/center {:geo/lat 27.9 :geo/lon -82.4}
+    (is (= {:crop/center   {:geo/lat 27.9 :geo/lon -82.4}
             :crop/radius-m 100000.0}
            (crop/env-crop (env "27.9" "-82.4" "100")))))
 

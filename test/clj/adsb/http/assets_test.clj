@@ -1,30 +1,24 @@
 (ns adsb.http.assets-test
-  "The caching policy (adsb-8cb). The measurements that forced this shape
-  are in the adsb.http.assets docstring; what is asserted here is the
-  behaviour those measurements demanded — a URL that names its bytes, a
-  document that is never stale, and a TTL only where a stale copy costs
-  nothing."
-  (:require
-    [adsb.http.assets :as assets]
-    [clojure.string :as str]
-    [clojure.test :refer [deftest testing is]]))
+  (:require [adsb.http.assets :as assets]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest testing is]]))
 
-(defn- stub-resources
-  "A resource handler stand-in: 200 for the paths it knows, nil for
-  anything else — nil being how the real one says 'no such file' and
-  lets the 404 default handler run."
-  [known]
+(defn- stub-resources [known]
   (fn [{:keys [uri]}]
     (when (contains? known uri)
       {:status 200 :headers {"Content-Type" "text/javascript"} :body uri})))
 
 (def ^:private handler
-  (assets/handler (stub-resources #{"/js/main.js" "/app.css" "/db/004.json"
-                                    "/glyphs/Space Mono Bold/0-255.pbf"
-                                    "/fonts/space-mono-400.woff2"})))
+  (-> #{"/js/main.js" "/app.css" "/db/004.json"
+        "/glyphs/Space Mono Bold/0-255.pbf"
+        "/fonts/space-mono-400.woff2"}
+      stub-resources
+      assets/handler))
 
 (defn- GET [uri]
-  (handler {:request-method :get :uri uri :headers {}}))
+  (handler {:request-method :get
+            :uri            uri
+            :headers        {}}))
 
 (deftest the-version-names-the-bytes
   (testing "the version is a hash of the asset CONTENTS, so it is stable
@@ -130,9 +124,9 @@
             resources/public. The tail is handed to the resource handler,
             which refuses to resolve outside the root — this asserts the
             rewrite does not hand it something already escaped"
-    (let [seen     (atom [])
+    (let [seen      (atom [])
           resources (fn [{:keys [uri]}] (swap! seen conj uri) nil)
-          handler  (assets/handler resources)]
+          handler   (assets/handler resources)]
       (handler {:request-method :get
                 :uri            "/assets/abc123/../../../deps.edn"
                 :headers        {}})

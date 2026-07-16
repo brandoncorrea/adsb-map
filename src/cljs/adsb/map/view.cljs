@@ -1,233 +1,68 @@
 (ns adsb.map.view
-  "The map, mounted and alive — a full-viewport MapLibre canvas. This
-  namespace owns the map options and the Reagent component that drives
-  the imperative map through the `adsb.map.maplibre` seam, and it wires
-  the aircraft layer's lifecycle (adsb.map.aircraft-layer) to the
-  component's own. The aircraft DATA never passes through here — the
-  layer reads the picture outside React entirely.
+  (:require [adsb.corejs :as cjs]
+            [adsb.map.aircraft-layer :as aircraft-layer]
+            [adsb.map.basemap :as basemap]
+            [adsb.map.crop :as crop]
+            [adsb.map.emergency :as emergency]
+            [adsb.map.follow :as follow]
+            [adsb.map.maplibre :as maplibre]
+            [adsb.map.selection :as selection]
+            [adsb.map.theme :as theme]
+            [adsb.worker :as worker]
+            [clojure.math :as math]
+            [re-frame.core :as rf]
+            [reagent.core :as r]))
 
-  ## The two printed editions
-
-  The basemap is not handed to MapLibre as a URL: the raw Liberty style
-  JSON is fetched ONCE (through the `load-style!` seam), and each mount
-  prints it in the current edition via adsb.map.basemap/edition-style —
-  day or night per the system theme (adsb.map.theme). When the system
-  scheme flips, the component tears the map and layer down and re-prints
-  them in the other edition: a theme flip is a rare, human-scale event,
-  and a clean re-print is honest about what it is — a different physical
-  chart — where MapLibre's setStyle would silently drop our sources and
-  layers and demand a re-wire anyway. The fetched JSON is cached in the
-  component, so a flip costs no network.
-
-  A new chart, but not a new reading: the camera is read off the dying map
-  and handed to the new one, and the boundary's opening frame is seeded as
-  already spent. The reader who has panned to an aircraft at zoom 12 sees
-  dusk change the ink, and nothing else (adsb-1rg)."
-  (:require
-    [adsb.map.aircraft-layer :as aircraft-layer]
-    [adsb.map.basemap :as basemap]
-    [adsb.map.crop :as crop]
-    [adsb.map.emergency :as emergency]
-    [adsb.map.follow :as follow]
-    [adsb.map.maplibre :as maplibre]
-    [adsb.map.selection :as selection]
-    [adsb.map.theme :as theme]
-    [re-frame.core :as rf]
-    [reagent.core :as r]))
-
-;; Basemap: OpenFreeMap's "liberty" style — the production basemap (adsb-kh4.5),
-;; re-inked per edition by adsb.map.basemap (adsb-dgb.7). The PROVIDER is
-;; settled; the direction customizes the style JSON, not the provider.
-;;
-;; Why OpenFreeMap, and why the same URL in dev and prod:
-;;   * No token, no API key, no registration — nothing secret ever reaches the
-;;     browser bundle. This is the whole reason security-checklist.md §3 still
-;;     promises there are no browser-visible secrets; keep it that way.
-;;   * Its public instance permits unlimited production traffic for a public
-;;     hobby site (no per-view caps, commercial use allowed). So there is no
-;;     reason to branch dev vs prod — one URL everywhere is the simplest thing
-;;     that respects the fair-use terms.
-;;   * "liberty" is a neutral-rich variant: terrain, water, and labels all
-;;     rendered — the richly-rendered basemap the direction requires (Q4c).
-;;   * MapLibre renders the style's own attribution automatically via the
-;;     attribution control (enabled below): "OpenFreeMap © OpenMapTiles Data
-;;     from OpenStreetMap". The credit rides the style JSON's SOURCES, which
-;;     the edition transform never touches, so it survives the re-inking.
-;; See README "Basemap" and https://openfreemap.org for the fair-use terms.
 (def ^:const style-url "https://tiles.openfreemap.org/styles/liberty")
-
-;; The chart's OPENING FRAME, and now only a fallback: when a privacy crop is
-;; declared, adsb.map.crop pulls the camera onto the boundary as soon as the
-;; `config` event lands (frame-once!), which is the first frame of the stream.
-;; This is what the reader sees until then — and forever, on a deployment
-;; running with the crop disabled.
-;;
-;; PRIVACY — non-negotiable (adsb-2yu.1, per the Overseer). It is a FIXED,
-;; whole-degree-rounded point over the Tampa Bay / Florida Gulf coast coverage
-;; area. It MUST NEVER be set to the receiver's position: a rounded regional
-;; center reveals a region, not a rooftop. The crop centre that supersedes it is
-;; safe for the same reason turned inside out — that one is a DECLARED decoy,
-;; public by construction (adsb.ingest.crop), never the antenna.
-;; MapLibre wants [lon lat]; aviation reads lat,lon. Here: lat 28.0, lon -82.0.
 (def ^:const default-center [-82.0 28.0])
 (def ^:const default-zoom 7)
+(def ^:const style-fetch-timeout-ms 10000)
+(def ^:const style-fetch-retries 3)
+(defn retry-delay-ms [n] (* 800 (math/pow 2.0 n)))
 
-(def ^:const style-fetch-timeout-ms
-  "The ceiling on a SINGLE style fetch before it is abandoned as hung. A style
-  JSON is a few hundred kB; ten seconds is generous for it on a phone that has
-  just woken its radio. Without a ceiling a stalled socket is indistinguishable
-  from a slow one, and the reader waits on the splash forever — the exact bug
-  this bounds (adsb-4oh). An AbortController turns the ceiling into a rejection
-  the retry can act on, not an infinite wait."
-  10000)
-
-(def ^:const style-fetch-retries
-  "How many times a failed style fetch is retried after the first shot — so
-  `style-fetch-retries` + 1 attempts in all. Mobile radios drop and stall the
-  FIRST request far more often than a warmed connection, and a single flake is
-  what leaves the map uncreated and the splash stuck. A handful of backed-off
-  retries turns 'refresh a couple times' into the app doing the refreshing."
-  3)
-
-(defn retry-delay-ms
-  "How long to wait before retry number `n` (0-based), in ms — exponential
-  backoff off an 800 ms base, so successive retries wait 800, 1600, 3200… and
-  a burst of failures does not become a tight refetch loop hammering a provider
-  that is already struggling. A plain fn (not a `^:const`) so tests can redef it
-  to fire retries instantly."
-  [n]
-  (* 800 (js/Math.pow 2 n)))
-
-(defn- fetch-style-once!
-  "One style fetch attempt, bounded by `style-fetch-timeout-ms` via an
-  AbortController. Returns a promise resolving to the style as keywordized
-  Clojure data, and REJECTING on a network error, a non-2xx status, or the
-  timeout firing the abort — the three ways a mobile fetch fails that must all
-  become a retryable rejection, never a silent hang."
-  [url]
+(defn- fetch-style-once! [url]
   (let [controller (js/AbortController.)
-        timer      (js/setTimeout #(.abort controller) style-fetch-timeout-ms)]
-    (-> (js/fetch url #js {:signal (.-signal controller)})
+        timer      (worker/timeout #(.abort controller) style-fetch-timeout-ms)]
+    (-> (js/fetch url (js-obj "signal" (.-signal controller)))
         (.then (fn [res]
                  (if (.-ok res)
                    (.json res)
                    (throw (js/Error. (str "basemap style HTTP " (.-status res)))))))
         (.then (fn [json] (js->clj json :keywordize-keys true)))
-        (.finally (fn [] (js/clearTimeout timer))))))
+        (.finally #(worker/clear-timeout timer)))))
 
-(defn retry-fetch!
-  "Drive `attempt!` — a thunk returning a promise — to a result, retrying a
-  rejection up to `retries` times and waiting `(delay-ms n)` before retry `n`
-  (0-based). Calls `on-ok` with the first fulfilment, or `on-fail` with the last
-  error once the retries are spent. The retry ENGINE behind load-style!, factored
-  out so it can be exercised with an injected thunk — no network, and no
-  var-redef straddling the async retry boundary.
-
-  `on-ok` rides the promise's fulfilment branch, so a throw inside it (a mount
-  error downstream) is NOT mistaken for a fetch failure and never triggers a
-  refetch."
-  [attempt! retries delay-ms on-ok on-fail]
+(defn retry-fetch! [attempt! retries delay-ms on-ok on-fail]
   (letfn [(go [n]
             (.then (attempt!)
                    on-ok
                    (fn [err]
                      (if (< n retries)
-                       (js/setTimeout #(go (inc n)) (delay-ms n))
+                       (worker/timeout #(go (inc n)) (delay-ms n))
                        (do (js/console.error "basemap style fetch failed" err)
                            (on-fail err))))))]
     (go 0)))
 
-(defn load-style!
-  "Fetch the basemap style JSON at `url` and call `on-ok` with it as Clojure
-  data (keywordized). Each attempt is bounded by `style-fetch-timeout-ms` and a
-  rejection is retried `style-fetch-retries` times with growing backoff
-  (`retry-delay-ms`, via `retry-fetch!`); only when the LAST attempt fails does
-  `on-fail` run with the error — the caller's cue to raise the splash's terminal
-  state.
-
-  Why any of this: mobile networks drop and stall the first request often
-  enough that a single shot left the reader on a splash that never cleared, with
-  no recourse but to refresh (adsb-4oh). Now the app does the retrying, and a
-  genuinely dead fetch fails LOUDLY into a tap-to-reload instead of hanging.
-
-  A seam: tests redef this to hand back a fixture style synchronously — no
-  network, no flake."
-  [url on-ok on-fail]
+(defn load-style! [url on-ok on-fail]
   (retry-fetch! #(fetch-style-once! url)
                 style-fetch-retries
                 retry-delay-ms
                 on-ok
                 on-fail))
 
-(defn default-map-opts
-  "The MapLibre map options the shell boots with, printing `style` (an
-  edition's style JSON as Clojure data). Pure — the test asserts against
-  this directly, and the fake `create!` receives exactly this."
-  [style]
+(defn default-map-opts [style]
   {:style              style
    :center             default-center
    :zoom               default-zoom
-   ;; Attribution is required and NEVER hidden — the basemap must credit
-   ;; OpenFreeMap / OpenMapTiles / OpenStreetMap. The style JSON's sources
-   ;; carry the text; enabling the control is what makes MapLibre render it.
-   ;;
-   ;; `compact` gives the credit an (i) button to fold INTO — MapLibre's own
-   ;; first-class mode for exactly this. It still opens as a banner and is still
-   ;; read; `attribution-fold-ms` is what folds it, five seconds later, and that
-   ;; number is a licence term. Nothing here hides it.
    :attributionControl {:compact true}})
 
 (def ^:private attribution-selector ".maplibregl-ctrl-attrib")
 (def ^:private attribution-open-class "maplibregl-compact-show")
+(def ^:const attribution-fold-ms 5000)
 
-(def ^:const attribution-fold-ms
-  "Five seconds, and this number is not a taste — it is the licence.
-
-  The OSMF attribution guidelines permit the credit to be folded behind an (i)
-  button, and they name the ONLY three things that may fold it: a dismiss
-  interaction, a map interaction (pan / click / zoom), or a timeout of five
-  seconds. Every one of them presupposes the credit was SHOWN first. A map that
-  opens with the credit already folded is not on that list — the reader must be
-  given the chance to read it.
-
-  So the banner shows, and five seconds later it folds. Do not shorten this, and
-  do not fold on load: OpenFreeMap, OpenMapTiles and OpenStreetMap are being
-  credited here, and the five seconds are theirs."
-  5000)
-
-(defn collapse-attribution!
-  "Fold the compact attribution shut inside `container`.
-
-  Call this on the fold TIMEOUT, never at map creation — see
-  `attribution-fold-ms`, which is a licence term wearing a number's clothes.
-  MapLibre's own logic also folds it on the reader's first pan or zoom, which is
-  the other permitted trigger; whichever comes first, the result is the same.
-
-  Dropping the open-class STICKS, and is not a race: MapLibre re-runs its
-  compact logic on resize and on styledata, but it adds the open-class back only
-  when `maplibregl-compact` is ABSENT — and we leave that one exactly where it
-  is. So it never re-opens itself behind us, and the (i) button still toggles it,
-  because the button's own handler owns the very class we drop.
-
-  Nothing is hidden: the credit was read, the control is still there, the (i) is
-  one tap away. And if MapLibre ever renames those classes this quietly does
-  nothing and the attribution simply stays open — the safe way to fail."
-  [container]
-  (when-let [control (some-> container (.querySelector attribution-selector))]
+(defn collapse-attribution! [container]
+  (when-let [control (some-> container (cjs/select attribution-selector))]
     (.remove (.-classList control) attribution-open-class)
     control))
-
-;; ---------------------------------------------------------------------
-;; The camera, as an effect.
-;;
-;; The map is a stateful JS object and lives in the component below, so the
-;; effect reads it from here — the ONE place that knows whether a map currently
-;; exists. Registered at namespace level (an effect handler must exist before the
-;; first dispatch that names it), pointed at whatever map is mounted.
-;;
-;; A dead map is not an error: an edition flip tears the map down and builds
-;; another, and a fly-to that lands in that gap simply does not happen. There is
-;; no chart to move.
 
 (defonce ^:private !live-map (atom nil))
 
@@ -237,40 +72,22 @@
     (when-let [m @!live-map]
       (maplibre/fly-to! m position))))
 
-(defn map-container
-  "The map's DOM anchor. Named (not an inline anonymous fn in the render
-  path) so the zero-re-render proof in adsb.map.aircraft-layer-test can
-  count the map component's renders with a redef."
-  [!container]
+(defn map-container [!container]
   [:div.adsb-map {:ref #(reset! !container %)}])
 
-(defn map-view
-  "Full-viewport MapLibre canvas. A form-3 component: it owns a plain DOM
-  node (the container is not reactive — no ratom deref in render) and
-  drives the imperative map through the seam. On mount it fetches the raw
-  basemap style once, prints the current edition, and creates map +
-  aircraft layer; on a system theme flip it destroys and re-prints both;
-  on unmount everything is torn down and the flip listener removed. This
-  component derefs no subscription and NEVER re-renders on aircraft
-  traffic — the layer pushes picture changes straight into MapLibre,
-  outside React."
-  []
-  (let [!container (atom nil)
-        !map       (atom nil)
-        !crop      (atom nil)
-        !aircraft  (atom nil)
-        !ring      (atom nil)
-        !follow    (atom nil)
-        !emergency (atom nil)
-        !raw-style (atom nil)
-        !unwatch   (atom nil)
+(defn map-view []
+  (let [!container  (atom nil)
+        !map        (atom nil)
+        !crop       (atom nil)
+        !aircraft   (atom nil)
+        !ring       (atom nil)
+        !follow     (atom nil)
+        !emergency  (atom nil)
+        !raw-style  (atom nil)
+        !unwatch    (atom nil)
         !fold-timer (atom nil)
-        !disposed  (atom false)]
+        !disposed   (atom false)]
     (letfn [(mount-map!
-              ;; `camera` is the dying map's camera on a re-print, nil on the
-              ;; first mount — see reprint!. Merged over the boot options: same
-              ;; keys, so the reader's own centre and zoom simply win over the
-              ;; opening frame's.
               ([th] (mount-map! th nil))
               ([th camera]
                (let [style (basemap/edition-style @!raw-style th)
@@ -278,48 +95,20 @@
                                              (merge (default-map-opts style)
                                                     camera))]
                  (reset! !map m)
-                 (reset! !live-map m)          ; the camera effect's handle
-                 ;; The chart's first frame is on the table — tear the cold-load
-                 ;; splash out (adsb.ui.splash). Fires on every mount, including a
-                 ;; theme re-print; the dismiss is idempotent, and the splash is
-                 ;; long gone by the first flip anyway.
+                 (reset! !live-map m)
                  (maplibre/on-load! m #(rf/dispatch [:map/ready]))
-                 ;; The credit shows, and folds five seconds later — the timeout
-                 ;; the OSMF guidelines name (see attribution-fold-ms). MapLibre
-                 ;; folds it on the first pan or zoom too, which is the other
-                 ;; permitted trigger; whichever comes first wins, and both leave
-                 ;; the (i) button reachable forever after.
-                 ;;
-                 ;; Armed on every mount: a theme flip destroys and re-creates the
-                 ;; map, and the new map arrives with a freshly opened credit.
                  (reset! !fold-timer
-                         (js/setTimeout #(when-not @!disposed
-                                           (collapse-attribution! @!container))
-                                        attribution-fold-ms))
-                 ;; FIRST, so the published-coverage boundary sits UNDER
-                 ;; everything in the sky — add order is z order, and the
-                 ;; boundary is the paper, not a target (adsb.map.crop).
-                 ;;
-                 ;; A carried camera means this map inherited a chart the reader
-                 ;; was already reading, so the boundary's opening frame is spent:
-                 ;; seed the latch, or the re-print re-frames and the reader loses
-                 ;; their place to a theme flip they did not ask for.
+                         (worker/timeout #(when-not @!disposed
+                                            (collapse-attribution! @!container))
+                                         attribution-fold-ms))
                  (reset! !crop (crop/attach! m th {:framed? (some? camera)}))
                  (reset! !aircraft (aircraft-layer/attach! m th))
-                 ;; The selection ring rides the same lifecycle: ring and
-                 ;; map are created and torn down together (adsb.map.selection).
                  (reset! !ring (selection/attach! m))
-                 ;; Free/Follow camera — same track! shape as selection
-                 ;; (adsb.map.follow, adsb-jg4).
                  (reset! !follow (follow/attach! m))
-                 ;; So do the §7 emergency annotations — the red-pen
-                 ;; ellipse, MAYDAY stamp, and edge arrow (adsb.map.emergency).
                  (reset! !emergency (emergency/attach! m)))))
             (unmount-map! []
-              ;; A pending fold belongs to the map being torn down; left armed,
-              ;; it would fire into the next one's DOM (or none at all).
               (when-let [timer @!fold-timer]
-                (js/clearTimeout timer)
+                (worker/clear-timeout timer)
                 (reset! !fold-timer nil))
               (when-let [annotations @!emergency]
                 (emergency/detach! @!map annotations)
@@ -341,16 +130,6 @@
                 (reset! !map nil)
                 (reset! !live-map nil)))
             (reprint! [th]
-              ;; The system slid between day and night: put the other
-              ;; edition on the table. Only once the plate is fetched and
-              ;; we are still alive — a flip before the style arrives is
-              ;; covered by mount-map! reading the fresh !theme.
-              ;;
-              ;; A re-print is a new physical chart, but it is NOT a new
-              ;; reading: the camera comes off the dying map and onto the new
-              ;; one, so dusk sliding the OS to dark leaves the reader looking
-              ;; at exactly what they were looking at (adsb-1rg). Nothing to
-              ;; read if the map never got made — then the boot options stand.
               (theme/set-theme! th)
               (when (and @!raw-style (not @!disposed))
                 (let [camera (some-> @!map maplibre/camera)]
@@ -367,11 +146,6 @@
                           (when-not @!disposed
                             (reset! !raw-style raw)
                             (mount-map! (theme/sync!))))
-                        ;; Every retry is spent and the style never came: the map
-                        ;; cannot be built, so hand the splash its terminal state
-                        ;; (adsb.ui.splash) instead of leaving it breathing over a
-                        ;; map that will never paint. Guarded, like the success
-                        ;; path — a reader who navigated away owns no splash.
                         (fn [_err]
                           (when-not @!disposed
                             (rf/dispatch [:map/load-failed])))))
@@ -385,5 +159,4 @@
            (unmount-map!))
 
          :reagent-render
-         (fn []
-           (map-container !container))}))))
+         (fn [] (map-container !container))}))))

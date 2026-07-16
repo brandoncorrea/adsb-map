@@ -1,13 +1,4 @@
 (ns adsb.css.build
-  "Compiles adsb.css.app to resources/public/app.css. `bb css`, `bb css:watch`.
-
-  app.css is BUILD OUTPUT — generated, gitignored, and never edited by hand,
-  exactly like resources/public/js. The Garden namespaces under src/css are
-  the only source of truth for it.
-
-  Garden and this source path are declared in the :css alias, NOT in :paths,
-  so neither reaches the production classpath: the uberjar ships the compiled
-  app.css and no CSS compiler."
   (:require [adsb.css.app :as app]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
@@ -24,91 +15,53 @@
        "   The source of truth is src/css/adsb/css/*.clj; start at\n"
        "   adsb.css.app, which is the cascade. Edits here are overwritten. */\n\n"))
 
-(defn render
-  "The whole stylesheet as a CSS string. Pure — no I/O, so the suite can hold
-  it up to the light."
-  []
+(defn render []
   (str preamble (garden/css {:pretty-print? true} app/stylesheet)))
 
-(defn write!
-  "Render the stylesheet and write it to resources/public/app.css."
-  []
+(defn write! []
   (let [css (render)]
     (io/make-parents out-path)
     (spit out-path css)
     (println (format "Wrote %s (%,d bytes)" out-path (count css)))))
 
-(defn- sources
-  "Every Garden source file, with its last-modified stamp — the watch's
-  fingerprint of the tree."
-  []
+(defn- sources []
   (->> (file-seq (io/file src-dir))
        (filter #(.isFile ^File %))
-       (filter #(.endsWith (.getName ^File %) ".clj"))
+       (filter #(str/ends-with? (.getName ^File %) ".clj"))
        (map (juxt #(.getPath ^File %) #(.lastModified ^File %)))
        (into (sorted-map))))
 
-(defn- ns-decl
-  "A Garden source file's ns name and its adsb.css.* dependencies, read from
-  its own ns form. This is what lets the watch order the reload without a
-  hand-maintained namespace list going stale every time a namespace is born."
-  [path]
+(defn- ns-decl [path]
   (let [[_ns ns-name & clauses] (edn/read-string (slurp path))
         deps (for [clause clauses
                    :when (and (seq? clause) (= :require (first clause)))
-                   spec  (rest clause)
-                   :let  [dep (if (vector? spec) (first spec) spec)]
+                   spec   (rest clause)
+                   :let [dep (cond-> spec (vector? spec) first)]
                    :when (str/starts-with? (str dep) "adsb.css.")]
                dep)]
-    {:ns ns-name :path path :deps (set deps)}))
+    {:ns   ns-name
+     :path path
+     :deps (set deps)}))
 
-(defn- in-dependency-order
-  "The Garden source files, topologically sorted so every file loads after
-  the adsb.css namespaces it requires. This namespace itself is left out:
-  the watch must not re-evaluate the very loop it is running."
-  [paths]
+(defn- in-dependency-order [paths]
   (loop [pending (remove #(= 'adsb.css.build (:ns %)) (map ns-decl paths))
          loaded  #{}
          ordered []]
-    (if (empty? pending)
-      ordered
+    (if (seq pending)
       (let [{ready true blocked false}
             (group-by #(empty? (remove loaded (:deps %))) pending)]
-        (when (empty? ready)
+        (when-not (seq ready)
           (throw (ex-info "Dependency cycle among adsb.css namespaces"
                           {:blocked (map :ns blocked)})))
         (recur blocked
                (into loaded (map :ns ready))
-               (into ordered (map :path ready)))))))
+               (into ordered (map :path ready))))
+      ordered)))
 
-(defn- reload!
-  "Re-evaluate every Garden source file, dependencies first.
-
-  NOT `(require 'adsb.css.app :reload-all)`, and the difference is the watch's
-  life: :reload-all descends into GARDEN ITSELF, and re-evaluating
-  garden.types mints a NEW CSSAtRule class each pass — while garden.compiler,
-  loaded once through this namespace and never itself reloaded, keeps its
-  protocols extended on the ORIGINAL class. Every at-media record made after
-  the first reload then misses IExpandable dispatch, falls into the
-  declaration branch, and dies on `(empty record)`:
-
-      CSS compile failed: Can't create empty: garden.types.CSSAtRule
-
-  — on every save, forever (adsb-qil). Only our namespaces change while the
-  watch runs, so only our namespaces are reloaded; garden's record classes
-  stay one generation for the life of the JVM."
-  []
+(defn- reload! []
   (run! load-file (in-dependency-order (keys (sources)))))
 
-(defn- watch!
-  "Recompile on every save under src/css, forever. Polls rather than taking a
-  filesystem-watcher dependency: this loop runs beside `shadow-cljs watch` in
-  `bb dev` and a quarter-second of latency is beneath notice.
-
-  A broken namespace prints its exception and the loop lives on — a typo must
-  not take the watcher down with it. The next good save reloads every file,
-  so no half-poisoned state survives a fix."
-  []
+(defn- watch! []
   (println "Watching" src-dir "— ctrl-c to stop.")
   (loop [seen nil]
     (let [now (sources)]
@@ -117,13 +70,11 @@
           (reload!)
           (write!)
           (catch Exception e
-            (println "CSS compile failed:" (.getMessage e)))))
+            (println "CSS compile failed:" (ex-message e)))))
       (Thread/sleep 250)
       (recur now))))
 
-(defn -main
-  "`clojure -M:css -m adsb.css.build [--watch]`"
-  [& args]
+(defn -main [& args]
   (if (some #{"--watch"} args)
     (watch!)
     (write!)))

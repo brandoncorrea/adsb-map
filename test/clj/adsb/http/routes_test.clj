@@ -1,14 +1,10 @@
 (ns adsb.http.routes-test
-  (:require
-    [adsb.http.assets :as assets]
-    [adsb.http.routes :as routes]
-    [clojure.test :refer [deftest testing is]]
-    [muuntaja.core :as muuntaja]))
+  (:require [adsb.http.assets :as assets]
+            [adsb.http.routes :as routes]
+            [clojure.test :refer [deftest is testing]]
+            [muuntaja.core :as muuntaja]))
 
-(def empty-handler
-  "The assembled Ring handler with no dependencies injected — empty
-  state, unknown feeder, no stream."
-  (routes/handler {}))
+(def empty-handler (routes/handler {}))
 
 (defn- json-request [uri]
   {:request-method :get
@@ -86,14 +82,10 @@
     (let [response (empty-handler (json-request "/no/such/path"))]
       (is (= 404 (:status response))))))
 
-;; ---------------------------------------------------------------------
-;; Static assets, as wired into the route table (adsb-8cb). The caching
-;; POLICY is asserted in adsb.http.assets-test; what matters here is that
-;; the assembled handler routes to it — and that it never reaches the
-;; stream.
-
 (defn- static-request [uri headers]
-  {:request-method :get :uri uri :headers headers})
+  {:request-method :get
+   :uri            uri
+   :headers        headers})
 
 (deftest fingerprinted-assets-are-served
   (testing "the versioned URL index.html points at actually resolves"

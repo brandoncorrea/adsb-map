@@ -1,44 +1,29 @@
 (ns adsb.ingest.receiver-test
-  "Exercises receiver-position resolution against a local stub server
-  serving the recorded fixture — never the live feeder. The fixture's
-  coordinates are SYNTHETIC (see test/resources/README.md); the real
-  receiver position is private and must never be committed."
-  (:require
-    [adsb.ingest.receiver :as receiver]
-    [clojure.test :refer [deftest testing is]]
-    [clojure.tools.logging :as log]
-    [org.httpkit.server :as http-kit]))
+  (:require [adsb.ingest.receiver :as receiver]
+            [clojure.test :refer [deftest is testing]]
+            [clojure.tools.logging :as log]
+            [org.httpkit.server :as http-kit]))
 
 (def ^:private fixture (slurp "test/resources/receiver-sample.json"))
-
-;; The synthetic position inside receiver-sample.json.
 (def ^:private fixture-position {:geo/lat 28.0 :geo/lon -82.5})
 
 (defn- receiver-json-handler [body]
   (fn [{:keys [uri]}]
     (if (= "/data/receiver.json" uri)
-      {:status 200
+      {:status  200
        :headers {"Content-Type" "application/json"}
-       :body body}
+       :body    body}
       {:status 404 :body "not here"})))
 
-(defn- with-server
-  "Run f with a base URL pointing at a stub server that returns `handler`."
-  [handler f]
+(defn- with-server [handler f]
   (let [srv  (http-kit/run-server handler {:port 0 :legacy-return-value? false})
         port (http-kit/server-port srv)]
     (try
       (f (str "http://localhost:" port))
       (finally (http-kit/server-stop! srv)))))
 
-;; Reserved TEST-NET-1 address; the connection fails fast within the
-;; timeout, standing in for a feeder that is down.
 (def ^:private unreachable-url "http://192.0.2.1:1")
-
 (def ^:private short-timeout-ms 200)
-
-;; ---------------------------------------------------------------------
-;; fetch-position!
 
 (deftest fetch-position!
   (testing "reads the receiver position from the feeder's receiver.json"
@@ -85,9 +70,9 @@
         (fn [{:keys [uri headers]}]
           (reset! seen headers)
           (if (= "/data/receiver.json" uri)
-            {:status 200
+            {:status  200
              :headers {"Content-Type" "application/json"}
-             :body fixture}
+             :body    fixture}
             {:status 404 :body "not here"}))
         (fn [base-url]
           (is (= fixture-position
@@ -96,11 +81,7 @@
                    {"CF-Access-Client-Id"     "abc123.access"
                     "CF-Access-Client-Secret" "supersecretvalue"})))
           (is (= "abc123.access" (get @seen "cf-access-client-id")))
-          (is (= "supersecretvalue"
-                 (get @seen "cf-access-client-secret"))))))))
-
-;; ---------------------------------------------------------------------
-;; env-position
+          (is (= "supersecretvalue" (get @seen "cf-access-client-secret"))))))))
 
 (deftest env-position
   (testing "reads the position from ADSB_RECEIVER_LAT/LON"
@@ -120,9 +101,6 @@
 
   (testing "an empty environment yields nil"
     (is (nil? (receiver/env-position {})))))
-
-;; ---------------------------------------------------------------------
-;; resolve-position! — the once-at-setup composition
 
 (deftest resolve-position!
   (testing "the environment override wins over the feeder's receiver.json"

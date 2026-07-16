@@ -1,29 +1,13 @@
 (ns adsb.trails-test
-  "The pure trail history and its GeoJSON conversion (adsb-6wd.1). Ring
-  semantics — append-on-change, the cap, drop-on-leave — and the history ->
-  FeatureCollection projection are proven here against literals; the
-  imperative wiring (a second source, the live-icao filter) is proven at the
-  seam in adsb.map.aircraft-layer-test."
-  (:require
-    [adsb.fixtures :as fixtures]
-    [adsb.trails :as trails]
-    #?(:clj  [clojure.test :refer [deftest testing is]]
-       :cljs [cljs.test :refer-macros [deftest testing is]])))
+  (:require [adsb.fixtures :as fixtures]
+            [adsb.trails :as trails]
+            [clojure.test :refer [deftest is testing]]))
 
 (defn- pos [lat lon] {:geo/lat lat :geo/lon lon})
 
-(defn- view?
-  "Is `v` a `subvec` VIEW rather than a vector of its own? A view still points
-  at the vector it was cut from, and conj-ing onto one appends to that backing
-  — so a ring that is a view retains every position ever dropped from it, no
-  matter what it reports as its count (adsb-3kf). Both runtimes have the same
-  structure under a different name, so both are named here."
-  [v]
+(defn- view? [v]
   #?(:clj  (instance? clojure.lang.APersistentVector$SubVector v)
      :cljs (instance? cljs.core/Subvec v)))
-
-;; ---------------------------------------------------------------------
-;; append-position — the ring
 
 (deftest append-grows-on-a-new-position
   (testing "an empty (nil) ring seeds with the first position"
@@ -63,8 +47,7 @@
         (is (= (pos (dec (+ trails/max-positions 10))
                     (dec (+ trails/max-positions 10)))
                (peek ring)))
-        (is (= (pos 10 10) (first ring))
-            "the first ten positions were dropped off the front")))))
+        (is (= (pos 10 10) (first ring)))))))
 
 (deftest append-actually-releases-the-positions-it-drops
   (testing "a long-dwelling aircraft (a loitering helicopter, pattern traffic)
@@ -74,24 +57,18 @@
                        nil
                        (range (* 10 trails/max-positions)))]
       (is (= trails/max-positions (count ring)))
-      (is (not (view? ring))
-          "the trimmed ring must be a vector of its own — a subvec view holds
-           its backing vector alive, so every dropped position stays reachable
-           and memory grows linearly with dwell time")
+      (is (not (view? ring)))
 
       (testing "and it stays that way as the ring keeps turning over"
         (is (not (view? (trails/append-position ring (pos 999 999)))))))))
 
-;; ---------------------------------------------------------------------
-;; accumulate — folding a picture into history
-
 (deftest accumulate-appends-per-aircraft-on-change
   (testing "each aircraft accumulates its own ring across frames"
-    (let [a1     (assoc fixtures/ups-2717 :aircraft/position (pos 27.0 -83.0))
-          a2     (assoc fixtures/ups-2717 :aircraft/position (pos 27.1 -83.0))
-          icao   (:aircraft/icao fixtures/ups-2717)
-          h1     (trails/accumulate {} [a1])
-          h2     (trails/accumulate h1 [a2])]
+    (let [a1   (assoc fixtures/ups-2717 :aircraft/position (pos 27.0 -83.0))
+          a2   (assoc fixtures/ups-2717 :aircraft/position (pos 27.1 -83.0))
+          icao (:aircraft/icao fixtures/ups-2717)
+          h1   (trails/accumulate {} [a1])
+          h2   (trails/accumulate h1 [a2])]
       (is (= [(pos 27.0 -83.0)] (get h1 icao)))
       (is (= [(pos 27.0 -83.0) (pos 27.1 -83.0)] (get h2 icao))))))
 
@@ -102,24 +79,19 @@
           icao   (:aircraft/icao fixtures/ups-2717)
           h1     (trails/accumulate {} [moving])]
       (is (contains? h1 icao))
-      (is (= {} (trails/accumulate h1 []))
-          "gone from the picture -> gone from history"))))
+      (is (= {} (trails/accumulate h1 []))))))
 
 (deftest accumulate-keeps-but-does-not-grow-a-position-less-aircraft
   (testing "a position-less update keeps the existing ring, appending nothing"
     (let [icao   (:aircraft/icao fixtures/ups-2717)
           moving (assoc fixtures/ups-2717 :aircraft/position (pos 27.0 -83.0))
           h1     (trails/accumulate {} [moving])
-          ;; the SAME aircraft, now heard without a position
           quiet  (dissoc fixtures/ups-2717 :aircraft/position)
           h2     (trails/accumulate h1 [quiet])]
       (is (= (get h1 icao) (get h2 icao)))))
 
   (testing "a never-positioned aircraft contributes no ring at all"
     (is (= {} (trails/accumulate {} [fixtures/never-positioned])))))
-
-;; ---------------------------------------------------------------------
-;; history->trail-feature-collection — the GeoJSON projection
 
 (deftest trail-collection-emits-a-linestring-per-live-multi-point-ring
   (let [icao (:aircraft/icao fixtures/ups-2717)

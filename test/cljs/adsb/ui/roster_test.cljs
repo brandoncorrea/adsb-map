@@ -1,16 +1,15 @@
 (ns adsb.ui.roster-test
-  "The Search + Sheet roster (adsb-66h), in a real browser."
-  (:require
-    ["@testing-library/react" :as rtl]
-    [adsb.events]
-    [adsb.fixtures :as fixtures]
-    [adsb.stream]
-    [adsb.subs]
-    [adsb.ui.roster :as roster]
-    [cljs.test :refer-macros [deftest is testing use-fixtures async]]
-    [day8.re-frame.test :as rf-test]
-    [re-frame.core :as rf]
-    [reagent.core :as r]))
+  (:require ["@testing-library/react" :as rtl]
+            [adsb.corejs :as cjs]
+            [adsb.events]
+            [adsb.fixtures :as fixtures]
+            [adsb.stream]
+            [adsb.subs]
+            [adsb.ui.roster :as roster]
+            [clojure.test :refer-macros [deftest is testing use-fixtures async]]
+            [day8.re-frame.test :as rf-test]
+            [re-frame.core :as rf]
+            [reagent.core :as r]))
 
 (use-fixtures :each {:after rtl/cleanup})
 
@@ -23,8 +22,8 @@
 
 (defn- picture
   []
-  {ups-icao ups
-   dal-icao dal
+  {ups-icao                                ups
+   dal-icao                                dal
    (:aircraft/icao fixtures/on-the-ground) fixtures/on-the-ground})
 
 (defn- render-roster! []
@@ -34,44 +33,37 @@
 (defn- fresh-db! []
   (rf/dispatch-sync [:app/initialize-db]))
 
-;; The dock now OPENS CLOSED (roster/default-sheet) — the map is the
-;; product and gets the viewport until the reader asks for the roster. The
-;; body, and so every row and the search field, renders only when open. So
-;; a test that is about ROWS says so out loud and opens the sheet first;
-;; the default itself is pinned once, in the-dock-opens-closed.
 (defn- open-roster! []
   (rf/dispatch-sync [:roster/set-sheet :half]))
 
 (deftest matches-query-is-blank-friendly
-  (is (true? (roster/matches-query? ups "")))
-  (is (true? (roster/matches-query? ups "UPS")))
-  (is (true? (roster/matches-query? ups "ups")))
-  (is (true? (roster/matches-query? ups "abc0")))
-  (is (false? (roster/matches-query? ups "DAL"))))
+  (is (roster/matches-query? ups ""))
+  (is (roster/matches-query? ups "UPS"))
+  (is (roster/matches-query? ups "ups"))
+  (is (roster/matches-query? ups "abc0"))
+  (is (not (roster/matches-query? ups "DAL"))))
 
 (deftest roster-sort-puts-emergencies-first
   (let [rows (roster/roster-sort [ups dal fixtures/on-the-ground])]
-    (is (= dal-icao (:aircraft/icao (first rows))) "emergency leads")
-    (is (= ups-icao (:aircraft/icao (second rows))) "then higher altitude")))
+    (is (= dal-icao (:aircraft/icao (first rows))))
+    (is (= ups-icao (:aircraft/icao (second rows))))))
 
 (deftest sheet-snap-math
   (testing "nearest snap by fraction"
     (is (= :closed (roster/height-fraction->sheet 0.0 0)))
-    (is (= :half   (roster/height-fraction->sheet 0.5 0)))
-    (is (= :full   (roster/height-fraction->sheet 0.9 0))))
+    (is (= :half (roster/height-fraction->sheet 0.5 0)))
+    (is (= :full (roster/height-fraction->sheet 0.9 0))))
   (testing "velocity commits past the nearest rung"
-    ;; 0.55 is nearest :half; a strong upward swipe climbs to :full.
     (is (= :full (roster/height-fraction->sheet 0.55 (+ roster/drag-velocity-threshold 0.01))))
-    ;; 0.40 is nearest :half; a strong downward swipe drops to :closed.
     (is (= :closed (roster/height-fraction->sheet 0.40 (- (+ roster/drag-velocity-threshold 0.01))))))
   (testing "tap cycles closed → half → full → closed"
-    (is (= :half   (roster/next-sheet :closed)))
-    (is (= :full   (roster/next-sheet :half)))
+    (is (= :half (roster/next-sheet :closed)))
+    (is (= :full (roster/next-sheet :half)))
     (is (= :closed (roster/next-sheet :full))))
   (testing "open? is half or full"
     (is (false? (roster/sheet-open? :closed)))
-    (is (true?  (roster/sheet-open? :half)))
-    (is (true?  (roster/sheet-open? :full))))
+    (is (true? (roster/sheet-open? :half)))
+    (is (true? (roster/sheet-open? :full))))
   (testing "snap heights are ordered closed < half < full"
     (let [c (roster/sheet-height-px :closed)
           h (roster/sheet-height-px :half)
@@ -81,18 +73,17 @@
   (testing "ease-out-cubic is identity at ends and soft in the middle"
     (is (= 0.0 (roster/ease-out-cubic 0)))
     (is (= 1.0 (roster/ease-out-cubic 1)))
-    (is (< 0.5 (roster/ease-out-cubic 0.5) 1.0)
-        "front-loaded progress so the settle decelerates into the snap")))
+    (is (< 0.5 (roster/ease-out-cubic 0.5) 1.0))))
 
 (deftest handle-label-matches-stance-actions
   (testing "desktop is binary: open says hide, closed says show"
-    (with-redefs [roster/phone-stance? (constantly false)]
+    (with-redefs [cjs/phone-stance? (constantly false)]
       (is (= "3 aircraft · hide" (roster/handle-label :half 3 3 "")))
       (is (= "3 aircraft · hide" (roster/handle-label :full 3 3 "")))
       (is (= "3 aircraft · show" (roster/handle-label :closed 3 3 "")))
       (is (= "1 of 3 · hide" (roster/handle-label :half 1 3 "UPS")))))
   (testing "phone keeps the three-snap ladder"
-    (with-redefs [roster/phone-stance? (constantly true)]
+    (with-redefs [cjs/phone-stance? (constantly true)]
       (is (= "3 aircraft · show" (roster/handle-label :closed 3 3 "")))
       (is (= "3 aircraft · expand" (roster/handle-label :half 3 3 "")))
       (is (= "3 aircraft · hide" (roster/handle-label :full 3 3 ""))))))
@@ -103,8 +94,8 @@
     (rf/dispatch [:test/set-picture (picture)])
     (render-roster!)
     (let [dock (.getByTestId rtl/screen "roster")]
-      (is (= "false" (.getAttribute dock "data-open")))
-      (is (= "closed" (.getAttribute dock "data-sheet"))))
+      (is (= "false" (cjs/get-attribute dock "data-open")))
+      (is (= "closed" (cjs/get-attribute dock "data-sheet"))))
     (testing "the body is not rendered at all — no rows, no search field"
       (is (nil? (.queryByTestId rtl/screen "roster-search")))
       (is (nil? (.queryByTestId rtl/screen (str "roster-row:" ups-icao)))))
@@ -112,10 +103,6 @@
               drawer the reader cannot find is a deleted feature"
       (is (some? (.getByTestId rtl/screen "roster-toggle"))))))
 
-;; The drag and the tap live on the SHELL, not on the handle button (the
-;; button is smaller than the lip a finger aims at — that was the finnicky
-;; drag). These pin the consequences: every part of the lip toggles, the
-;; button still toggles by bubbling, and the body does not toggle at all.
 (defn- click! [el]
   (rtl/act (fn [] (.click rtl/fireEvent el) js/undefined)))
 
@@ -125,21 +112,16 @@
     (rf/dispatch-sync [:test/set-picture (picture)])
     (render-roster!)
     (let [dock (.getByTestId rtl/screen "roster")]
-      ;; The rail's padding and the safe-area band belong to the shell, and
-      ;; the shell is the grab target — a tap anywhere on the lip opens it.
       (click! dock)
       (-> (rtl/waitFor
-            (fn [] (assert (= "true" (.getAttribute dock "data-open")))))
+            (fn [] (assert (= "true" (cjs/get-attribute dock "data-open")))))
           (.then (fn [_]
-                   (is (= "true" (.getAttribute dock "data-open")))
-                   ;; The handle button keeps its role, label and focus ring;
-                   ;; its click bubbles to the shell, so a pointer tap on it —
-                   ;; and Enter on it, which fires the same click — still toggle.
+                   (is (= "true" (cjs/get-attribute dock "data-open")))
                    (click! (.getByTestId rtl/screen "roster-toggle"))
                    (rtl/waitFor
-                     (fn [] (assert (= "false" (.getAttribute dock "data-open")))))))
+                     (fn [] (assert (= "false" (cjs/get-attribute dock "data-open")))))))
           (.then (fn [_]
-                   (is (= "false" (.getAttribute dock "data-open")))
+                   (is (= "false" (cjs/get-attribute dock "data-open")))
                    (done)))
           (.catch (fn [err]
                     (is false (str "the lip did not toggle the drawer: " err))
@@ -152,17 +134,12 @@
     (open-roster!)
     (render-roster!)
     (let [dock (.getByTestId rtl/screen "roster")]
-      ;; A row's click bubbles through the shell's handler too. It comes from
-      ;; the body, so the drawer must ignore it — selecting an aircraft may
-      ;; not cycle the sheet out from under the reader.
       (click! (.getByTestId rtl/screen (str "roster-row:" ups-icao)))
       (-> (rtl/waitFor
             (fn [] (assert (= ups-icao @(rf/subscribe [:aircraft/selected-icao])))))
           (.then (fn [_]
-                   (is (= ups-icao @(rf/subscribe [:aircraft/selected-icao]))
-                       "the row still selects")
-                   (is (= "half" (.getAttribute dock "data-sheet"))
-                       "and the sheet stays exactly where it was")
+                   (is (= ups-icao @(rf/subscribe [:aircraft/selected-icao])))
+                   (is (= "half" (cjs/get-attribute dock "data-sheet")))
                    (done)))
           (.catch (fn [err]
                     (is false (str "row click did not land: " err))
@@ -171,10 +148,10 @@
 (defn- pointer! [el kind opts]
   (rtl/act (fn []
              (.dispatchEvent el (js/PointerEvent. kind
-                                                  (clj->js (merge {:bubbles true
+                                                  (clj->js (merge {:bubbles    true
                                                                    :cancelable true
-                                                                   :pointerId 1
-                                                                   :button 0}
+                                                                   :pointerId  1
+                                                                   :button     0}
                                                                   opts))))
              js/undefined)))
 
@@ -183,26 +160,17 @@
     (fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
     (render-roster!)
-    ;; The drag is the phone drawer's gesture, and the browser suite runs at
-    ;; desktop width — say so out loud rather than resizing the window.
-    (with-redefs [roster/phone-stance? (constantly true)]
+    (with-redefs [cjs/phone-stance? (constantly true)]
       (let [dock (.getByTestId rtl/screen "roster")]
-        (is (nil? (.queryByTestId rtl/screen "roster-list"))
-            "closed and untouched: no body")
-        ;; A finger on the lip, pulling up. NOT released.
+        (is (nil? (.queryByTestId rtl/screen "roster-list")))
         (pointer! dock "pointerdown" {:clientY 700})
         (pointer! dock "pointermove" {:clientY 500})
         (-> (rtl/waitFor
               (fn [] (assert (some? (.queryByTestId rtl/screen "roster-list")))))
             (.then (fn [_]
-                     (is (some? (.getByTestId rtl/screen "roster-list"))
-                         "the roster is on screen mid-drag — the reader can see
-                          what they are pulling up, before they commit to it")
-                     (is (some? (.getByTestId rtl/screen (str "roster-row:" ups-icao)))
-                         "and it is the real picture, not a placeholder")
-                     (is (= "false" (.getAttribute dock "data-open"))
-                         "while the COMMITTED state is still closed — the sheet
-                          does not snap until the finger lifts")
+                     (is (some? (.getByTestId rtl/screen "roster-list")))
+                     (is (some? (.getByTestId rtl/screen (str "roster-row:" ups-icao))))
+                     (is (= "false" (cjs/get-attribute dock "data-open")))
                      (done)))
             (.catch (fn [err]
                       (is false (str "the drawer stayed blank mid-drag: " err))
@@ -213,69 +181,43 @@
     (fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
     (render-roster!)
-    (with-redefs [roster/phone-stance? (constantly true)]
+    (with-redefs [cjs/phone-stance? (constantly true)]
       (let [dock  (.getByTestId rtl/screen "roster")
-            klass (.getAttribute dock "class")]
-        ;; Finger down, and a tremble well inside the tap slop. Being TOUCHED
-        ;; is not a state of the drawer: the handle the reader is pressing has
-        ;; to look exactly like the handle they were about to press, so not one
-        ;; class may flip and no body may mount.
+            klass (cjs/get-attribute dock "class")]
         (pointer! dock "pointerdown" {:clientY 700})
         (pointer! dock "pointermove" {:clientY 697})
         (-> (rtl/waitFor (fn [] (assert (some? dock))))
             (.then (fn [_]
-                     (is (= klass (.getAttribute dock "class"))
-                         "the class list is untouched — no is-open, no is-dragging,
-                          so every :not(.is-open) rule still matches and the rail,
-                          the grip and the label do not move")
-                     (is (nil? (.queryByTestId rtl/screen "roster-list"))
-                         "and nothing mounted behind them")
-                     (is (= "" (.. dock -style -height))
-                         "and no inline geometry was written")
+                     (is (= klass (cjs/get-attribute dock "class")))
+                     (is (nil? (.queryByTestId rtl/screen "roster-list")))
+                     (is (= "" (-> dock .-style .-height)))
                      (done)))
             (.catch (fn [err]
                       (is false (str "a press disturbed the drawer: " err))
                       (done))))))))
 
 (deftest a-release-ends-the-gesture-so-the-mouse-cannot-hang-on
-  ;; THE MOUSE HANGS ON. `!gesture` carries :active?, and the move handler
-  ;; drags whenever it is set. A TOUCH release is silent until the next tap,
-  ;; so a stale :active? was harmless there — but a MOUSE keeps firing
-  ;; pointermove on plain hover after the button is up, and every one of
-  ;; those was read as a live drag: the drawer trailed the bare cursor. The
-  ;; moved-release branch used to leave :active? set; only the tap branch
-  ;; cleared it. This pins the release as the end of the gesture on BOTH
-  ;; paths — a bare hover after a real drag must be completely inert.
   (async done
     (fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
     (render-roster!)
-    (with-redefs [roster/phone-stance? (constantly true)]
+    (with-redefs [cjs/phone-stance? (constantly true)]
       (let [dock (.getByTestId rtl/screen "roster")]
-        ;; A real drag: down on the lip, up past the slop, then release.
         (pointer! dock "pointerdown" {:clientY 700})
         (pointer! dock "pointermove" {:clientY 300})
-        (pointer! dock "pointerup"   {:clientY 300})
+        (pointer! dock "pointerup" {:clientY 300})
         (-> (rtl/waitFor
               (fn []
-                ;; The rAF settle has landed: no live gesture classes remain.
-                (let [k (.getAttribute dock "class")]
-                  (assert (not (.includes k "is-dragging")))
-                  (assert (not (.includes k "is-settling"))))))
+                (assert (not (cjs/has-class? dock "is-dragging")))
+                (assert (not (cjs/has-class? dock "is-settling")))))
             (.then (fn [_]
-                     (let [committed (.getAttribute dock "data-sheet")
-                           settled-h (.. dock -style -height)]
-                       ;; A bare hover move, no button down (buttons 0). Before
-                       ;; the fix this re-armed the drag and hauled the sheet to
-                       ;; the cursor; now it does nothing at all.
+                     (let [committed (cjs/get-attribute dock "data-sheet")
+                           settled-h (-> dock .-style .-height)]
                        (pointer! dock "pointermove" {:clientY 600 :buttons 0})
                        (r/flush)
-                       (is (= committed (.getAttribute dock "data-sheet"))
-                           "the committed snap is unchanged by a bare hover move")
-                       (is (not (.includes (.getAttribute dock "class") "is-dragging"))
-                           "no drag re-started — the released gesture is dead")
-                       (is (= settled-h (.. dock -style -height))
-                           "and the height did not chase the cursor: the mouse lets go")
+                       (is (= committed (cjs/get-attribute dock "data-sheet")))
+                       (is (not (cjs/has-class? dock "is-dragging")))
+                       (is (= settled-h (.. dock -style -height)))
                        (done))))
             (.catch (fn [err]
                       (is false (str "the release did not end the gesture: " err))
@@ -290,7 +232,7 @@
     (is (some? (.getByTestId rtl/screen "roster-search")))
     (is (some? (.getByTestId rtl/screen (str "roster-row:" ups-icao))))
     (is (some? (.getByTestId rtl/screen (str "roster-row:" dal-icao))))
-    (is (= "true" (.getAttribute (.getByTestId rtl/screen "roster") "data-open")))))
+    (is (= "true" (cjs/get-attribute (.getByTestId rtl/screen "roster") "data-open")))))
 
 (deftest find-filters-the-roster-in-place
   (async done
@@ -318,24 +260,23 @@
     (rf/dispatch-sync [:test/set-picture (picture)])
     (open-roster!)
     (render-roster!)
-    ;; Opened above; the binary toggle closes it in one step.
     (rf/dispatch-sync [:roster/toggle])
     (r/flush)
     (-> (rtl/waitFor
           (fn []
             (assert (= "false"
-                       (.getAttribute (.getByTestId rtl/screen "roster")
-                                      "data-open")))
+                       (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                          "data-open")))
             (assert (= "closed"
-                       (.getAttribute (.getByTestId rtl/screen "roster")
-                                      "data-sheet")))))
+                       (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                          "data-sheet")))))
         (.then (fn [_]
                  (is (= "false"
-                        (.getAttribute (.getByTestId rtl/screen "roster")
-                                       "data-open")))
+                        (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                           "data-open")))
                  (is (= "closed"
-                        (.getAttribute (.getByTestId rtl/screen "roster")
-                                       "data-sheet")))
+                        (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                           "data-sheet")))
                  (done)))
         (.catch (fn [err]
                   (is false (str "collapse did not land: " err))
@@ -346,28 +287,26 @@
     (fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
     (render-roster!)
-    ;; From the CLOSED default, the cycle now walks the full ring in one
-    ;; test: closed -> half -> full -> closed.
-    (rf/dispatch-sync [:roster/cycle]) ; closed → half
-    (rf/dispatch-sync [:roster/cycle]) ; half → full
+    (rf/dispatch-sync [:roster/cycle])
+    (rf/dispatch-sync [:roster/cycle])
     (r/flush)
     (-> (rtl/waitFor
           (fn []
             (assert (= "full"
-                       (.getAttribute (.getByTestId rtl/screen "roster")
-                                      "data-sheet")))))
+                       (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                          "data-sheet")))))
         (.then (fn [_]
-                 (rf/dispatch-sync [:roster/cycle]) ; full → closed
+                 (rf/dispatch-sync [:roster/cycle])
                  (r/flush)
                  (rtl/waitFor
                    (fn []
                      (assert (= "closed"
-                                (.getAttribute (.getByTestId rtl/screen "roster")
-                                               "data-sheet")))))))
+                                (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                                   "data-sheet")))))))
         (.then (fn [_]
                  (is (= "closed"
-                        (.getAttribute (.getByTestId rtl/screen "roster")
-                                       "data-sheet")))
+                        (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                           "data-sheet")))
                  (done)))
         (.catch (fn [err]
                   (is false (str "cycle did not land: " err))
@@ -377,9 +316,6 @@
   (async done
     (fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
-    ;; The sheet must be OPEN: scrolling a row into view inside a shut
-    ;; drawer would be a no-op with nothing to scroll (roster/default-sheet
-    ;; is :closed, and the scroll track guards on sheet-open?).
     (open-roster!)
     (let [!scrolled (atom nil)]
       (with-redefs [roster/scroll-row-into-view! #(reset! !scrolled %)]
@@ -390,8 +326,7 @@
               (fn []
                 (assert (= ups-icao @!scrolled))))
             (.then (fn [_]
-                     (is (= ups-icao @!scrolled)
-                         "map/list selection brings the roster row into view")
+                     (is (= ups-icao @!scrolled))
                      (done)))
             (.catch (fn [err]
                       (is false (str "scroll-into-view did not fire: " err))
@@ -407,15 +342,15 @@
     (-> (rtl/waitFor
           (fn []
             (assert (= "full"
-                       (.getAttribute (.getByTestId rtl/screen "roster")
-                                      "data-sheet")))))
+                       (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                          "data-sheet")))))
         (.then (fn [_]
                  (is (= "true"
-                        (.getAttribute (.getByTestId rtl/screen "roster")
-                                       "data-open")))
+                        (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                           "data-open")))
                  (is (= "full"
-                        (.getAttribute (.getByTestId rtl/screen "roster")
-                                       "data-sheet")))
+                        (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                           "data-sheet")))
                  (done)))
         (.catch (fn [err]
                   (is false (str "full sheet did not land: " err))
