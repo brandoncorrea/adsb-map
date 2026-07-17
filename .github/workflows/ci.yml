@@ -22,17 +22,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
 
       # Installs the Clojure CLI and babashka together.
       - name: Set up Clojure + babashka
-        uses: DeLaGuardo/setup-clojure@12.5
+        uses: DeLaGuardo/setup-clojure@13.6
         with:
           cli: latest
           bb: latest
@@ -40,7 +40,7 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '20'
           cache: npm
@@ -48,7 +48,7 @@ jobs:
       # Maven + git deps. deps.edn drives the JVM classpath; shadow-cljs.edn
       # its own CLJS deps; bb.edn the task deps. Any change reseeds the cache.
       - name: Cache Clojure dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.m2/repository
@@ -68,7 +68,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}

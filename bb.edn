@@ -1,4 +1,5 @@
-{:tasks
+{:paths ["dev"]
+ :tasks
  {:requires ([babashka.fs :as fs]
              [babashka.process :as p])
 
@@ -45,10 +46,10 @@
                   (p/process {:inherit true :shutdown p/destroy-tree} cmd))))}
 
   db:fetch
-  {:doc  "Download the tar1090-db aircraft.csv.gz and shard it into
-          resources/public/db/ for browser-side enrichment."
-   :task (do (load-file "script/aircraft_db.clj")
-             ((resolve 'aircraft-db/build!) {}))}
+  {:doc      "Download the tar1090-db aircraft.csv.gz and shard it into
+              resources/public/db/ for browser-side enrichment."
+   :requires ([adsb.aircraft-db])
+   :task     (adsb.aircraft-db/build! {})}
 
   test:clj
   {:doc     "JVM Test Suite"
@@ -58,7 +59,10 @@
   test:cljs
   {:doc     "CLJS Test Suite"
    :depends [-npm-install -playwright-browser]
-   :task    (do (shell "npx shadow-cljs compile test")
+   ;; --force-spawn: never attach to the running `bb dev` shadow server — it
+   ;; compiles with its BOOT-TIME classpath, so after a deps.edn change it
+   ;; silently builds the tests against stale dependency versions.
+   :task    (do (shell "npx shadow-cljs compile test --force-spawn")
                 (shell "node script/run-browser-tests.mjs"))}
 
   test:watch

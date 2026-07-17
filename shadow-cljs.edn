@@ -1,31 +1,11 @@
-;; Classpath — source paths and dependencies alike — comes from deps.edn's
-;; :cljs alias, not from here. One source of truth: malli is shared with the
-;; backend, and two declarations of it are two chances to drift.
-{:deps {:aliases [:cljs]}
-
- ;; 8080 serves the app shell (index.html + basemap) during `bb dev`
- ;; / `shadow-cljs watch app` — adsb-2yu.1. 8290 serves the compiled
- ;; browser-test page; the Playwright runner (adsb-4ga.8) points at it.
+{:deps     {:aliases [:cljs]}
  :dev-http {8080 "resources/public"
             8290 "target/browser-test"}
-
  :builds
  {:app  {:target     :browser
          :output-dir "resources/public/js"
          :asset-path "/js"
          :modules    {:main {:init-fn adsb.core/init!}}}
-
-  ;; Both preloads exist because they must run BEFORE something they cannot
-  ;; otherwise reach, and each namespace says what. In order, which matters:
-  ;;
-  ;;   react-devtools-hook  before react-dom initializes — it requires nothing,
-  ;;                        deliberately, since requiring reagent here would
-  ;;                        load react-dom and lose the race it exists to win.
-  ;;   test-console         before the test namespaces load, since re-frame
-  ;;                        announces handler registration as they do.
-  ;;
-  ;; The :app build carries neither: in dev the DevTools suggestion is a fair
-  ;; one, and app code should never have its console filtered.
   :test {:target    :browser-test
          :test-dir  "target/browser-test"
          :ns-regexp "-test$"

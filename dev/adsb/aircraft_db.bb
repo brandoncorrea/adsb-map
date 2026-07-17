@@ -1,4 +1,4 @@
-(ns aircraft-db
+(ns adsb.aircraft-db
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
             [cheshire.core :as json]
@@ -20,10 +20,10 @@
          esc?   false]
     (if-let [c (first chars)]
       (cond
-        esc?       (recur (rest chars) (.append field c) fields false)
-        (= c \\)   (recur (rest chars) field fields true)
-        (= c \;)   (recur (rest chars) (StringBuilder.) (conj! fields (str field)) false)
-        :else      (recur (rest chars) (.append field c) fields false))
+        esc? (recur (rest chars) (.append field c) fields false)
+        (= c \\) (recur (rest chars) field fields true)
+        (= c \;) (recur (rest chars) (StringBuilder.) (conj! fields (str field)) false)
+        :else (recur (rest chars) (.append field c) fields false))
       (persistent! (conj! fields (str field))))))
 
 (defn- non-empty [s]
@@ -35,10 +35,10 @@
   (let [icao (some-> icao str/trim str/lower-case)]
     (when (and icao (re-matches icao-re icao))
       (let [record (cond-> {}
-                     (non-empty typecode) (assoc "t" (non-empty typecode))
-                     (non-empty desc)     (assoc "d" (non-empty desc))
-                     (non-empty reg)      (assoc "r" (non-empty reg))
-                     (non-empty operator) (assoc "o" (non-empty operator)))]
+                           (non-empty typecode) (assoc "t" (non-empty typecode))
+                           (non-empty desc) (assoc "d" (non-empty desc))
+                           (non-empty reg) (assoc "r" (non-empty reg))
+                           (non-empty operator) (assoc "o" (non-empty operator)))]
         (when (seq record)
           [icao record])))))
 

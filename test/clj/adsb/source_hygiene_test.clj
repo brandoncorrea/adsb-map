@@ -1,5 +1,5 @@
 (ns adsb.source-hygiene-test
-  (:require [babashka.fs :as fs]
+  (:require [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]))
 
 (def ^:private source-roots
@@ -7,14 +7,17 @@
 
 (defn- source-files []
   (->> source-roots
-       (filter fs/exists?)
-       (mapcat #(fs/glob % "**.{clj,cljc,cljs}"))
-       (map fs/file)))
+       (map io/file)
+       (filter #(.exists %))
+       (mapcat file-seq)
+       (filter #(.isFile %))
+       (filter #(re-matches #".+\.clj[cs]?" (.getName %)))))
 
 (deftest no-source-file-carries-a-raw-control-byte
   (let [offenders
         (for [f (source-files)
-              :let [bytes (fs/read-all-bytes f)
+              :let [bytes (with-open [in (io/input-stream f)]
+                            (.readAllBytes in))
                     bad   (keep-indexed
                             (fn [i b]
                               (let [v (bit-and b 0xff)]

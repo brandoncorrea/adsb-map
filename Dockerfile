@@ -50,7 +50,8 @@ RUN npm ci --no-audit --no-fund \
 
 # 2) Sources and the build task file. resources/public/js and resources/public/db
 #    are excluded via .dockerignore — the release rebuilds js; db is optional data.
-COPY bb.edn build.clj ./
+COPY bb.edn ./
+COPY dev/adsb/build.clj ./dev/adsb/build.clj
 COPY src ./src
 COPY resources ./resources
 

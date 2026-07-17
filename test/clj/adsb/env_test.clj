@@ -1,14 +1,14 @@
 (ns adsb.env-test
   (:require [adsb.env :as env]
-            [babashka.fs :as fs]
             [clojure.test :refer [deftest is testing]])
-  (:import (java.util HashMap)))
+  (:import (java.io File)
+           (java.util HashMap)))
 
 (defn- temp-file-with [contents]
-  (let [f (str (fs/create-temp-file {:prefix "adsb-env" :suffix ".env"}))]
-    (fs/delete-on-exit f)
+  (let [f (File/createTempFile "adsb-env" ".env")]
+    (.deleteOnExit f)
     (spit f contents)
-    f))
+    (str f)))
 
 (deftest parse-test
   (testing "a plain key=value line"

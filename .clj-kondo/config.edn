@@ -1,1 +1,10 @@
-{:linters {:unresolved-namespace {:level :off}}}
+{:linters {:unresolved-namespace {:level :off}
+           ;; garden.selectors defines root/hover/etc via defpseudoclass —
+           ;; macro-generated vars clj-kondo cannot resolve.
+           :unresolved-var {:exclude [garden.selectors]}}
+
+ ;; The map test fakes deliberately reify only the protocol methods each
+ ;; test touches. The planned shared full-surface recording-map (see bead:
+ ;; test-infrastructure dedup) removes this exemption.
+ :ns-groups [{:pattern "adsb\\.map\\..*-test" :name map-test-fakes}]
+ :config-in-ns {map-test-fakes {:linters {:missing-protocol-method {:level :off}}}}}

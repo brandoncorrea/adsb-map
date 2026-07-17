@@ -169,7 +169,7 @@
                         (when emg? "is-emergency")]
        :data-icao      icao
        :data-testid    (str "roster-row:" icao)
-       :aria-pressed   (boolean sel?)
+       :aria-pressed   sel?
        :on-click       #(on-row-click! icao)
        :on-mouse-enter #(on-row-enter! icao)
        :on-mouse-leave on-row-leave!}
@@ -468,7 +468,7 @@
             [:div.adsb-roster-rail
              [:button.adsb-roster-handle
               {:type          "button"
-               :aria-expanded (boolean open?*)
+               :aria-expanded open?*
                :aria-label    (handle-aria-label sheet*)
                :data-testid   "roster-toggle"
                :data-sheet    (name sheet*)}
