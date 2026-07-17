@@ -25,9 +25,9 @@
             across restarts and identical across replicas of one image —
             a build clock or a counter would give two containers serving
             the same image two different URLs for the same bytes"
-    (is (= (assets/version) (assets/version))))
+    (is (= (assets/version!) (assets/version!))))
   (testing "it is short, hex, and URL-safe"
-    (is (re-matches #"[0-9a-f]{12}" (assets/version)))))
+    (is (re-matches #"[0-9a-f]{12}" (assets/version!)))))
 
 (defn- bytes* [s] (.getBytes ^String s "UTF-8"))
 
@@ -74,15 +74,15 @@
             whole mechanism: the document is what tells a browser which
             URL to fetch, and it is the only thing that changes"
     (let [html (:body (GET "/index.html"))]
-      (is (str/includes? html (assets/asset-url (assets/version) "js/main.js")))
+      (is (str/includes? html (assets/asset-url (assets/version!) "js/main.js")))
       (is (not (str/includes? html "\"/js/main.js\"")))
-      (is (str/includes? html (assets/asset-url (assets/version) "app.css"))))))
+      (is (str/includes? html (assets/asset-url (assets/version!) "app.css"))))))
 
 (deftest fingerprinted-assets-are-immutable
   (testing "an asset under /assets/<version>/ is cacheable for a year and
             declared immutable — the URL names its bytes, so a different
             body would be a different URL, and there is nothing to revalidate"
-    (let [response (GET (assets/asset-url (assets/version) "js/main.js"))]
+    (let [response (GET (assets/asset-url (assets/version!) "js/main.js"))]
       (is (= 200 (:status response)))
       (is (= assets/immutable-cache-control
              (get-in response [:headers "Cache-Control"])))))
@@ -94,7 +94,7 @@
       (is (= 200 (:status response)))))
   (testing "a versioned URL for a file that does not exist is still a miss,
             so the 404 handler downstream runs"
-    (is (nil? (GET (assets/asset-url (assets/version) "js/nope.js"))))))
+    (is (nil? (GET (assets/asset-url (assets/version!) "js/nope.js"))))))
 
 (deftest data-assets-get-a-ttl-not-a-fingerprint
   (testing "the database shards and the glyphs — the bulk of the bytes, and

@@ -89,7 +89,7 @@
 
 (deftest fingerprinted-assets-are-served
   (testing "the versioned URL index.html points at actually resolves"
-    (let [uri      (assets/asset-url (assets/version) "js/main.js")
+    (let [uri      (assets/asset-url (assets/version!) "js/main.js")
           response (empty-handler (static-request uri {}))]
       (is (= 200 (:status response)))
       (is (= assets/immutable-cache-control

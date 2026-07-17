@@ -72,7 +72,7 @@
                          :version version
                          :html    (index-html version)})))))
 
-(defn version [] (:version (current!)))
+(defn version! [] (:version (current!)))
 
 (def ^:private index-uris #{"/" "/index.html"})
 
