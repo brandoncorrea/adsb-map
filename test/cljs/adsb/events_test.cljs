@@ -64,8 +64,8 @@
   (rf-test/run-test-sync
     (swallow-enrich!)
     (let [!armed (atom nil)]
-      (with-redefs [timers/timeout!       (fn [f _ms] (reset! !armed f) :deselect-timer)
-                    timers/clear-timeout! (constantly nil)]
+      (with-redefs [timers/timeout       (fn [f _ms] (reset! !armed f) :deselect-timer)
+                    timers/clear-timeout (constantly nil)]
         (rf/dispatch [:app/initialize-db])
         (rf/dispatch [:aircraft/select icao])
         (is (= icao @(rf/subscribe [:aircraft/selected-icao])))
@@ -82,8 +82,8 @@
     (swallow-enrich!)
     (let [!armed   (atom nil)
           !cleared (atom [])]
-      (with-redefs [timers/timeout!       (fn [f _ms] (reset! !armed f) :deselect-timer)
-                    timers/clear-timeout! (fn [id] (swap! !cleared conj id))]
+      (with-redefs [timers/timeout       (fn [f _ms] (reset! !armed f) :deselect-timer)
+                    timers/clear-timeout (fn [id] (swap! !cleared conj id))]
         (rf/dispatch [:app/initialize-db])
         (rf/dispatch [:aircraft/select icao])
         (rf/dispatch [:aircraft/click {:icao icao :detail 1}])

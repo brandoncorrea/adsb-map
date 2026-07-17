@@ -163,7 +163,7 @@
                                  #js [(+ x pad) (+ y pad)]]
                             #js {:layers #js [layer-id]})]
              (when (and features (pos? (.-length features)))
-               (cjs/prevent-default! e)
+               (cjs/prevent-default e)
                (f (js->clj (.-properties (aget features 0))
                            :keywordize-keys true)))))))
   (on-layer-hover! [_ layer-id on-enter on-leave]

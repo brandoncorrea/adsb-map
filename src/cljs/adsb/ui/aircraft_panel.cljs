@@ -17,7 +17,7 @@
   (when (nil? @!clock)
     (rf/dispatch [:ui/tick (cjs/now-ms)])
     (reset! !clock
-            (timers/interval! #(rf/dispatch [:ui/tick (cjs/now-ms)])
+            (timers/interval #(rf/dispatch [:ui/tick (cjs/now-ms)])
                               clock-interval-ms))))
 
 (defonce ^:private !keyboard (atom nil))
@@ -37,7 +37,7 @@
 
 (defn start-keyboard! []
   (when (nil? @!keyboard)
-    (cjs/add-listener! "keydown" on-document-key!)
+    (cjs/add-listener "keydown" on-document-key!)
     (reset! !keyboard true)))
 
 (defn- altitude-display [{:aircraft/keys [on-ground? altitude-ft]}]

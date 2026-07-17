@@ -69,8 +69,19 @@ Names are the most important tool for readability. Invest time in them.
   network send), or being the throwing variant of a safe counterpart (a `read`
   returns nil where a `read!` would throw). Plain reads stay bare even when
   they touch the world — a clock (`now-ms`), a file (`env/read`), a computed
-  style (`css-px`) — reading is not a consequence. The `!` is the only warning
-  the reader gets; do not dilute it.
+  style (`css-px`) — reading is not a consequence. Nor is blocking: every
+  call blocks for some duration; `sleep` just makes duration the point.
+- **The bang marks a decision, not a mechanism.** Thin interop mirrors — a
+  wrapper whose entire identity is the foreign operation, findable under that
+  name in MDN (`append-child` ↔ `appendChild`, `timers/timeout` ↔
+  `setTimeout`) — are bare, and their namespaces (`adsb.corejs`,
+  `adsb.timers`) are declared effectful wholesale: the alias is the warning,
+  as it would be for Java interop. App-level functions that decide to change
+  the world keep the bang no matter what plumbing they call
+  (`schedule-reconnect!`, `arm-deselect!`). A wrapper that renames or adds
+  policy is app code (`refresh!`). The `adsb.map.maplibre` protocol keeps its
+  bangs: a protocol is our vocabulary, not interop — Clojure code earns its
+  bang.
 - **Coercions read as `->`** — `json->aircraft`, `aircraft->geojson`. The arrow
   says "this is a pure transformation from one shape to another."
 - **Avoid abbreviations** unless they're the domain's own vocabulary. `icao`,
@@ -265,7 +276,8 @@ same code run on the JVM and in the browser.
 
 Effects — HTTP calls, atom swaps, SSE writes, `setData` on a map — live at the
 edges, in `src/clj/` and `src/cljs/`, in functions whose names end in `!` when
-they have consequences (effectful reads at the edge stay bare — see Naming).
+they decide to have consequences (effectful reads and thin interop mirrors
+stay bare — see Naming).
 
 ```clojure
 ;; Bad — the domain reaches out and grabs the clock

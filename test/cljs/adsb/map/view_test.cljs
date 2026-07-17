@@ -16,7 +16,7 @@
 (use-fixtures :each
   {:before (fn []
              (let [el (cjs/create-element "div")]
-               (cjs/append-child! (.-body js/document) el)
+               (cjs/append-child (.-body js/document) el)
                (reset! !node el)))
    :after  (fn []
              (when-let [root @!root]
@@ -156,7 +156,7 @@
   (let [container (cjs/create-element "div")
         attrib    (cjs/create-element "div")]
     (set! (.-className attrib) "maplibregl-ctrl maplibregl-ctrl-attrib maplibregl-compact maplibregl-compact-show")
-    (cjs/append-child! container attrib)
+    (cjs/append-child container attrib)
 
     (testing "the open-class is dropped, so the credit folds shut"
       (view/collapse-attribution! container)

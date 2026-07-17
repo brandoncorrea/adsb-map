@@ -19,13 +19,13 @@
 
 (defn- cancel-deselect! []
   (when-let [id @!deselect-timer]
-    (timers/clear-timeout! id)
+    (timers/clear-timeout id)
     (reset! !deselect-timer nil)))
 
 (defn- arm-deselect! [icao]
   (cancel-deselect!)
   (reset! !deselect-timer
-          (timers/timeout!
+          (timers/timeout
             (fn []
               (reset! !deselect-timer nil)
               (rf/dispatch [:aircraft/select icao]))

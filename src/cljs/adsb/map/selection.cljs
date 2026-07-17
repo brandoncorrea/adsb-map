@@ -19,18 +19,18 @@
     (set! (.-className el) "adsb-selection-ring")
     (set! (.-width (.-style el)) d)
     (set! (.-height (.-style el)) d)
-    (cjs/set-attributes! svg {"viewBox"     (str "0 0 " ring-diameter-px " " ring-diameter-px)
+    (cjs/set-attributes svg {"viewBox"     (str "0 0 " ring-diameter-px " " ring-diameter-px)
                              "width"       (str ring-diameter-px)
                              "height"      (str ring-diameter-px)
                              "aria-hidden" "true"})
-    (cjs/set-attributes! circle {"cx"         (str r)
+    (cjs/set-attributes circle {"cx"         (str r)
                                 "cy"         (str r)
                                 "r"          (str (- r 2))
                                 "pathLength" "70"})
     (set! (.-className caption) "adsb-flight-label")
     (set! (.-textContent caption) (or label ""))
-    (cjs/append-child! svg circle)
-    (cjs/append-children! el [svg caption])
+    (cjs/append-child svg circle)
+    (cjs/append-children el [svg caption])
     el))
 
 (defn label-element [label]
@@ -39,7 +39,7 @@
     (set! (.-className el) "adsb-hover-pin")
     (set! (.-className caption) "adsb-flight-label")
     (set! (.-textContent caption) (or label ""))
-    (cjs/append-child! el caption)
+    (cjs/append-child el caption)
     el))
 
 (defn- position->lng-lat [aircraft]

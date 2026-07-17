@@ -191,7 +191,7 @@
                         (swap! !state assoc :picture picture :history history)
                         (push! m history picture)))))
            (swap! !state assoc :tick
-                  (timers/interval!
+                  (timers/interval
                     (fn [] (push! m (:history @!state) (:picture @!state)))
                     tick-interval-ms)))))
      !state)))
@@ -209,4 +209,4 @@
            :track nil
            :tick nil)
     (some-> track r/dispose!)
-    (some-> tick timers/clear-interval!)))
+    (some-> tick timers/clear-interval)))

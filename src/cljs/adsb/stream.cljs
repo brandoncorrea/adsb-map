@@ -37,7 +37,7 @@
 
 (defn clear-timer! []
   (when-let [timer (:timer @!conn)]
-    (timers/clear-timeout! timer)
+    (timers/clear-timeout timer)
     (swap! !conn assoc :timer nil)))
 
 (defn- open! []
@@ -56,7 +56,7 @@
 (defn schedule-reconnect! [ms]
   (clear-timer!)
   (swap! !conn assoc :timer
-         (timers/timeout! #(rf/dispatch [:stream/reconnect]) ms)))
+         (timers/timeout #(rf/dispatch [:stream/reconnect]) ms)))
 
 (rf/reg-fx :stream/connect! open!)
 (rf/reg-fx :stream/clear-timer! clear-timer!)

@@ -14,8 +14,8 @@
                (set! (.-id el) "adsb-splash")
                (set! (.-className note) "adsb-splash-note")
                (set! (.-textContent note) "Tuning in…")
-               (cjs/append-child! el note)
-               (cjs/append-child! (.-body js/document) el)
+               (cjs/append-child el note)
+               (cjs/append-child (.-body js/document) el)
                (reset! !node el)))
    :after  (fn []
              (when-let [el @!node]

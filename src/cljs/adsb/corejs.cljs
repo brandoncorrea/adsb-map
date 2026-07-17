@@ -1,22 +1,27 @@
 (ns adsb.corejs
+  "The DOM/browser interop edge — effectful wholesale. Everything here is a
+  thin mirror of a foreign operation whose own name carries the effect
+  (appendChild, setAttribute), so members are bare: the cjs/ alias is the
+  warning, the way a Java interop call would be. App-level functions that
+  DECIDE to touch the world still take the bang."
   (:require [clojure.string :as str]))
 
 (defn select
   ([selector] (js-invoke js/document "querySelector" selector))
   ([node selector] (js-invoke node "querySelector" selector)))
 
-(defn set-attribute! [node attribute value]
+(defn set-attribute [node attribute value]
   (js-invoke node "setAttribute" attribute value))
 
-(defn set-attributes! [node attr-map]
+(defn set-attributes [node attr-map]
   (doseq [[k v] attr-map]
     (js-invoke node "setAttribute" k v)))
 
-(defn add-listener!
+(defn add-listener
   ([event listener] (js-invoke js/document "addEventListener" event listener))
   ([node event listener] (js-invoke node "addEventListener" event listener)))
 
-(defn remove-listener! [node event listener]
+(defn remove-listener [node event listener]
   (js-invoke node "removeEventListener" event listener))
 
 (defn create-element [tag-name]
@@ -25,10 +30,10 @@
 (defn create-element-ns [the-ns the-name]
   (js-invoke js/document "createElementNS" the-ns the-name))
 
-(defn append-child! [node child]
+(defn append-child [node child]
   (js-invoke node "appendChild" child))
 
-(defn append-children! [node children]
+(defn append-children [node children]
   (doseq [child children]
     (js-invoke node "appendChild" child)))
 
@@ -41,7 +46,7 @@
 (defn closest [node selector]
   (js-invoke node "closest" selector))
 
-(defn scroll-into-view! [node js-opts]
+(defn scroll-into-view [node js-opts]
   (js-invoke node "scrollIntoView" js-opts))
 
 (defn element-by-id [id]
@@ -53,7 +58,7 @@
 (defn remove! [node]
   (js-invoke node "remove"))
 
-(defn add-class! [node class-name]
+(defn add-class [node class-name]
   (js-invoke (.-classList node) "add" class-name))
 
 (defn has-class? [node class-name]
@@ -94,7 +99,7 @@
 (defn now-ms []
   (js-invoke js/Date "now"))
 
-(defn prevent-default! [node]
+(defn prevent-default [node]
   (js-invoke node "preventDefault"))
 
 (defn request-animation [f]

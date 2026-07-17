@@ -153,7 +153,7 @@
                         :height   h0})
       (when (.-setPointerCapture el)
         (js-invoke el "setPointerCapture" (.-pointerId e)))
-      (cjs/prevent-default! e))))
+      (cjs/prevent-default e))))
 
 (defn on-sheet-pointer-move! [!drag !gesture !live-h e]
   (when-let [{:keys [active? start-y start-h last-y last-t]} @!gesture]
@@ -177,7 +177,7 @@
         (when (:moved? @!drag)
           (reset! !live-h h)
           (set-sheet-height-px! (roster-el) h)
-          (cjs/prevent-default! e))))))
+          (cjs/prevent-default e))))))
 
 (defn- settle-sheet-after-drag! [!drag !raf !live-h release-h target-sheet]
   (cancel-settle! !drag !raf !live-h)

@@ -248,8 +248,8 @@
     (let [{:keys [m] :as fake} (test-map/recording-map)
           !tick    (atom nil)
           !cleared (atom [])]
-      (with-redefs [timers/interval!   (fn [f _ms] (reset! !tick f) :tick-id)
-                    timers/clear-interval! (fn [id] (swap! !cleared conj id))]
+      (with-redefs [timers/interval   (fn [f _ms] (reset! !tick f) :tick-id)
+                    timers/clear-interval (fn [id] (swap! !cleared conj id))]
         (let [handle (layer/attach! m)
               heard  (assoc fixtures/ups-2717 :aircraft/seen-at-ms 0)
               icao   (:aircraft/icao heard)
@@ -286,8 +286,8 @@
   (rf-test/run-test-sync
     (let [{:keys [m] :as fake} (test-map/recording-map)
           !tick (atom nil)]
-      (with-redefs [timers/interval!   (fn [f _ms] (reset! !tick f) :tick-id)
-                    timers/clear-interval! (constantly nil)]
+      (with-redefs [timers/interval   (fn [f _ms] (reset! !tick f) :tick-id)
+                    timers/clear-interval (constantly nil)]
         (let [handle   (layer/attach! m)
               heard    (assoc fixtures/ups-2717 :aircraft/seen-at-ms 0)
               icao     (:aircraft/icao heard)
@@ -350,8 +350,8 @@
   (rf-test/run-test-sync
     (let [{:keys [m] :as fake} (test-map/recording-map)
           !tick (atom nil)]
-      (with-redefs [timers/interval!   (fn [f _ms] (reset! !tick f) :tick-id)
-                    timers/clear-interval! (constantly nil)]
+      (with-redefs [timers/interval   (fn [f _ms] (reset! !tick f) :tick-id)
+                    timers/clear-interval (constantly nil)]
         (let [handle (layer/attach! m)
               icao   (:aircraft/icao fixtures/ups-2717)
               heard  (fn [lat] (assoc fixtures/ups-2717
@@ -391,7 +391,7 @@
 (deftest zero-reagent-re-renders-on-the-hot-path
   (rf-test/run-test-sync
     (let [node           (cjs/create-element "div")
-          _              (cjs/append-child! (.-body js/document) node)
+          _              (cjs/append-child (.-body js/document) node)
           {:keys [m] :as fake} (test-map/recording-map)
           !mounts        (atom 0)
           !renders       (atom 0)
