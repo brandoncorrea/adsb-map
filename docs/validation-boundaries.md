@@ -122,17 +122,21 @@ A payload of 400 aircraft with one malformed entry should yield **399 aircraft a
 one log line** — not an exception, not an empty map, not a dropped poll cycle.
 
 ```clojure
-(defn ->aircraft-batch [raw-entries]
-  (->> raw-entries
-       (keep ->aircraft-or-log!)
-       vec))
+(defn ->aircraft-batch
+  "... Returns {:aircraft [...] :rejections [...]}, pure. Logging the
+  rejections is the calling edge's job."
+  [raw-entries]
+  (let [results (map coerce-entry raw-entries)]
+    {:aircraft   (into [] (keep :aircraft) results)
+     :rejections (into [] (keep :rejection) results)}))
 
-(defn- ->aircraft-or-log! [raw]
+(defn- coerce-entry [raw]
   (try
-    (or (->aircraft raw)
-        (log-rejection! raw (rejection-reason raw)))
+    (if-let [aircraft (->aircraft raw)]
+      {:aircraft aircraft}
+      {:rejection (rejection raw (rejection-reason raw))})
     (catch #?(:clj Exception :cljs :default) e
-      (log-rejection! raw (ex-message e)))))
+      {:rejection (rejection raw (ex-message e))})))
 ```
 
 The ingest loop is a long-running process fed by a noisy radio. It **must not die.**
@@ -140,8 +144,15 @@ A malformed entry is an ordinary Tuesday, not an exceptional condition. Treating
 as exceptional means the map goes blank because one aircraft two hundred miles away
 had a corrupted burst.
 
-Log the rejection with enough context to debug it — but do not log the entire
-payload on every failure, or a stuck bad actor will fill the disk.
+`->aircraft-batch` stays **pure** — no I/O, no logging, per the src/cljc rule — so
+it hands each dropped entry back as a `rejection` datum rather than logging it. The
+edges do the logging: `adsb.ingest.ultrafeeder` and `adsb.ingest.replay` each emit
+one `log/warn "Rejected aircraft"` per rejection and pass the `:aircraft` through.
+
+Each `rejection` carries only **bounded** context — `{:hex ... :error ...}`, both
+length-capped — so the debug line has enough to work with but a stuck bad actor
+cannot fill the edge's disk by repeating a malformed entry, and the whole payload is
+never logged on failure.
 
 ### Plausibility is a second, separate layer
 

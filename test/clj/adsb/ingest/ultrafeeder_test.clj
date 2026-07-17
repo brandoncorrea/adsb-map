@@ -2,6 +2,7 @@
   (:require [adsb.ingest.source :as source]
             [adsb.ingest.ultrafeeder :as ultrafeeder]
             [clojure.test :refer [deftest is testing]]
+            [clojure.tools.logging :as log]
             [org.httpkit.server :as http-kit])
   (:import (clojure.lang ExceptionInfo)))
 
@@ -38,6 +39,26 @@
        :body    fixture}
       {:status 404
        :body   "not here"})))
+
+(deftest logs-rejections-at-the-edge
+  (testing "coerce is pure and hands rejections back as data; the edge is
+            what logs them. A payload with one malformed entry drops that
+            entry with exactly one warning and still delivers the rest —
+            the boundary's core promise, now with logging at the src/clj edge"
+    (let [warnings (atom [])
+          body     (str "{\"aircraft\":["
+                        "{\"hex\":\"abc0e4\",\"alt_baro\":34775},"
+                        "{\"hex\":\"nothex\",\"alt_baro\":{}}]}")]
+      (with-redefs [log/log* (fn [_ _ _ message] (swap! warnings conj message))]
+        (with-server
+          (fn [_] {:status  200
+                   :headers {"Content-Type" "application/json"}
+                   :body    body})
+          (fn [base-url]
+            (let [batch (source/fetch! (ultrafeeder/->source base-url))]
+              (is (= ["abc0e4"] (mapv :aircraft/icao batch)))))))
+      (is (= 1 (count @warnings))
+          "exactly one rejection, logged once at the edge"))))
 
 (deftest sends-auth-headers-when-configured
   (testing "the feeder-auth headers ride every request to the tunnel"

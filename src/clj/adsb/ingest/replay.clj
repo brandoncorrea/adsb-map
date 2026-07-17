@@ -2,7 +2,8 @@
   (:require [adsb.geo :as geo]
             [adsb.ingest.coerce :as coerce]
             [adsb.ingest.source :as source]
-            [cheshire.core :as json]))
+            [cheshire.core :as json]
+            [clojure.tools.logging :as log]))
 
 (def ^:const default-fixture-path "test/resources/aircraft-sample.json")
 (def ^:const default-loop-ms 90000)
@@ -32,10 +33,13 @@
   (close! [this] this))
 
 (defn- load-fixture! [path]
-  (-> (slurp path)
-      (json/parse-string true)
-      :aircraft
-      coerce/->aircraft-batch))
+  (let [{:keys [aircraft rejections]} (-> (slurp path)
+                                          (json/parse-string true)
+                                          :aircraft
+                                          coerce/->aircraft-batch)]
+    (doseq [rejection rejections]
+      (log/warn "Rejected aircraft" rejection))
+    aircraft))
 
 (defn ->source
   "A Source replaying the recorded fixture on a loop (see the ns

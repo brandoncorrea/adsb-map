@@ -191,7 +191,7 @@
    (deftest real-fixture-round-trip
      (let [payload    (json/parse-string
                         (slurp "test/resources/aircraft-sample.json") true)
-           batch      (coerce/->aircraft-batch (:aircraft payload))
+           batch      (:aircraft (coerce/->aircraft-batch (:aircraft payload)))
            collection (geojson/aircraft-picture->feature-collection batch 0)
            positioned (count (filter :aircraft/position batch))]
 

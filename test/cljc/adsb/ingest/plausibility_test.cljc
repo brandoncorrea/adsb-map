@@ -391,7 +391,7 @@
             yields aircraft carrying only aircraft-namespaced keys: no
             r_dst/r_dir, no receiver position"
     (let [raw      (assoc fixtures/ups-2717-raw :r_dst 39.887 :r_dir 231.3)
-          batch    (-> (coerce/->aircraft-batch [raw])
+          batch    (-> (:aircraft (coerce/->aircraft-batch [raw]))
                        (plausibility/gate-range
                          receiver-position
                          plausibility/default-max-range-m))

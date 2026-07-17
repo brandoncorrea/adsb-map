@@ -30,7 +30,7 @@
 (deftest success-path-invokes-callback-with-coerced-batch
   (testing "each poll hands the callback a coerced domain-aircraft batch"
     (let [seen   (atom nil)
-          src    (source/fn-source #(coerce/->aircraft-batch raw-entries))
+          src    (source/fn-source #(:aircraft (coerce/->aircraft-batch raw-entries)))
           poller (poll/start! (merge fast {:source    src
                                            :on-batch! #(reset! seen %)}))]
       (try
@@ -51,7 +51,7 @@
                        (fn []
                          (if (<= (swap! calls inc) fail-count)
                            (throw (ex-info "feeder down" {}))
-                           (coerce/->aircraft-batch raw-entries))))
+                           (:aircraft (coerce/->aircraft-batch raw-entries)))))
           poller     (poll/start! (merge fast {:source    src
                                                :on-batch! #(reset! seen %)}))]
       (try
@@ -78,7 +78,7 @@
           src    (source/fn-source
                    (fn []
                      (swap! calls inc)
-                     (coerce/->aircraft-batch raw-entries)))
+                     (:aircraft (coerce/->aircraft-batch raw-entries))))
           poller (poll/start! (merge fast {:source    src
                                            :on-batch! (fn [_] (throw (ex-info "boom" {})))}))]
       (try
@@ -97,7 +97,7 @@
             straight through the sleep and the thread is still alive."
     (let [in-batch? (atom false)
           landed    (atom 0)
-          src       (source/fn-source #(coerce/->aircraft-batch raw-entries))
+          src       (source/fn-source #(:aircraft (coerce/->aircraft-batch raw-entries)))
           poller    (poll/start!
                       (merge fast
                              {:source    src

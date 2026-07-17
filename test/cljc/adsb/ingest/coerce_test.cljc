@@ -4,7 +4,6 @@
             #?@(:clj [[adsb.schema :as schema]
                       [cheshire.core :as json]
                       [clojure.string :as str]
-                      [clojure.tools.logging :as log]
                       [malli.core :as m]])))
 
 (def cruising-raw
@@ -188,45 +187,48 @@
   (testing "one malformed entry yields the rest of the batch, not an exception"
     (is (= ["abc0e4" "a10202"]
            (mapv :aircraft/icao
-                 (coerce/->aircraft-batch
-                   [cruising-raw mangled-raw bare-mode-s-raw])))))
+                 (:aircraft (coerce/->aircraft-batch
+                             [cruising-raw mangled-raw bare-mode-s-raw]))))))
 
   (testing "survives entries that are not even maps"
     (is (= ["abc0e4"]
            (mapv :aircraft/icao
-                 (coerce/->aircraft-batch
-                   ["junk" nil 42 cruising-raw])))))
+                 (:aircraft (coerce/->aircraft-batch
+                             ["junk" nil 42 cruising-raw]))))))
 
-  (testing "returns an empty vector when the feeder reports no aircraft"
-    (is (= [] (coerce/->aircraft-batch [])))
-    (is (= [] (coerce/->aircraft-batch nil)))))
+  (testing "returns an empty aircraft vector when the feeder reports none"
+    (is (= [] (:aircraft (coerce/->aircraft-batch []))))
+    (is (= [] (:aircraft (coerce/->aircraft-batch nil))))))
 
-#?(:clj
-   (deftest rejection-logging
-     (testing "a rejected entry costs exactly one log line"
-       (let [warnings (atom [])]
-         (with-redefs [log/log* (fn [_ _ _ message]
-                                  (swap! warnings conj message))]
-           (coerce/->aircraft-batch
-             [cruising-raw mangled-raw bare-mode-s-raw]))
-         (is (= 1 (count @warnings)))))
+(deftest ->aircraft-batch-rejections
+  (testing "a dropped entry surfaces as one rejection datum alongside the
+            aircraft that survived — the batch is now pure, so this holds
+            on both platforms; the edge (src/clj) is what logs it"
+    (let [{:keys [aircraft rejections]}
+          (coerce/->aircraft-batch [cruising-raw mangled-raw bare-mode-s-raw])]
+      (is (= ["abc0e4" "a10202"] (mapv :aircraft/icao aircraft)))
+      (is (= 1 (count rejections)))
+      (is (= "badbad" (:hex (first rejections))))
+      (is (string? (:error (first rejections))))))
 
-     (testing "the log line is bounded — never the whole payload"
-       (let [warnings (atom [])
-             huge     (apply str (repeat 10000 "A"))]
-         (with-redefs [log/log* (fn [_ _ _ message]
-                                  (swap! warnings conj message))]
-           (coerce/->aircraft-batch
-             [(assoc cruising-raw :hex huge :flight huge)]))
-         (is (= 1 (count @warnings)))
-         (is (< (count (str (first @warnings))) 1000))))))
+  (testing "a clean payload yields no rejections"
+    (is (= [] (:rejections (coerce/->aircraft-batch [cruising-raw bare-mode-s-raw])))))
+
+  (testing "the rejection context is bounded — never the whole payload, so a
+            stuck bad actor cannot fill the edge's disk when it is logged"
+    (let [huge (apply str (repeat 10000 "A"))
+          {:keys [rejections]}
+          (coerce/->aircraft-batch
+            [(assoc cruising-raw :hex huge :flight huge)])]
+      (is (= 1 (count rejections)))
+      (is (< (count (str (first rejections))) 1000)))))
 
 #?(:clj
    (deftest real-fixture-acceptance
      (let [payload (json/parse-string
                      (slurp "test/resources/aircraft-sample.json") true)
            raw     (:aircraft payload)
-           batch   (coerce/->aircraft-batch raw)]
+           batch   (:aircraft (coerce/->aircraft-batch raw))]
 
        (testing "every aircraft in the real capture is accepted"
          (is (= 51 (count raw)))

@@ -3,8 +3,7 @@
             [clojure.string :as str]
             [malli.core :as m]
             [malli.error :as me]
-            [malli.transform :as mt]
-            #?(:clj [clojure.tools.logging :as log])))
+            [malli.transform :as mt]))
 
 (def ^:private valid-raw? (m/validator schema/raw-aircraft))
 (def ^:private explain-raw (m/explainer schema/raw-aircraft))
@@ -77,22 +76,29 @@
 (defn- rejection-reason [raw]
   (-> raw explain-raw me/humanize))
 
-(defn- log-rejection! [raw reason]
-  (let [context {:hex   (bounded (when (map? raw) (:hex raw))
-                                 max-logged-hex-chars)
-                 :error (bounded reason max-logged-reason-chars)}]
-    #?(:clj  (log/warn "Rejected aircraft" context)
-       :cljs (.warn js/console "Rejected aircraft" (pr-str context)))
-    nil))
+(defn- rejection
+  "The bounded context for a dropped entry — {:hex ... :error ...},
+  with both fields length-capped so a stuck bad actor cannot fill the
+  edge's disk when it is logged. See validation-boundaries.md."
+  [raw reason]
+  {:hex   (bounded (when (map? raw) (:hex raw)) max-logged-hex-chars)
+   :error (bounded reason max-logged-reason-chars)})
 
-(defn- ->aircraft-or-log! [raw]
+(defn- coerce-entry [raw]
   (try
-    (or (->aircraft raw)
-        (log-rejection! raw (rejection-reason raw)))
+    (if-let [aircraft (->aircraft raw)]
+      {:aircraft aircraft}
+      {:rejection (rejection raw (rejection-reason raw))})
     (catch #?(:clj Exception :cljs :default) e
-      (log-rejection! raw (ex-message e)))))
+      {:rejection (rejection raw (ex-message e))})))
 
-(defn ->aircraft-batch [raw-entries]
-  (->> raw-entries
-       (keep ->aircraft-or-log!)
-       vec))
+(defn ->aircraft-batch
+  "Coerce a feeder payload's entries into domain aircraft, pure. Returns
+  {:aircraft [...] :rejections [...]}: the entries that became aircraft,
+  and the bounded context for each that could not. One bad entry never
+  kills the batch — it lands in :rejections. Logging the rejections is
+  the calling edge's job (src/clj), so the domain stays pure."
+  [raw-entries]
+  (let [results (map coerce-entry raw-entries)]
+    {:aircraft   (into [] (keep :aircraft) results)
+     :rejections (into [] (keep :rejection) results)}))

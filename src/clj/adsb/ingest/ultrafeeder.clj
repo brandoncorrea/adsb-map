@@ -2,14 +2,21 @@
   (:require [adsb.ingest.coerce :as coerce]
             [adsb.ingest.source :as source]
             [cheshire.core :as json]
+            [clojure.tools.logging :as log]
             [org.httpkit.client :as http]))
 
 (def ^:private aircraft-json-path "/data/aircraft.json")
 (def ^:const default-timeout-ms 5000)
 
-(defn- parse-payload [body]
+(defn- coerce-batch! [raw-entries]
+  (let [{:keys [aircraft rejections]} (coerce/->aircraft-batch raw-entries)]
+    (doseq [rejection rejections]
+      (log/warn "Rejected aircraft" rejection))
+    aircraft))
+
+(defn- parse-payload! [body]
   (let [{:keys [aircraft messages]} (json/parse-string body true)]
-    {:batch    (coerce/->aircraft-batch aircraft)
+    {:batch    (coerce-batch! aircraft)
      :metadata {:messages messages}}))
 
 (defn- get-text! [url opts]
@@ -34,7 +41,7 @@
                       {:type ::unexpected-status :status status :url url}))
 
       :else
-      (let [{:keys [batch] parsed-metadata :metadata} (parse-payload body)]
+      (let [{:keys [batch] parsed-metadata :metadata} (parse-payload! body)]
         (reset! metadata parsed-metadata)
         batch))))
 
