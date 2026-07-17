@@ -5,11 +5,11 @@
             [adsb.fixtures :as fixtures]
             [adsb.stream]
             [adsb.subs]
+            [adsb.test-dom :as test-dom]
             [adsb.ui.alert :as alert]
             [clojure.test :refer-macros [deftest testing is use-fixtures]]
             [day8.re-frame.test :as rf-test]
-            [re-frame.core :as rf]
-            [reagent.core :as r]))
+            [re-frame.core :as rf]))
 
 (use-fixtures :each {:after rtl/cleanup})
 (rf/reg-event-db :test/set-picture
@@ -19,8 +19,7 @@
   (into {} (map (juxt :aircraft/icao identity)) aircraft))
 
 (defn- render-ribbon! []
-  (rtl/cleanup)
-  (rtl/render (r/as-element [alert/alert-ribbon])))
+  (test-dom/render! [alert/alert-ribbon]))
 
 (def ^:private hijack
   (assoc fixtures/ups-2717

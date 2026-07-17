@@ -5,11 +5,11 @@
             [adsb.fixtures :as fixtures]
             [adsb.stream]
             [adsb.subs]
+            [adsb.test-dom :as test-dom]
             [adsb.ui.follow :as follow]
             [clojure.test :refer-macros [deftest is use-fixtures async]]
             [day8.re-frame.test :as rf-test]
-            [re-frame.core :as rf]
-            [reagent.core :as r]))
+            [re-frame.core :as rf]))
 
 (use-fixtures :each
   {:before (fn [] (rf/dispatch-sync [:app/initialize-db]))
@@ -24,8 +24,7 @@
 (def ^:private ups-icao (:aircraft/icao ups))
 
 (defn- render-follow! []
-  (rtl/cleanup)
-  (rtl/render (r/as-element [follow/follow-control])))
+  (test-dom/render! [follow/follow-control]))
 
 (deftest follow-control-hidden-without-selection
   (rf-test/run-test-sync

@@ -5,11 +5,11 @@
             [adsb.stream :as stream]
             [adsb.stream.source :as source]
             [adsb.subs]
+            [adsb.test-dom :as test-dom]
             [adsb.ui.health :as health]
             [clojure.test :refer-macros [deftest testing is use-fixtures]]
             [day8.re-frame.test :as rf-test]
-            [re-frame.core :as rf]
-            [reagent.core :as r]))
+            [re-frame.core :as rf]))
 
 (use-fixtures :each {:after rtl/cleanup})
 
@@ -21,8 +21,7 @@
   (fn [db [_ n]] (assoc db :feeder/silent-frames n)))
 
 (defn- render-header! []
-  (rtl/cleanup)
-  (rtl/render (r/as-element [health/health])))
+  (test-dom/render! [health/health]))
 
 (deftest a-reachable-feeder-that-hears-nothing-is-not-ok
   (testing "a feeder claiming :ok while its messages have stopped reads :silent"

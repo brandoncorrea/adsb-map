@@ -5,6 +5,7 @@
             [adsb.fixtures :as fixtures]
             [adsb.stream]
             [adsb.subs]
+            [adsb.test-dom :as test-dom]
             [adsb.ui.roster :as roster]
             [clojure.test :refer-macros [deftest is testing use-fixtures async]]
             [day8.re-frame.test :as rf-test]
@@ -27,8 +28,7 @@
    (:aircraft/icao fixtures/on-the-ground) fixtures/on-the-ground})
 
 (defn- render-roster! []
-  (rtl/cleanup)
-  (rtl/render (r/as-element [roster/roster])))
+  (test-dom/render! [roster/roster]))
 
 (defn- fresh-db! []
   (rf/dispatch-sync [:app/initialize-db]))
@@ -205,11 +205,13 @@
       (let [dock (.getByTestId rtl/screen "roster")]
         (pointer! dock "pointerdown" {:clientY 700})
         (pointer! dock "pointermove" {:clientY 300})
-        (pointer! dock "pointerup" {:clientY 300})
-        (-> (rtl/waitFor
-              (fn []
-                (assert (not (cjs/has-class? dock "is-dragging")))
-                (assert (not (cjs/has-class? dock "is-settling")))))
+        (-> (rtl/waitFor (fn [] (assert (cjs/has-class? dock "is-dragging"))))
+            (.then (fn [_]
+                     (pointer! dock "pointerup" {:clientY 300})
+                     (rtl/waitFor
+                       (fn []
+                         (assert (not (cjs/has-class? dock "is-dragging")))
+                         (assert (not (cjs/has-class? dock "is-settling")))))))
             (.then (fn [_]
                      (let [committed (cjs/get-attribute dock "data-sheet")
                            settled-h (-> dock .-style .-height)]

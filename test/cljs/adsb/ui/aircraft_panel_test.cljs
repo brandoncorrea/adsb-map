@@ -5,6 +5,7 @@
             [adsb.fixtures :as fixtures]
             [adsb.stream]
             [adsb.subs]
+            [adsb.test-dom :as test-dom]
             [adsb.ui.aircraft-panel :as panel]
             [clojure.string :as str]
             [clojure.test :refer-macros [deftest testing is use-fixtures async]]
@@ -24,8 +25,7 @@
 (def ^:private ups-icao (:aircraft/icao fixtures/ups-2717))
 
 (defn- render-panel! []
-  (rtl/cleanup)
-  (rtl/render (r/as-element [panel/aircraft-panel])))
+  (test-dom/render! [panel/aircraft-panel]))
 
 (defn- fresh-db! [] (rf/dispatch-sync [:app/initialize-db]))
 
