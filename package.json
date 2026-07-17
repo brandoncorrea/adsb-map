@@ -2,7 +2,7 @@
   "name": "adsb",
   "private": true,
   "dependencies": {
-    "maplibre-gl": "^4.7.1",
+    "maplibre-gl": "^5.24.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
