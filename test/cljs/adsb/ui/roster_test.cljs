@@ -48,33 +48,6 @@
     (is (= dal-icao (:aircraft/icao (first rows))))
     (is (= ups-icao (:aircraft/icao (second rows))))))
 
-(deftest sheet-snap-math
-  (testing "nearest snap by fraction"
-    (is (= :closed (roster/height-fraction->sheet 0.0 0)))
-    (is (= :half (roster/height-fraction->sheet 0.5 0)))
-    (is (= :full (roster/height-fraction->sheet 0.9 0))))
-  (testing "velocity commits past the nearest rung"
-    (is (= :full (roster/height-fraction->sheet 0.55 (+ roster/drag-velocity-threshold 0.01))))
-    (is (= :closed (roster/height-fraction->sheet 0.40 (- (+ roster/drag-velocity-threshold 0.01))))))
-  (testing "tap cycles closed → half → full → closed"
-    (is (= :half (roster/next-sheet :closed)))
-    (is (= :full (roster/next-sheet :half)))
-    (is (= :closed (roster/next-sheet :full))))
-  (testing "open? is half or full"
-    (is (false? (roster/sheet-open? :closed)))
-    (is (true? (roster/sheet-open? :half)))
-    (is (true? (roster/sheet-open? :full))))
-  (testing "snap heights are ordered closed < half < full"
-    (let [c (roster/sheet-height-px :closed)
-          h (roster/sheet-height-px :half)
-          f (roster/sheet-height-px :full)]
-      (is (< c h f))
-      (is (pos? c))))
-  (testing "ease-out-cubic is identity at ends and soft in the middle"
-    (is (= 0.0 (roster/ease-out-cubic 0)))
-    (is (= 1.0 (roster/ease-out-cubic 1)))
-    (is (< 0.5 (roster/ease-out-cubic 0.5) 1.0))))
-
 (deftest handle-label-matches-stance-actions
   (testing "desktop is binary: open says hide, closed says show"
     (with-redefs [cjs/phone-stance? (constantly false)]

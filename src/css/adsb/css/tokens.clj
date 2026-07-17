@@ -35,6 +35,15 @@
     :--s5 "16px"
 
     :--roster-w "300px"
+    ;; Collapsed desktop roster rail — the vertical strip left when the dock
+    ;; is shut. Mirrored on phone by --roster-rail-h.
+    :--roster-rail-w "40px"
+
+    ;; MapLibre chrome we sit above in the bottom-right corner (adsb-jg4):
+    ;; --maplibre-ctrl-margin is MapLibre's default control margin; the follow
+    ;; reticle clears the compact attribution (i) button by --maplibre-attribution.
+    :--maplibre-ctrl-margin "10px"
+    :--maplibre-attribution "34px"
 
     :--safe-top "env(safe-area-inset-top, 0px)"
     :--safe-right "env(safe-area-inset-right, 0px)"

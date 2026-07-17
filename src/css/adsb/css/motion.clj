@@ -6,11 +6,6 @@
     ["from" {:opacity   0
              :transform "translateY(-4px)"}]))
 
-(def settle-up
-  (at-keyframes "adsb-settle-up"
-    ["from" {:opacity   0
-             :transform "translateY(4px)"}]))
-
 (def breathe
   (at-keyframes "adsb-breathe"
     ["0%" {:opacity 1}]
@@ -46,4 +41,4 @@
     [:.adsb-roster
      {:transition "none"}]))
 
-(def styles [settle settle-up breathe ring-draw mayday-draw])
+(def styles [settle breathe ring-draw mayday-draw])

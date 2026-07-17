@@ -1,6 +1,19 @@
 (ns adsb.css.shell
   (:require [adsb.css.decl :refer [decl]]))
 
+;; Screen-reader-only: present in the accessibility tree, gone from layout.
+;; Shared by .adsb-vh here and the roster's conn/feeder labels (adsb.css.roster).
+(def visually-hidden
+  {:position    "absolute"
+   :width       "1px"
+   :height      "1px"
+   :margin      "-1px"
+   :padding     0
+   :overflow    "hidden"
+   :clip-path   "inset(50%)"
+   :white-space "nowrap"
+   :border      0})
+
 (def base
   [[:html :body :#app
     {:margin 0
@@ -30,8 +43,8 @@
    [:.adsb-follow-control
     (decl :position "absolute"
           :z-index 2
-          :right "calc(var(--roster-w) + var(--safe-right) + 10px)"
-          :bottom "calc(var(--safe-bottom) + 10px + 34px)"
+          :right "calc(var(--roster-w) + var(--safe-right) + var(--maplibre-ctrl-margin))"
+          :bottom "calc(var(--safe-bottom) + var(--maplibre-ctrl-margin) + var(--maplibre-attribution))"
           :display "inline-flex"
           :align-items "center"
           :justify-content "center"
@@ -59,16 +72,7 @@
     {:outline        "2px solid var(--magenta)"
      :outline-offset "2px"}]
 
-   [:.adsb-vh
-    {:position    "absolute"
-     :width       "1px"
-     :height      "1px"
-     :margin      "-1px"
-     :padding     0
-     :overflow    "hidden"
-     :clip-path   "inset(50%)"
-     :white-space "nowrap"
-     :border      0}]])
+   [:.adsb-vh visually-hidden]])
 
 (def health
   [[:.adsb-conn :.adsb-feeder
@@ -105,11 +109,12 @@
     {:color        "var(--ok)"
      :border-color "var(--rule)"}]
 
-   [:.adsb-conn-reconnecting
+   ;; Warn trio and down duo: the conn and feeder health states share a look.
+   [:.adsb-conn-reconnecting :.adsb-feeder-starting :.adsb-feeder-silent
     {:color        "var(--warn)"
      :border-color "var(--warn)"}]
 
-   [:.adsb-conn-down
+   [:.adsb-conn-down :.adsb-feeder-down
     {:color        "var(--on-emergency)"
      :background   "var(--emergency)"
      :border-color "var(--emergency)"}]
@@ -123,21 +128,8 @@
     {:width  "9px"
      :height "9px"}]
 
-   [:.adsb-feeder-starting
-    {:color        "var(--warn)"
-     :border-color "var(--warn)"}]
-
-   [:.adsb-feeder-silent
-    {:color        "var(--warn)"
-     :border-color "var(--warn)"}]
-
    [:.adsb-feeder-unknown
     {:color        "var(--faded-ink)"
-     :border-color "var(--rule)"}]
-
-   [:.adsb-feeder-down
-    {:color        "var(--on-emergency)"
-     :background   "var(--emergency)"
-     :border-color "var(--emergency)"}]])
+     :border-color "var(--rule)"}]])
 
 (def styles [base health])
