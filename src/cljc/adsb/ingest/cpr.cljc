@@ -31,6 +31,8 @@
     odd-zone-count
     even-zone-count))
 
+;; Duplicated with adsb.geo/normalize-lon-deg — kept local so this CPR spec
+;; math stays dependency-free (cpr does not require geo).
 (defn- normalize-lon [lon]
   (-> lon
       (+ 540.0)

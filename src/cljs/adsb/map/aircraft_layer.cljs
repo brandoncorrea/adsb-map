@@ -1,6 +1,6 @@
 (ns adsb.map.aircraft-layer
   (:require [adsb.corejs :as cjs]
-            [adsb.geo :as geo]
+            [adsb.geojson :as geojson]
             [adsb.map.maplibre :as maplibre]
             [adsb.map.style :as style]
             [adsb.map.theme :as theme]
@@ -184,12 +184,12 @@
 (defn clear-interval! [id] (js/clearInterval id))
 
 (defn picture->feature-collection [picture at-ms]
-  (geo/aircraft-picture->feature-collection (vals picture) at-ms))
+  (geojson/aircraft-picture->feature-collection (vals picture) at-ms))
 
 (defn- push! [m history picture]
   (let [fc       (picture->feature-collection picture (cjs/now-ms))
         trail-fc (->> (into #{} (map (comp :icao :properties)) (:features fc))
-                      (trails/history->trail-feature-collection history))]
+                      (geojson/history->trail-feature-collection history))]
     (maplibre/set-source-data! m trail-source-id trail-fc)
     (maplibre/set-source-data! m source-id fc)))
 

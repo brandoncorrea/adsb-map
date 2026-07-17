@@ -1,4 +1,7 @@
-(ns adsb.trails)
+(ns adsb.trails
+  "Per-aircraft position history — the ring-buffer domain that accumulates a
+   trail across frames. The GeoJSON shaping of these rings into LineString
+   features lives in adsb.geojson.")
 
 (def ^:const max-positions 60)
 
@@ -22,18 +25,3 @@
           (cond-> acc ring (assoc icao ring)))))
     {}
     picture))
-
-(defn- trail-feature [icao ring]
-  {:type       "Feature"
-   :properties {:icao icao}
-   :geometry   {:type        "LineString"
-                :coordinates (mapv (juxt :geo/lon :geo/lat) ring)}})
-
-(defn history->trail-feature-collection [history live-icaos]
-  {:type     "FeatureCollection"
-   :features (->> history
-                  (keep (fn [[icao ring]]
-                          (when (and (contains? live-icaos icao)
-                                     (>= (count ring) 2))
-                            (trail-feature icao ring))))
-                  (into []))})

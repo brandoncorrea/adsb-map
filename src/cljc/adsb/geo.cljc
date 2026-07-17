@@ -1,14 +1,21 @@
 (ns adsb.geo
-  (:require [adsb.aircraft :as aircraft]
-            [clojure.math :as math]))
+  "Pure geodesy — bearing, distance, destination, circles, bounds, and the
+   viewport edge annotation. No I/O, no clock, no aircraft. GeoJSON
+   presentation lives in adsb.geojson."
+  (:require [clojure.math :as math]))
 
 (def ^:const earth-radius-m 6371000)
 (def ^:const meters-per-km 1000)
 (def ^:const meters-per-nm 1852)
 (def ^:const seconds-per-hour 3600)
-(def ^:const millis-per-second 1000)
 
 (defn- square [x] (* x x))
+
+(defn normalize-lon-deg
+  "Wrap a longitude in degrees into the half-open range [-180, 180).
+   NOTE: adsb.ingest.cpr keeps its own copy to stay dependency-free spec math."
+  [lon]
+  (-> lon (+ 540.0) (mod 360.0) (- 180.0)))
 
 (defn bearing [from to]
   (let [lat1 (math/to-radians (:geo/lat from))
@@ -49,7 +56,7 @@
                                (- (math/cos angular)
                                   (* (math/sin lat1) (math/sin lat2)))))]
     {:geo/lat (math/to-degrees lat2)
-     :geo/lon (-> (math/to-degrees lon2) (+ 540) (mod 360) (- 180))}))
+     :geo/lon (normalize-lon-deg (math/to-degrees lon2))}))
 
 (def ^:const default-circle-segments 128)
 
@@ -97,45 +104,3 @@
              :edge/y           (clamp01 (+ 0.5 (* t dy)))
              :edge/bearing-deg (bearing centre target)
              :edge/distance-m  (distance centre target)}))))))
-
-(def ^:const ground-altitude "ground")
-
-(defn- stale-property [aircraft now-ms]
-  (when (:aircraft/seen-at-ms aircraft)
-    (aircraft/stale? aircraft now-ms)))
-
-(defn- age-property [aircraft now-ms]
-  (when-let [seen-at-ms (:aircraft/seen-at-ms aircraft)]
-    (/ (- now-ms seen-at-ms) millis-per-second)))
-
-(defn- feature-properties [aircraft now-ms]
-  (let [{:aircraft/keys [icao callsign track-deg altitude-ft on-ground? category mlat?]} aircraft
-        stale (stale-property aircraft now-ms)
-        age   (age-property aircraft now-ms)]
-    (cond-> {:icao      icao
-             :emergency (aircraft/emergency? aircraft)}
-            callsign (assoc :callsign callsign)
-            track-deg (assoc :track track-deg)
-            category (assoc :category category)
-            on-ground? (assoc :altitude ground-altitude)
-            altitude-ft (assoc :altitude altitude-ft)
-            (some? stale) (assoc :stale stale)
-            (some? age) (assoc :age-s age)
-            mlat? (assoc :mlat true))))
-
-(defn aircraft->feature [aircraft now-ms]
-  (when-let [{:geo/keys [lat lon]} (:aircraft/position aircraft)]
-    {:type       "Feature"
-     :geometry   {:type "Point" :coordinates [lon lat]}
-     :properties (feature-properties aircraft now-ms)}))
-
-(defn- present? [aircraft now-ms]
-  (not (and (:aircraft/seen-at-ms aircraft)
-            (aircraft/aged-out? aircraft now-ms))))
-
-(defn aircraft-picture->feature-collection [aircraft-picture now-ms]
-  {:type     "FeatureCollection"
-   :features (->> aircraft-picture
-                  (filter #(present? % now-ms))
-                  (keep #(aircraft->feature % now-ms))
-                  (into []))})

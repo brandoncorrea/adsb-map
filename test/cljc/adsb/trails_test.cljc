@@ -92,38 +92,3 @@
 
   (testing "a never-positioned aircraft contributes no ring at all"
     (is (= {} (trails/accumulate {} [fixtures/never-positioned])))))
-
-(deftest trail-collection-emits-a-linestring-per-live-multi-point-ring
-  (let [icao (:aircraft/icao fixtures/ups-2717)
-        ring [(pos 27.0 -83.0) (pos 27.1 -83.1) (pos 27.2 -83.2)]
-        coll (trails/history->trail-feature-collection {icao ring} #{icao})
-        feat (first (:features coll))]
-    (testing "a well-formed FeatureCollection with one LineString"
-      (is (= "FeatureCollection" (:type coll)))
-      (is (= 1 (count (:features coll))))
-      (is (= "LineString" (get-in feat [:geometry :type]))))
-
-    (testing "coordinates are [lon lat], oldest first — tail (progress 0) to
-              head (progress 1)"
-      (is (= [[-83.0 27.0] [-83.1 27.1] [-83.2 27.2]]
-             (get-in feat [:geometry :coordinates]))))
-
-    (testing "the feature carries its icao"
-      (is (= icao (get-in feat [:properties :icao]))))))
-
-(deftest trail-collection-omits-lone-points-and-non-live-aircraft
-  (let [icao (:aircraft/icao fixtures/ups-2717)]
-    (testing "a single-point ring is not a line — no feature"
-      (is (empty? (:features
-                    (trails/history->trail-feature-collection
-                      {icao [(pos 27.0 -83.0)]} #{icao})))))
-
-    (testing "an aircraft not in live-icaos (aged out / departed) leaves no
-              trail, even with a multi-point ring"
-      (is (empty? (:features
-                    (trails/history->trail-feature-collection
-                      {icao [(pos 27.0 -83.0) (pos 27.1 -83.1)]} #{})))))
-
-    (testing "an empty history yields an empty, well-formed collection"
-      (is (= {:type "FeatureCollection" :features []}
-             (trails/history->trail-feature-collection {} #{icao}))))))
