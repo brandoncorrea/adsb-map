@@ -132,8 +132,6 @@
         expanded? (rf/subscribe [:panel/expanded?])]
     (fn []
       (when-let [aircraft @selected]
-        (let [icao (:aircraft/icao aircraft)]
-          (rf/dispatch [:enrich/ensure icao])
-          (panel-body aircraft @now
-                      @(rf/subscribe [:enrich/record icao])
-                      @expanded?))))))
+        [panel-body aircraft @now
+         @(rf/subscribe [:enrich/record (:aircraft/icao aircraft)])
+         @expanded?]))))

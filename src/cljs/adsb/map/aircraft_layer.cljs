@@ -135,43 +135,18 @@
   (doseq [[icon-id draw!] icons]
     (maplibre/add-image! m icon-id (->icon-image draw!) {:sdf true})))
 
-;; Clicking the already-selected aircraft arms a DELAYED deselect so a
-;; double-click can cancel it and follow instead; follow-dedupe suppresses
-;; the duplicate when the click (detail>=2) and dblclick paths both fire.
-(def ^:private deselect-arm-ms 350)
-(defonce ^:private !pending-deselect (atom nil))
-(def ^:private follow-dedupe-ms 400)
-(defonce ^:private !last-follow-ms (atom 0))
-
-(defn- cancel-pending-deselect! []
-  (when-let [id @!pending-deselect]
-    (js/clearTimeout id)
-    (reset! !pending-deselect nil)))
-
-(defn- dblclick-follow! [props]
-  (cancel-pending-deselect!)
+;; The layer only reports the click intent; the select/arm/follow/dedupe
+;; decision lives in the :aircraft/click event (see adsb.events). A dblclick
+;; is inherently a double-click, so it reports detail 2 and rides the same
+;; dedupe as a click(detail>=2).
+(defn- click! [props]
   (when-let [icao (:icao props)]
-    (let [now (cjs/now-ms)]
-      (when (> (- now @!last-follow-ms) follow-dedupe-ms)
-        (reset! !last-follow-ms now)
-        (rf/dispatch [:aircraft/dblclick-follow icao])))))
+    (rf/dispatch [:aircraft/click {:icao   icao
+                                   :detail (or (:click/detail props) 1)}])))
 
-(defn- select! [props]
+(defn- dblclick! [props]
   (when-let [icao (:icao props)]
-    (let [detail (or (:click/detail props) 1)]
-      (if (>= detail 2)
-        (dblclick-follow! props)
-        (let [selected @(rf/subscribe [:aircraft/selected-icao])]
-          (if (= icao selected)
-            (do (cancel-pending-deselect!)
-                (reset! !pending-deselect
-                        (js/setTimeout
-                          (fn []
-                            (reset! !pending-deselect nil)
-                            (rf/dispatch [:aircraft/select icao]))
-                          deselect-arm-ms)))
-            (do (cancel-pending-deselect!)
-                (rf/dispatch [:aircraft/select icao]))))))))
+    (rf/dispatch [:aircraft/click {:icao icao :detail 2}])))
 
 (defn- hover-enter! [props]
   (when-let [icao (:icao props)]
@@ -206,8 +181,8 @@
            (maplibre/add-layer! m (trail-layer-spec theme))
            (maplibre/add-source! m source-id source-spec)
            (maplibre/add-layer! m (layer-spec theme))
-           (maplibre/on-layer-click! m layer-id select!)
-           (maplibre/on-layer-dblclick! m layer-id dblclick-follow!)
+           (maplibre/on-layer-click! m layer-id click!)
+           (maplibre/on-layer-dblclick! m layer-id dblclick!)
            (maplibre/on-layer-hover! m layer-id hover-enter! hover-leave!)
            (swap! !state assoc :track
                   (r/track!

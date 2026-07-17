@@ -200,7 +200,7 @@
       (is (= 0.5 (first (last half-outline))))
       (is (every? (fn [[x y]] (and (<= 0.0 x 1.0) (<= 0.0 y 1.0))) half-outline)))))
 
-(deftest clicking-a-feature-dispatches-select-with-its-icao
+(deftest clicking-a-feature-dispatches-click-with-its-icao-and-detail
   (rf-test/run-test-sync
     (let [{:keys [m rec] :as fake} (recording-map)
           handle     (layer/attach! m)
@@ -214,10 +214,12 @@
         ((:on-layer-click @rec) {:icao         "abc0e4"
                                  :callsign     "UPS2717"
                                  :click/detail 1}))
-      (is (= [[:aircraft/select "abc0e4"]] @dispatched))
+      (testing "the layer forwards the click intent — icao and detail — to the
+                event; select/arm/follow/dedupe now live in :aircraft/click"
+        (is (= [[:aircraft/click {:icao "abc0e4" :detail 1}]] @dispatched)))
       (layer/detach! handle))))
 
-(deftest multi-click-and-dblclick-dispatch-follow
+(deftest click-and-dblclick-both-report-a-click-event
   (rf-test/run-test-sync
     (let [{:keys [m rec] :as fake} (recording-map)
           handle     (layer/attach! m)
@@ -226,7 +228,10 @@
       (with-redefs [rf/dispatch (fn [ev] (swap! dispatched conj ev))]
         ((:on-layer-click @rec) {:icao "abc0e4" :click/detail 2})
         ((:on-layer-dblclick @rec) {:icao "abc0e4" :callsign "UPS2717"}))
-      (is (= [[:aircraft/dblclick-follow "abc0e4"]] @dispatched))
+      (testing "a double-click reports detail 2, and the dblclick path reports
+                detail 2 too — the event dedupes the pair into one follow"
+        (is (= [[:aircraft/click {:icao "abc0e4" :detail 2}]
+                [:aircraft/click {:icao "abc0e4" :detail 2}]] @dispatched)))
       (layer/detach! handle))))
 
 (deftest frames-before-map-load-buffer-latest-wins

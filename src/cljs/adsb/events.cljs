@@ -1,18 +1,82 @@
 (ns adsb.events
-  (:require [re-frame.core :as rf]))
+  (:require [adsb.corejs :as cjs]
+            [adsb.worker :as worker]
+            [re-frame.core :as rf]))
 
 (rf/reg-event-db :app/initialize-db (constantly {}))
 
-(rf/reg-event-db
+;; Clicking the already-selected aircraft arms a DELAYED deselect so a
+;; double-click can cancel it and follow instead; follow-dedupe suppresses
+;; the duplicate when the click (detail>=2) and dblclick paths both fire.
+(def ^:const deselect-arm-ms 350)
+(def ^:const follow-dedupe-ms 400)
+
+;; The armed-deselect timer is an opaque JS handle, not app state — it lives
+;; in a module atom behind cancel/arm effects, the same shape stream.cljs uses
+;; for its reconnect timer. The click INTENT (select/arm/follow/dedupe) is data
+;; and lives in the event handler; only the timer resource lives here.
+(defonce ^:private !deselect-timer (atom nil))
+
+(defn- cancel-deselect! []
+  (when-let [id @!deselect-timer]
+    (worker/clear-timeout id)
+    (reset! !deselect-timer nil)))
+
+(defn- arm-deselect! [icao]
+  (cancel-deselect!)
+  (reset! !deselect-timer
+          (worker/timeout
+            (fn []
+              (reset! !deselect-timer nil)
+              (rf/dispatch [:aircraft/select icao]))
+            deselect-arm-ms)))
+
+(rf/reg-fx :aircraft/cancel-deselect (fn [_] (cancel-deselect!)))
+(rf/reg-fx :aircraft/arm-deselect arm-deselect!)
+
+(rf/reg-cofx :now (fn [cofx] (assoc cofx :now (cjs/now-ms))))
+
+(defn click-fx
+  "The pure click-intent decision. Given the db, the current time, and a
+  click {:icao :detail}, returns the re-frame effect map: select now on a
+  fresh single click; arm a delayed deselect when the already-selected
+  aircraft is single-clicked (so a double-click can cancel it); or follow on
+  a double-click (detail>=2), deduped within follow-dedupe-ms so the
+  click(detail>=2) and dblclick paths do not both fire."
+  [db now {:keys [icao detail]}]
+  (let [detail (or detail 1)]
+    (cond
+      (>= detail 2)
+      (if (> (- now (:aircraft/last-follow-ms db 0)) follow-dedupe-ms)
+        {:db (assoc db :aircraft/last-follow-ms now)
+         :fx [[:aircraft/cancel-deselect nil]
+              [:dispatch [:aircraft/dblclick-follow icao]]]}
+        {:fx [[:aircraft/cancel-deselect nil]]})
+
+      (= icao (:aircraft/selected-icao db))
+      {:fx [[:aircraft/arm-deselect icao]]}
+
+      :else
+      {:fx [[:aircraft/cancel-deselect nil]
+            [:dispatch [:aircraft/select icao]]]})))
+
+(rf/reg-event-fx
+  :aircraft/click
+  [(rf/inject-cofx :now)]
+  (fn [{:keys [db now]} [_ props]]
+    (click-fx db now props)))
+
+(rf/reg-event-fx
   :aircraft/select
-  (fn [db [_ icao]]
+  (fn [{:keys [db]} [_ icao]]
     (if (= icao (:aircraft/selected-icao db))
-      (dissoc db :aircraft/selected-icao
-                 :aircraft/hovered-icao
-                 :map/camera-mode)
-      (-> db
-          (assoc :aircraft/selected-icao icao :map/camera-mode :free)
-          (dissoc :aircraft/hovered-icao)))))
+      {:db (dissoc db :aircraft/selected-icao
+                      :aircraft/hovered-icao
+                      :map/camera-mode)}
+      {:db (-> db
+               (assoc :aircraft/selected-icao icao :map/camera-mode :free)
+               (dissoc :aircraft/hovered-icao))
+       :fx [[:dispatch [:enrich/ensure icao]]]})))
 
 (rf/reg-event-db
   :aircraft/clear-selection
@@ -49,7 +113,8 @@
       {:db (cond
              (not pos) db*
              (and selected? (following? db)) (free-camera db*)
-             :else (assoc db* :map/camera-mode :follow))})))
+             :else (assoc db* :map/camera-mode :follow))
+       :fx [[:dispatch [:enrich/ensure icao]]]})))
 
 (defn- selected-positioned? [db]
   (when-let [icao (:aircraft/selected-icao db)]
