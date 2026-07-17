@@ -11,4 +11,5 @@
          :ns-regexp "-test$"
          :runner-ns adsb.test-runner
          :devtools  {:preloads [adsb.react-devtools-hook
+                                adsb.test-flush
                                 adsb.test-console]}}}}
