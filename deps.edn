@@ -1,5 +1,5 @@
 {:paths   ["src/clj" "src/cljc" "src/cljs" "resources"]
- :deps    {org.clojure/clojure            {:mvn/version "1.12.5"}
+ :deps    {org.clojure/clojure            {:mvn/version "1.13.0-alpha4"}
            ch.qos.logback/logback-classic {:mvn/version "1.5.38"}
            cheshire/cheshire              {:mvn/version "6.2.0"}
            http-kit/http-kit              {:mvn/version "2.9.0-beta3"} ;; SSE client disconnects never fire :on-close on 2.8.x
