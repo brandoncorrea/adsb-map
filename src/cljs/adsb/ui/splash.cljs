@@ -30,7 +30,8 @@
       (cjs/add-class el error-class)
       (when-let [note (cjs/select el note-selector)]
         (set! (.-textContent note) failed-note))
-      ;; TODO: Should be (.addEventListener el ...)
+      ;; set!, not addEventListener: a repeated failure event must not stack
+      ;; a second click listener.
       (set! (.-onclick el) cjs/refresh!))))
 
 (rf/reg-event-fx

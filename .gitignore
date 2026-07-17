@@ -31,3 +31,4 @@ target/
 
 # Secrets
 .env
+.claude/worktrees/

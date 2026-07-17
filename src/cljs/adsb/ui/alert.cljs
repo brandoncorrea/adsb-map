@@ -43,7 +43,6 @@
           :on-click    on-alert-click!}
          [:span.adsb-alert-stamp {:aria-hidden true} "NOTAM"]
          [:div.adsb-alert-rows
-          ;; TODO: for-all
           (doall
             (for [a alerts]
               ^{:key (:aircraft/icao a)}

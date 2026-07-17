@@ -43,12 +43,12 @@
   (let [es     (js/EventSource. url)
         data-> (fn [callback] (fn [e] (-> e .-data callback)))
         frame  (data-> on-frame)]
-    (set! (.-onopen es) (fn [_] (on-open)))                 ;; TODO: (.addEventListener es "open" ...)
+    (set! (.-onopen es) (fn [_] (on-open)))
     (.addEventListener es "snapshot" frame)
     (.addEventListener es "update" frame)
     (.addEventListener es "aircraft" (data-> on-aircraft))
     (.addEventListener es "stats" (data-> on-stats))
     (.addEventListener es "config" (data-> on-config))
-    (set! (.-onerror es) (fn [_] (on-error (ready-state-kw es)))) ;; TODO: (.addEventListener es "error" ...)
+    (set! (.-onerror es) (fn [_] (on-error (ready-state-kw es))))
     (reify Connection
       (close! [_] (.close es)))))
