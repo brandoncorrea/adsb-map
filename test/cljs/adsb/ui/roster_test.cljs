@@ -159,7 +159,13 @@
             klass (cjs/get-attribute dock "class")]
         (pointer! dock "pointerdown" {:clientY 700})
         (pointer! dock "pointermove" {:clientY 697})
-        (-> (rtl/waitFor (fn [] (assert (some? dock))))
+        ;; A negative assertion — the press must NOT start a gesture — has no
+        ;; positive signal to wait on. `(rtl/waitFor (some? dock))` was vacuous:
+        ;; dock is non-nil before the press, so waitFor resolved on its first
+        ;; check and asserted against pre-settle DOM. If a 3px move ever started
+        ;; a drag, is-dragging / inline height would land a frame or two later,
+        ;; unseen. settle! drains those frames so the assertions are evidence.
+        (-> (test-dom/settle!)
             (.then (fn [_]
                      (is (= klass (cjs/get-attribute dock "class")))
                      (is (nil? (.queryByTestId rtl/screen "roster-list")))
