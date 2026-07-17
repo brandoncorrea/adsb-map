@@ -1,5 +1,6 @@
 (ns adsb.css.tokens
   (:require [adsb.css.decl :refer [decl]]
+            [adsb.palette :as palette]
             [garden.selectors :as s]
             [garden.stylesheet :refer [at-font-face at-media]]))
 
@@ -40,48 +41,48 @@
     :--safe-bottom "env(safe-area-inset-bottom, 0px)"
     :--safe-left "env(safe-area-inset-left, 0px)"
 
-    :--paper "#E2E8DE"
-    :--paper-chrome "#ECF1E8"
-    :--paper-veil "rgba(236, 241, 232, 0.92)"
-    :--paper-halo "rgba(236, 241, 232, 0.7)"
-    :--ink "#1B2A1D"
-    :--faded-ink "#506049"
-    :--contour "#A6BF9E"
-    :--magenta "#A5385C"
-    :--aero "#2A6358"
-    :--emergency "#CE2029"
-    :--on-emergency "#FBF3E4"
-    :--alt-ground "#8A8374"
-    :--alt-unknown "#9A937F"
-    :--ok "#55722F"
-    :--warn "#8F6318"
-    :--rule "rgba(27, 42, 29, 0.3)"
-    :--rule-strong "rgba(27, 42, 29, 0.5)"
-    :--rule-faint "rgba(27, 42, 29, 0.08)"
+    :--paper (palette/swatch :day :paper)
+    :--paper-chrome (palette/swatch :day :paper-chrome)
+    :--paper-veil (palette/rgba :day :paper-chrome 0.92)
+    :--paper-halo (palette/rgba :day :paper-chrome 0.7)
+    :--ink (palette/swatch :day :ink)
+    :--faded-ink (palette/swatch :day :faded-ink)
+    :--contour (palette/swatch :day :contour)
+    :--magenta (palette/swatch :day :magenta)
+    :--aero (palette/swatch :day :aero)
+    :--emergency (palette/swatch :day :emergency)
+    :--on-emergency (palette/swatch :day :on-emergency)
+    :--alt-ground (palette/swatch :day :alt-ground)
+    :--alt-unknown (palette/swatch :day :alt-unknown)
+    :--ok (palette/swatch :day :ok)
+    :--warn (palette/swatch :day :warn)
+    :--rule (palette/rgba :day :ink 0.3)
+    :--rule-strong (palette/rgba :day :ink 0.5)
+    :--rule-faint (palette/rgba :day :ink 0.08)
 
     :--mono "\"Space Mono\", ui-monospace, Menlo, Consolas, monospace"
     :--serif "var(--mono)"
     :--sans "var(--mono)"))
 
 (def night-tokens
-  {:--paper        "#151B26"
-   :--paper-chrome "#1B2330"
-   :--paper-veil   "rgba(27, 35, 48, 0.92)"
-   :--paper-halo   "rgba(27, 35, 48, 0.7)"
-   :--ink          "#E9E2CE"
-   :--faded-ink    "#8D96A8"
-   :--contour      "#2E3A49"
-   :--magenta      "#E77E9B"
-   :--aero         "#8BA9D6"
-   :--emergency    "#FF5A4D"
-   :--on-emergency "#1C1210"
-   :--alt-ground   "#6E7686"
-   :--alt-unknown  "#7C8494"
-   :--ok           "#8FBF6F"
-   :--warn         "#D9A648"
-   :--rule         "rgba(233, 226, 206, 0.3)"
-   :--rule-strong  "rgba(233, 226, 206, 0.5)"
-   :--rule-faint   "rgba(233, 226, 206, 0.08)"})
+  {:--paper        (palette/swatch :night :paper)
+   :--paper-chrome (palette/swatch :night :paper-chrome)
+   :--paper-veil   (palette/rgba :night :paper-chrome 0.92)
+   :--paper-halo   (palette/rgba :night :paper-chrome 0.7)
+   :--ink          (palette/swatch :night :ink)
+   :--faded-ink    (palette/swatch :night :faded-ink)
+   :--contour      (palette/swatch :night :contour)
+   :--magenta      (palette/swatch :night :magenta)
+   :--aero         (palette/swatch :night :aero)
+   :--emergency    (palette/swatch :night :emergency)
+   :--on-emergency (palette/swatch :night :on-emergency)
+   :--alt-ground   (palette/swatch :night :alt-ground)
+   :--alt-unknown  (palette/swatch :night :alt-unknown)
+   :--ok           (palette/swatch :night :ok)
+   :--warn         (palette/swatch :night :warn)
+   :--rule         (palette/rgba :night :ink 0.3)
+   :--rule-strong  (palette/rgba :night :ink 0.5)
+   :--rule-faint   (palette/rgba :night :ink 0.08)})
 
 (def day [(s/root) day-tokens])
 

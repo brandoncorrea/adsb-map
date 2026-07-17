@@ -1,48 +1,49 @@
 (ns adsb.map.basemap
-  (:require [clojure.string :as str]))
+  (:require [adsb.palette :as palette]
+            [clojure.string :as str]))
 
 (def editions
   {:day
-   {:paper         "#E2E8DE"
-    :terrain-1     "#C2D7B4"
-    :terrain-2     "#A2C193"
-    :contour       "#A6BF9E"
-    :water-fill    "#A6C7BE"
-    :water-outline "rgba(42, 99, 88, 0.5)"
-    :water-line    "#2A6358"
-    :ink           "#1B2A1D"
-    :faded-ink     "#506049"
-    :magenta       "#A5385C"
-    :aero          "#2A6358"
-    :road          "rgba(92, 110, 86, 0.75)"
-    :road-casing   "#E2E8DE"
-    :rail          "#A6BF9E"
-    :building      "#A2C193"
-    :building-line "#A6BF9E"
-    :aeroway       "#CFDFC4"
-    :aeroway-line  "#506049"
-    :label-halo    "#E2E8DE"
+   {:paper         (palette/swatch :day :paper)
+    :terrain-1     (palette/swatch :day :terrain-1)
+    :terrain-2     (palette/swatch :day :terrain-2)
+    :contour       (palette/swatch :day :contour)
+    :water-fill    (palette/swatch :day :water-fill)
+    :water-outline (palette/rgba :day :aero 0.5)
+    :water-line    (palette/swatch :day :water-line)
+    :ink           (palette/swatch :day :ink)
+    :faded-ink     (palette/swatch :day :faded-ink)
+    :magenta       (palette/swatch :day :magenta)
+    :aero          (palette/swatch :day :aero)
+    :road          (palette/rgba :day :road 0.75)
+    :road-casing   (palette/swatch :day :paper)
+    :rail          (palette/swatch :day :contour)
+    :building      (palette/swatch :day :terrain-2)
+    :building-line (palette/swatch :day :contour)
+    :aeroway       (palette/swatch :day :aeroway)
+    :aeroway-line  (palette/swatch :day :faded-ink)
+    :label-halo    (palette/swatch :day :paper)
     :hide-decor?   false}
    :night
-   {:paper         "#151B26"
-    :terrain-1     "#1D2634"
-    :terrain-2     "#232E40"
-    :contour       "#2E3A49"
-    :water-fill    "#101823"
-    :water-outline "rgba(127, 163, 212, 0.45)"
-    :water-line    "#7FA3D4"
-    :ink           "#E9E2CE"
-    :faded-ink     "#8D96A8"
-    :magenta       "#E77E9B"
-    :aero          "#8BA9D6"
-    :road          "rgba(107, 85, 64, 0.6)"
-    :road-casing   "#151B26"
-    :rail          "#2E3A49"
-    :building      "#232E40"
-    :building-line "#2E3A49"
-    :aeroway       "#1D2634"
-    :aeroway-line  "#8D96A8"
-    :label-halo    "#151B26"
+   {:paper         (palette/swatch :night :paper)
+    :terrain-1     (palette/swatch :night :terrain-1)
+    :terrain-2     (palette/swatch :night :terrain-2)
+    :contour       (palette/swatch :night :contour)
+    :water-fill    (palette/swatch :night :water-fill)
+    :water-outline (palette/rgba :night :water-line 0.45)
+    :water-line    (palette/swatch :night :water-line)
+    :ink           (palette/swatch :night :ink)
+    :faded-ink     (palette/swatch :night :faded-ink)
+    :magenta       (palette/swatch :night :magenta)
+    :aero          (palette/swatch :night :aero)
+    :road          (palette/rgba :night :road 0.6)
+    :road-casing   (palette/swatch :night :paper)
+    :rail          (palette/swatch :night :contour)
+    :building      (palette/swatch :night :terrain-2)
+    :building-line (palette/swatch :night :contour)
+    :aeroway       (palette/swatch :night :aeroway)
+    :aeroway-line  (palette/swatch :night :faded-ink)
+    :label-halo    (palette/swatch :night :paper)
     :hide-decor?   true}})
 
 (def ^:const glyphs-url "/glyphs/{fontstack}/{range}.pbf")

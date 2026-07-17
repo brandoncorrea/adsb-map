@@ -1,5 +1,6 @@
 (ns adsb.map.style
-  (:require [adsb.aircraft :as aircraft]))
+  (:require [adsb.aircraft :as aircraft]
+            [adsb.palette :as palette]))
 
 (def ^:const plane-icon-id "aircraft-plane")
 (def ^:const heavy-icon-id "aircraft-heavy")
@@ -36,27 +37,19 @@
 
 (def palettes
   {:day
-   {:ground-color    "#8A8374"
-    :unknown-color   "#9A937F"
-    :emergency-color "#CE2029"
-    :halo-color      "#E2E8DE"
-    :trail-rgb       "27, 42, 29"
-    :altitude-stops  [[0 "#A0622D"]
-                      [10000 "#C2447C"]
-                      [20000 "#7A4F86"]
-                      [30000 "#3D5E8C"]
-                      [40000 "#2A3F66"]]}
+   {:ground-color    (palette/swatch :day :alt-ground)
+    :unknown-color   (palette/swatch :day :alt-unknown)
+    :emergency-color (palette/swatch :day :emergency)
+    :halo-color      (palette/swatch :day :paper)
+    :trail-rgb       (palette/rgb :day :ink)
+    :altitude-stops  (:day palette/altitude-ramp)}
    :night
-   {:ground-color    "#6E7686"
-    :unknown-color   "#7C8494"
-    :emergency-color "#FF5A4D"
-    :halo-color      "#151B26"
-    :trail-rgb       "233, 226, 206"
-    :altitude-stops  [[0 "#C98A54"]
-                      [10000 "#E06A9F"]
-                      [20000 "#A98BC4"]
-                      [30000 "#7FA3D4"]
-                      [40000 "#5F7FB8"]]}})
+   {:ground-color    (palette/swatch :night :alt-ground)
+    :unknown-color   (palette/swatch :night :alt-unknown)
+    :emergency-color (palette/swatch :night :emergency)
+    :halo-color      (palette/swatch :night :paper)
+    :trail-rgb       (palette/rgb :night :ink)
+    :altitude-stops  (:night palette/altitude-ramp)}})
 
 (defn palette [theme] (get palettes theme (:day palettes)))
 

@@ -13,12 +13,13 @@
 (def ^:const draw-in-ms 450)
 (def ^:const second-pass-delay-ms 160)
 (def ^:const notam-strip-px 36)
-(def ^:const roster-px 300)
-(def ^:const roster-phone-rail-px 48)
+;; Last-resort roster width: the CSS var --roster-w and the live .adsb-roster
+;; element are both preferred (chrome-insets-px runs on map renders, so they
+;; are usually present); this only holds when neither is measurable.
+(def ^:const roster-fallback-px 300)
 (def ^:const arrow-half-width-px 80)
 (def ^:const arrow-half-height-px 18)
 (def ^:const edge-air-px 8)
-(def ^:const phone-max-width-px 640)
 (def ^:const em-dash "—")
 
 (defn- altitude-text [{:aircraft/keys [on-ground? altitude-ft]}]
@@ -152,17 +153,18 @@
 
 (defn- roster-width-px []
   (or (some-> (cjs/select js/document ".adsb-roster") .-offsetWidth)
-      roster-px))
+      (let [w (cjs/css-px "--roster-w")]
+        (if (pos? w) w roster-fallback-px))))
 
 (defn- chrome-insets-px []
-  (let [phone? (<= (.-innerWidth js/window) phone-max-width-px)
+  (let [phone? (cjs/phone-stance?)
         safe-t (cjs/css-px "--safe-top")
         safe-r (cjs/css-px "--safe-right")
         safe-b (cjs/css-px "--safe-bottom")
         safe-l (cjs/css-px "--safe-left")]
     {:top    (+ safe-t notam-strip-px arrow-half-height-px edge-air-px)
      :right  (+ safe-r (if phone? 0 (roster-width-px)) arrow-half-width-px edge-air-px)
-     :bottom (+ safe-b (if phone? roster-phone-rail-px 0) arrow-half-height-px edge-air-px)
+     :bottom (+ safe-b (if phone? (cjs/css-px "--roster-rail-h") 0) arrow-half-height-px edge-air-px)
      :left   (+ safe-l arrow-half-width-px edge-air-px)}))
 
 (defn- edge->lng-lat [{:geo/keys [min-lat max-lat min-lon max-lon]} {:edge/keys [x y]}]
