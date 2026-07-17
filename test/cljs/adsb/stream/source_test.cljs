@@ -12,7 +12,7 @@
     #js {:listeners        listeners
          :readyState       1
          :addEventListener (fn [name cb] (swap! listeners assoc name cb))
-         :close            (fn [] (this-as this (set! (.-closed? this) true)))}))
+         :close            (fn [] (this-as ^js this (set! (.-closed this) true)))}))
 
 (defn- with-fake-event-source
   "Run `f` with js/EventSource replaced by a constructor that always yields
@@ -98,4 +98,4 @@
               one capability the client needs, to cancel the browser's built-in
               auto-reconnect and take it over"
       (source/close! conn)
-      (is (true? (.-closed? fake))))))
+      (is (true? (.-closed ^js fake))))))
