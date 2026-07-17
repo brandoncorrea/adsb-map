@@ -1,6 +1,13 @@
 (ns adsb.test-flush
   "Arms reagent's react-flush once, up front, so every cljs test sees the same production render semantics regardless of namespace order (adsb-7tw)."
-  (:require [reagent.dom.client :as rdomc]))
+  (:require [adsb.reagent-compiler :as reagent-compiler]
+            [reagent.dom.client :as rdomc]))
+
+;; Install the function-component compiler before any test renders, so the
+;; suite renders through the SAME compiler production does (adsb-0yz). This
+;; runs at preload load, ahead of the throwaway render below and every test.
+(defonce function-compiler-installed?
+  (do (reagent-compiler/install!) true))
 
 ;; reagent.dom.client/render's FIRST act is `(set! batch/react-flush
 ;; react-dom/flushSync)` — a global, one-way switch with no way back. Production

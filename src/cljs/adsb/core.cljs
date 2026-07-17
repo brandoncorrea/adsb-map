@@ -3,6 +3,7 @@
             [adsb.stream :as stream]
             [adsb.subs]
             [adsb.ui.aircraft-panel :as aircraft-panel]
+            [adsb.reagent-compiler :as reagent-compiler]
             [adsb.ui.splash]
             [adsb.views :as views]
             [re-frame.core :as rf]
@@ -16,6 +17,7 @@
     (rdom/render @root [views/app-root])))
 
 (defn init! []
+  (reagent-compiler/install!)
   (rf/dispatch-sync [:app/initialize-db])
   (mount!)
   (aircraft-panel/start-clock!)
