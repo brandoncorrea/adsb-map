@@ -4,6 +4,7 @@
             [adsb.map.maplibre :as maplibre]
             [adsb.map.style :as style]
             [adsb.map.theme :as theme]
+            [adsb.timers :as timers]
             [adsb.trails :as trails]
             [clojure.math :as math]
             [re-frame.core :as rf]
@@ -155,9 +156,6 @@
 (defn- hover-leave! [] (rf/dispatch [:aircraft/clear-hover]))
 (def ^:const tick-interval-ms 5000)
 
-(defn set-interval! [f ms] (js/setInterval f ms))
-(defn clear-interval! [id] (js/clearInterval id))
-
 (defn picture->feature-collection [picture at-ms]
   (geojson/aircraft-picture->feature-collection (vals picture) at-ms))
 
@@ -193,7 +191,7 @@
                         (swap! !state assoc :picture picture :history history)
                         (push! m history picture)))))
            (swap! !state assoc :tick
-                  (set-interval!
+                  (timers/interval!
                     (fn [] (push! m (:history @!state) (:picture @!state)))
                     tick-interval-ms)))))
      !state)))
@@ -211,4 +209,4 @@
            :track nil
            :tick nil)
     (some-> track r/dispose!)
-    (some-> tick clear-interval!)))
+    (some-> tick timers/clear-interval!)))

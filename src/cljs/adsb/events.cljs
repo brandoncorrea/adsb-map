@@ -1,6 +1,6 @@
 (ns adsb.events
   (:require [adsb.corejs :as cjs]
-            [adsb.worker :as worker]
+            [adsb.timers :as timers]
             [re-frame.core :as rf]))
 
 (rf/reg-event-db :app/initialize-db (constantly {}))
@@ -19,13 +19,13 @@
 
 (defn- cancel-deselect! []
   (when-let [id @!deselect-timer]
-    (worker/clear-timeout id)
+    (timers/clear-timeout! id)
     (reset! !deselect-timer nil)))
 
 (defn- arm-deselect! [icao]
   (cancel-deselect!)
   (reset! !deselect-timer
-          (worker/timeout
+          (timers/timeout!
             (fn []
               (reset! !deselect-timer nil)
               (rf/dispatch [:aircraft/select icao]))

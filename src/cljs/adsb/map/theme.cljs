@@ -19,5 +19,5 @@
 (defn watch-system! [f]
   (let [mql     (cjs/match-media dark-scheme-query)
         handler (fn [_e] (f (if (.-matches mql) :night :day)))]
-    (cjs/add-listener mql "change" handler)
-    #(cjs/remove-listener mql "change" handler)))
+    (cjs/add-listener! mql "change" handler)
+    #(cjs/remove-listener! mql "change" handler)))

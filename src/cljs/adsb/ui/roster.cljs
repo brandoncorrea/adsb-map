@@ -137,7 +137,7 @@
 (defn scroll-row-into-view! [icao]
   (when icao
     (some-> (cjs/select (str "[data-testid=\"roster-row:" icao "\"]"))
-            (cjs/scroll-into-view (js-obj "block" "nearest"
+            (cjs/scroll-into-view! (js-obj "block" "nearest"
                                           "inline" "nearest"
                                           "behavior" "smooth")))))
 

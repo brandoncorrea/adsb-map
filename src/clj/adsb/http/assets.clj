@@ -19,7 +19,7 @@
 (defn- hex [bytes]
   (str/join (map #(format "%02x" %) bytes)))
 
-(defn content-version [entries]
+(defn content-version! [entries]
   (let [digest (MessageDigest/getInstance "SHA-256")
         buffer (byte-array 8192)]
     (doseq [[name source] entries]
@@ -33,12 +33,12 @@
                 (recur)))))))
     (subs (hex (.digest digest)) 0 12)))
 
-(defn- digest-version []
+(defn- digest-version! []
   (->> fingerprinted-assets
        (map (juxt identity resource))
-       (content-version)))
+       (content-version!)))
 
-(defn- staleness-key []
+(defn- staleness-key! []
   (mapv (fn [path]
           (when-let [res (resource path)]
             (let [conn (.openConnection res)]
@@ -52,7 +52,7 @@
   (when-let [[_ tail] (re-matches #"/assets/[^/]+(/.+)" uri)]
     tail))
 
-(defn index-html [version]
+(defn index-html! [version]
   (when-let [res (resource "index.html")]
     (reduce (fn [html path]
               (str/replace html
@@ -63,16 +63,16 @@
 
 (def ^:private cache (atom nil))
 
-(defn- current []
-  (let [probe (staleness-key)]
+(defn- current! []
+  (let [probe (staleness-key!)]
     (or (when-let [cached @cache]
           (when (= (:probe cached) probe) cached))
-        (let [version (digest-version)]
+        (let [version (digest-version!)]
           (reset! cache {:probe   probe
                          :version version
-                         :html    (index-html version)})))))
+                         :html    (index-html! version)})))))
 
-(defn version [] (:version (current)))
+(defn version! [] (:version (current!)))
 
 (def ^:private index-uris #{"/" "/index.html"})
 
@@ -92,7 +92,7 @@
     (let [tail (versioned-path uri)]
       (cond
         (contains? index-uris uri)
-        (when-let [html (:html (current))]
+        (when-let [html (:html (current!))]
           (document-response html))
 
         tail

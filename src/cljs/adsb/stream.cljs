@@ -2,8 +2,8 @@
   (:require [adsb.corejs :as cjs]
             [adsb.picture :as picture]
             [adsb.stream.source :as source]
+            [adsb.timers :as timers]
             [adsb.wire :as wire]
-            [adsb.worker :as worker]
             [clojure.math :as math]
             [re-frame.core :as rf]))
 
@@ -37,7 +37,7 @@
 
 (defn clear-timer! []
   (when-let [timer (:timer @!conn)]
-    (worker/clear-timeout timer)
+    (timers/clear-timeout! timer)
     (swap! !conn assoc :timer nil)))
 
 (defn- open! []
@@ -56,7 +56,7 @@
 (defn schedule-reconnect! [ms]
   (clear-timer!)
   (swap! !conn assoc :timer
-         (worker/timeout #(rf/dispatch [:stream/reconnect]) ms)))
+         (timers/timeout! #(rf/dispatch [:stream/reconnect]) ms)))
 
 (rf/reg-fx :stream/connect! open!)
 (rf/reg-fx :stream/clear-timer! clear-timer!)

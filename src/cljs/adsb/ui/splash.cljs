@@ -1,6 +1,6 @@
 (ns adsb.ui.splash
   (:require [adsb.corejs :as cjs]
-            [adsb.worker :as worker]
+            [adsb.timers :as timers]
             [re-frame.core :as rf]))
 
 (def ^:private splash-id "adsb-splash")
@@ -14,8 +14,8 @@
   :splash/dismiss
   (fn [_]
     (when-let [el (cjs/element-by-id splash-id)]
-      (cjs/add-class el gone-class)
-      (worker/timeout #(cjs/remove! el) fade-ms))))
+      (cjs/add-class! el gone-class)
+      (timers/timeout! #(cjs/remove! el) fade-ms))))
 
 (rf/reg-event-fx
   :map/ready
@@ -27,7 +27,7 @@
   :splash/fail
   (fn [_]
     (when-let [el (cjs/element-by-id splash-id)]
-      (cjs/add-class el error-class)
+      (cjs/add-class! el error-class)
       (when-let [note (cjs/select el note-selector)]
         (set! (.-textContent note) failed-note))
       ;; set!, not addEventListener: a repeated failure event must not stack

@@ -8,7 +8,7 @@
             [adsb.map.maplibre :as maplibre]
             [adsb.map.selection :as selection]
             [adsb.map.theme :as theme]
-            [adsb.worker :as worker]
+            [adsb.timers :as timers]
             [clojure.math :as math]
             [re-frame.core :as rf]
             [reagent.core :as r]))
@@ -22,14 +22,14 @@
 
 (defn- fetch-style-once! [url]
   (let [controller (js/AbortController.)
-        timer      (worker/timeout #(.abort controller) style-fetch-timeout-ms)]
+        timer      (timers/timeout! #(.abort controller) style-fetch-timeout-ms)]
     (-> (js/fetch url (js-obj "signal" (.-signal controller)))
         (.then (fn [res]
                  (if (.-ok res)
                    (.json res)
                    (throw (js/Error. (str "basemap style HTTP " (.-status res)))))))
         (.then (fn [json] (js->clj json :keywordize-keys true)))
-        (.finally #(worker/clear-timeout timer)))))
+        (.finally #(timers/clear-timeout! timer)))))
 
 (defn retry-fetch! [attempt! retries delay-ms on-ok on-fail]
   (letfn [(go [n]
@@ -37,7 +37,7 @@
                    on-ok
                    (fn [err]
                      (if (< n retries)
-                       (worker/timeout #(go (inc n)) (delay-ms n))
+                       (timers/timeout! #(go (inc n)) (delay-ms n))
                        (do (js/console.error "basemap style fetch failed" err)
                            (on-fail err))))))]
     (go 0)))
@@ -98,7 +98,7 @@
                  (reset! !live-map m)
                  (maplibre/on-load! m #(rf/dispatch [:map/ready]))
                  (reset! !fold-timer
-                         (worker/timeout #(when-not @!disposed
+                         (timers/timeout! #(when-not @!disposed
                                             (collapse-attribution! @!container))
                                          attribution-fold-ms))
                  (reset! !crop (crop/attach! m th {:framed? (some? camera)}))
@@ -108,7 +108,7 @@
                  (reset! !emergency (emergency/attach! m)))))
             (unmount-map! []
               (when-let [timer @!fold-timer]
-                (worker/clear-timeout timer)
+                (timers/clear-timeout! timer)
                 (reset! !fold-timer nil))
               (when-let [annotations @!emergency]
                 (emergency/detach! @!map annotations)

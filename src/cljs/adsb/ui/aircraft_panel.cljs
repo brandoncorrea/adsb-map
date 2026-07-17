@@ -2,6 +2,7 @@
   (:require [adsb.aircraft :as aircraft]
             [adsb.corejs :as cjs]
             [adsb.enrich :as enrich]
+            [adsb.timers :as timers]
             [adsb.ui.alert :as alert]
             [adsb.ui.icon :refer [icon]]
             [adsb.ui.units :as units]
@@ -16,8 +17,8 @@
   (when (nil? @!clock)
     (rf/dispatch [:ui/tick (cjs/now-ms)])
     (reset! !clock
-            (js/setInterval #(rf/dispatch [:ui/tick (cjs/now-ms)])
-                            clock-interval-ms))))
+            (timers/interval! #(rf/dispatch [:ui/tick (cjs/now-ms)])
+                              clock-interval-ms))))
 
 (defonce ^:private !keyboard (atom nil))
 
@@ -36,7 +37,7 @@
 
 (defn start-keyboard! []
   (when (nil? @!keyboard)
-    (cjs/add-listener "keydown" on-document-key!)
+    (cjs/add-listener! "keydown" on-document-key!)
     (reset! !keyboard true)))
 
 (defn- altitude-display [{:aircraft/keys [on-ground? altitude-ft]}]

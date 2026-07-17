@@ -54,7 +54,7 @@
 
 (defn- ellipse-node [cx cy rx ry rotation-deg delay-ms]
   (doto (js-invoke js/document "createElementNS" svg-ns "ellipse")
-    (cjs/set-attributes {"cx"               (str cx)
+    (cjs/set-attributes! {"cx"               (str cx)
                          "cy"               (str cy)
                          "rx"               (str rx)
                          "ry"               (str ry)
@@ -92,18 +92,18 @@
         rate-el     (span-node "adsb-mayday-value")
         [dx dy] (stamp-offset (:aircraft/track-deg aircraft*))]
     (set! (.-className el) "adsb-mayday")
-    (cjs/set-attribute svg "viewBox" (str "0 0 " ellipse-box-px " " ellipse-box-px))
-    (cjs/set-attribute svg "aria-hidden" "true")
-    (cjs/append-children svg [(ellipse-node centre centre 34 26 -8 0)
+    (cjs/set-attribute! svg "viewBox" (str "0 0 " ellipse-box-px " " ellipse-box-px))
+    (cjs/set-attribute! svg "aria-hidden" "true")
+    (cjs/append-children! svg [(ellipse-node centre centre 34 26 -8 0)
                               (ellipse-node centre centre 31 28 5 second-pass-delay-ms)])
-    (cjs/append-child el svg)
+    (cjs/append-child! el svg)
     (set! (.-className stamp) "adsb-mayday-stamp")
     (set! (-> stamp .-style .-left) (str "calc(50% + " dx "px)"))
     (set! (-> stamp .-style .-top) (str "calc(50% + " dy "px)"))
     (set! (.-className facts) "adsb-mayday-facts")
-    (cjs/append-children facts [(label-node "alt") altitude-el (label-node "v/s") rate-el])
-    (cjs/append-children stamp [word-el callsign-el facts])
-    (cjs/append-child el stamp)
+    (cjs/append-children! facts [(label-node "alt") altitude-el (label-node "v/s") rate-el])
+    (cjs/append-children! stamp [word-el callsign-el facts])
+    (cjs/append-child! el stamp)
     {:el          el
      :word-el     word-el
      :callsign-el callsign-el
@@ -129,15 +129,15 @@
         distance-el (span-node "adsb-edge-arrow-distance")]
     (set! (.-type el) "button")
     (set! (.-className el) "adsb-edge-arrow")
-    (cjs/set-attribute el "data-icao" icao)
-    (cjs/set-attribute el "data-testid" (str "edge-arrow:" icao))
-    (cjs/add-listener el "click" on-arrow-click!)
-    (cjs/set-attribute glyph-el "class" "adsb-edge-arrow-glyph")
-    (cjs/set-attribute glyph-el "viewBox" "0 0 16 16")
-    (cjs/set-attribute glyph-el "aria-hidden" "true")
+    (cjs/set-attribute! el "data-icao" icao)
+    (cjs/set-attribute! el "data-testid" (str "edge-arrow:" icao))
+    (cjs/add-listener! el "click" on-arrow-click!)
+    (cjs/set-attribute! glyph-el "class" "adsb-edge-arrow-glyph")
+    (cjs/set-attribute! glyph-el "viewBox" "0 0 16 16")
+    (cjs/set-attribute! glyph-el "aria-hidden" "true")
     (js-invoke head "setAttribute" "d" "M8 1.5 L13 12.5 L8 9.6 L3 12.5 Z")
-    (cjs/append-child glyph-el head)
-    (cjs/append-children el [glyph-el callsign-el distance-el])
+    (cjs/append-child! glyph-el head)
+    (cjs/append-children! el [glyph-el callsign-el distance-el])
     {:el          el :glyph-el glyph-el :callsign-el callsign-el
      :distance-el distance-el}))
 
