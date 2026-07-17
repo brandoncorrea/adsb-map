@@ -59,6 +59,48 @@
            (:feed-url (main/env->config {"ADSB_FEED_URL" "wss://sbs.bwawan.com"}))))
     (is (nil? (:feed-url (main/env->config {}))))))
 
+(deftest sse-options-resolves-the-four-knobs-from-the-env-map
+  (testing "the four SSE knobs come from the .env-merged env map, so a value
+            set only in .env — invisible to start!'s System/getenv fallback —
+            still reaches the broadcaster (adsb-rgv)"
+    (let [opts (main/sse-options {"ADSB_SSE_MAX_CLIENTS"     "7"
+                                  "ADSB_SSE_MAX_PER_IP"      "2"
+                                  "ADSB_TRUST_FORWARDED_FOR" "true"
+                                  "ADSB_TRUSTED_PROXY_HOPS"  "3"})]
+      (is (= 7 (:max-clients opts)))
+      (is (= 2 (:max-per-ip opts)))
+      (is (true? (:trust-forwarded? opts)))
+      (is (= 3 (:trusted-proxy-hops opts)))))
+
+  (testing "unset limits stay nil so start! falls through to its compiled
+            defaults; an unset trust flag is false, never accidentally on"
+    (let [opts (main/sse-options {})]
+      (is (nil? (:max-clients opts)))
+      (is (nil? (:max-per-ip opts)))
+      (is (false? (:trust-forwarded? opts)))
+      (is (nil? (:trusted-proxy-hops opts))))))
+
+(deftest sse-knobs-set-only-in-env-reach-the-running-broadcaster
+  (testing "booting from an env map that carries the four knobs — as
+            env/read! produces after backfilling .env — lands them in the
+            running broadcaster's resolved limits and identity flags, the
+            .env-only path start! used to ignore by reading System/getenv
+            directly (adsb-rgv)"
+    (let [system      (main/start! {:port   0
+                                    :source "replay"
+                                    :env    {"ADSB_SSE_MAX_CLIENTS"     "9"
+                                             "ADSB_SSE_MAX_PER_IP"      "3"
+                                             "ADSB_TRUST_FORWARDED_FOR" "true"
+                                             "ADSB_TRUSTED_PROXY_HOPS"  "2"}})
+          broadcaster (:system/broadcaster system)]
+      (try
+        (is (= {:max-clients 9 :max-per-ip 3} (:stream/limits broadcaster)))
+        (is (true? (:stream/trust-forwarded? broadcaster)))
+        (is (= 2 (:stream/trusted-proxy-hops broadcaster)))
+        (finally
+          (main/stop! system)
+          (state/clear!))))))
+
 (deftest start-fails-fast-on-a-misconfigured-stream-source
   (testing "ADSB_SOURCE=sbs without ADSB_FEED_URL fails loudly at boot,
             naming the env var — no dial is attempted"

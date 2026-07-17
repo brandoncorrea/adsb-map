@@ -251,7 +251,7 @@ reitit does coercion with the same Malli schemas, declaratively:
   pending), the parameterized-query rule arrives with it.
 - **What strangers can hold open is bounded.** The SSE stream is the expensive
   resource here — each connection holds a channel forever — so admission is
-  enforced in the stream registry itself (`adsb.stream.broadcast`): a total cap
+  enforced in the stream registry itself (`adsb.stream.admission`): a total cap
   (`ADSB_SSE_MAX_CLIENTS`, default 100) and a per-IP cap (`ADSB_SSE_MAX_PER_IP`,
   default 4). Over a limit is a `503` with `Retry-After`; disconnects free the
   slot. Request lines and bodies are capped in http-kit (`adsb.http.server`).
@@ -273,13 +273,15 @@ input:
   on how many proxies stand in front, and each one *appends* the peer it saw —
   so the header reads left-to-right from attacker-written claim to trustworthy
   last hop, and the client sits at index `(count - hops)`. That count is
-  `ADSB_TRUSTED_PROXY_HOPS` (`adsb.stream.broadcast/forwarded-ip`, default 1).
+  `ADSB_TRUSTED_PROXY_HOPS` (`adsb.stream.admission/forwarded-ip`, default 1).
   It is a property of the **deployment**, not of the code, so it cannot
   be derived here and must be verified against the environment it runs in —
   count the entries to the right of your own address, add one. Wrong low, and
   every visitor is counted as a proxy's single address (the site locks at
-  `ADSB_SSE_MAX_PER_IP` strangers); wrong high, and the per-IP key becomes
-  client-chosen and spoofable, leaving only the total cap.
+  `ADSB_SSE_MAX_PER_IP` strangers); wrong high, the index reaches past the
+  left end of a too-short header — `forwarded-ip` returns nil instead of
+  guessing an attacker-written entry, so the key falls to the trustworthy
+  socket peer rather than becoming client-chosen and spoofable.
 - On direct connections the flag stays off and the **TCP peer** is counted —
   read from the socket, not from ring's `:remote-addr`, because http-kit
   populates `:remote-addr` from the *leftmost* `X-Forwarded-For` entry whenever

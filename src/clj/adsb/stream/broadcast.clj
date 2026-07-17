@@ -1,16 +1,13 @@
 (ns adsb.stream.broadcast
-  (:require [adsb.stream.sse :as sse]
+  (:require [adsb.env :as env]
+            [adsb.stream.admission :as admission]
+            [adsb.stream.sse :as sse]
             [adsb.wire :as wire]
             [cheshire.core :as json]
-            [clojure.string :as str]
             [clojure.tools.logging :as log]
             [org.httpkit.server :as http-kit])
-  (:import (java.lang.reflect Field)
-           (java.net InetSocketAddress)
-           (java.nio.channels SelectionKey SocketChannel)
-           (java.util.concurrent ArrayBlockingQueue Executors
-                                 ScheduledExecutorService ThreadFactory TimeUnit)
-           (org.httpkit.server AsyncChannel)))
+  (:import (java.util.concurrent ArrayBlockingQueue Executors
+                                 ScheduledExecutorService ThreadFactory TimeUnit)))
 
 (def ^:const default-interval-ms 1000)
 (def ^:const default-stats-interval-ms 10000)
@@ -19,12 +16,19 @@
 (def ^:const default-max-clients 100)
 (def ^:const default-max-per-ip 4)
 (def ^:const default-trusted-proxy-hops 1)
-(def ^:const retry-after-s 30)
 (def ^:const snapshot-event "snapshot")
 (def ^:const update-event "update")
 (def ^:const aircraft-event "aircraft")
 (def ^:const stats-event "stats")
 (def ^:const config-event "config")
+
+;; The four operator-tunable admission knobs. Named here because start!'s env
+;; fallback reads them and adsb.main resolves the same names from the
+;; .env-merged env map (adsb-rgv).
+(def ^:const sse-max-clients-env "ADSB_SSE_MAX_CLIENTS")
+(def ^:const sse-max-per-ip-env "ADSB_SSE_MAX_PER_IP")
+(def ^:const trust-forwarded-for-env "ADSB_TRUST_FORWARDED_FOR")
+(def ^:const trusted-proxy-hops-env "ADSB_TRUSTED_PROXY_HOPS")
 
 (defn- picture-frame! [{:stream/keys [frame-id]} event-name picture now-ms]
   (sse/event-frame event-name
@@ -50,80 +54,8 @@
                    (json/generate-string
                      (wire/config-event->wire crop now-ms))))
 
-;; Reflection into http-kit's private channel field is deliberate: http-kit
-;; fills :remote-addr from the leftmost (attacker-written) X-Forwarded-For
-;; entry, so the real socket peer is the only trustworthy client identity.
-;; See validation-boundaries.md, Boundary 2.
-(def ^:private async-channel-key-field
-  (delay
-    (try
-      (doto (.getDeclaredField AsyncChannel "key")
-        (.setAccessible true))
-      (catch Exception _))))
-
-(defn- socket-peer-ip [request]
-  (or (when-some [^Field field @async-channel-key-field]
-        (try
-          (when-some [channel (:async-channel request)]
-            (let [^SelectionKey key (.get field channel)
-                  socket-channel    (.channel key)]
-              (when (instance? SocketChannel socket-channel)
-                (let [address (.getRemoteAddress ^SocketChannel socket-channel)]
-                  (when (instance? InetSocketAddress address)
-                    (.getHostAddress
-                      (.getAddress ^InetSocketAddress address)))))))
-          (catch Exception _)))
-      (:remote-addr request)))
-
-(defn forwarded-ip [hops header]
-  (when-some [entries (some->> (some-> header (str/split #","))
-                               (map str/trim)
-                               (remove str/blank?)
-                               seq
-                               vec)]
-    (nth entries (max 0 (- (count entries) hops)))))
-
-(def ^:const cf-connecting-ip-header "cf-connecting-ip")
-
-(defn- client-ip [trust-forwarded? hops request]
-  (or (when trust-forwarded?
-        (or (some-> (get-in request [:headers cf-connecting-ip-header])
-                    str/trim
-                    not-empty)
-            (forwarded-ip hops (get-in request [:headers "x-forwarded-for"]))))
-      (socket-peer-ip request)))
-
-(defn- deny-reason [clients ip {:keys [max-clients max-per-ip]}]
-  (cond
-    (>= (count clients) max-clients)
-    :server-full
-
-    (>= (count (filter #(= ip (:client/ip %)) (vals clients))) max-per-ip)
-    :ip-full))
-
-(defn- try-register! [{:stream/keys [clients limits]} channel ip]
-  (let [[old new] (swap-vals! clients
-                              (fn [registry]
-                                (if (deny-reason registry ip limits)
-                                  registry
-                                  (assoc registry channel
-                                                  {:client/ip     ip
-                                                   :client/ready? false}))))]
-    (when-not (contains? new channel)
-      (deny-reason old ip limits))))
-
-(defn- mark-ready! [{:stream/keys [clients]} channel]
-  (swap! clients
-         (fn [registry]
-           (cond-> registry
-                   (contains? registry channel)
-                   (assoc-in [channel :client/ready?] true)))))
-
-(defn- unregister! [{:stream/keys [clients]} channel]
-  (swap! clients dissoc channel))
-
 (defn- drop-client! [broadcaster channel]
-  (unregister! broadcaster channel)
+  (admission/unregister! broadcaster channel)
   (http-kit/close channel))
 
 (defn- send-or-drop! [broadcaster channel frame]
@@ -135,30 +67,9 @@
           :when ready?]
     (send-or-drop! broadcaster channel frame)))
 
-(def ^:const ^:private reject-log-interval-ms 10000)
-
-(defn- log-rejection! [{:stream/keys [last-reject-log-ms]} reason ip]
-  (let [now-ms (System/currentTimeMillis)
-        [old new] (swap-vals! last-reject-log-ms
-                              #(if (>= (- now-ms %) reject-log-interval-ms)
-                                 now-ms
-                                 %))]
-    (when (not= old new)
-      (log/warn "SSE connect rejected" reason "for" ip
-                "(further rejections muted for"
-                (/ reject-log-interval-ms 1000) "s)"))))
-
-(defn- rejection-response [reason]
-  {:status  503
-   :headers {"Content-Type" "application/json"
-             "Retry-After"  (str retry-after-s)}
-   :body    (json/generate-string
-              {:error  "stream at capacity"
-               :reason (name reason)})})
-
 (defn- reject! [broadcaster channel reason ip]
-  (log-rejection! broadcaster reason ip)
-  (http-kit/send! channel (rejection-response reason) true))
+  (admission/log-rejection! broadcaster reason ip)
+  (http-kit/send! channel (admission/rejection-response reason) true))
 
 (defn- broadcast-picture! [{:stream/keys [picture clients] :as broadcaster}]
   (let [now-ms          (System/currentTimeMillis)
@@ -181,8 +92,33 @@
 (defn- broadcast-heartbeat! [broadcaster]
   (broadcast! broadcaster (sse/comment-frame "hb")))
 
-(defn offer-delta! [{:stream/keys [^ArrayBlockingQueue deltas]} aircraft now-ms]
-  (.offer deltas [aircraft now-ms]))
+(def ^:const ^:private delta-drop-log-interval-ms 10000)
+
+(defn- log-delta-drop! [{:stream/keys [deltas-dropped last-delta-drop-log-ms]}]
+  (let [dropped   (swap! deltas-dropped inc)
+        now-ms    (System/currentTimeMillis)
+        [old new] (swap-vals! last-delta-drop-log-ms
+                              #(if (>= (- now-ms %) delta-drop-log-interval-ms)
+                                 now-ms
+                                 %))]
+    (when (not= old new)
+      (log/warn "SSE delta queue full —" dropped "upsert(s) dropped so far;"
+                "the reader is outrunning the fan-out. Newest deltas are shed"
+                "deliberately to bound memory; the periodic picture tick and"
+                "the next client snapshot reconcile. Further drops muted for"
+                (quot delta-drop-log-interval-ms 1000) "s."))))
+
+(defn offer-delta!
+  "Hand one per-aircraft upsert to the fan-out thread, returning the queue's
+  accept boolean. A full queue sheds the NEWEST delta deliberately (bounded
+  memory under a burst); the drop is counted (see deltas-dropped) and warned,
+  rate-limited. The periodic update tick and the connect-time snapshot
+  reconcile any client that missed a shed delta."
+  [{:stream/keys [^ArrayBlockingQueue deltas] :as broadcaster} aircraft now-ms]
+  (let [accepted? (.offer deltas [aircraft now-ms])]
+    (when-not accepted?
+      (log-delta-drop! broadcaster))
+    accepted?))
 
 (def ^:const ^:private delta-poll-ms 100)
 
@@ -211,35 +147,21 @@
     (.setDaemon true)
     (.start)))
 
-(def ^:const diagnose-client-ip-env "ADSB_DIAGNOSE_CLIENT_IP")
-(def ^:const diagnose-budget 20)
-
-(defn- diagnose-client-ip! [{:stream/keys [diagnose-remaining]} request resolved-ip]
-  (when diagnose-remaining
-    (let [[old _] (swap-vals! diagnose-remaining #(cond-> % (pos? %) dec))]
-      (when (pos? old)
-        (log/info "SSE-CLIENT-IP-DIAG"
-                  {:cf-connecting-ip (get-in request [:headers
-                                                      cf-connecting-ip-header])
-                   :x-forwarded-for  (get-in request [:headers "x-forwarded-for"])
-                   :socket-peer      (socket-peer-ip request)
-                   :resolved-key     resolved-ip
-                   :remaining        (dec old)})))))
-
 (defn connect!
   [{:stream/keys [picture last-stats feeder trust-forwarded?
                   trusted-proxy-hops clients limits]
     :as          broadcaster}
    request]
-  (let [ip (client-ip trust-forwarded? trusted-proxy-hops request)]
-    (diagnose-client-ip! broadcaster request ip)
-    (if-some [reason (deny-reason @clients ip limits)]
-      (do (log-rejection! broadcaster reason ip)
-          (rejection-response reason))
+  (let [ip (admission/client-ip trust-forwarded? trusted-proxy-hops request)]
+    (admission/diagnose-client-ip! broadcaster request ip)
+    (if-some [reason (admission/deny-reason @clients ip limits)]
+      (do (admission/log-rejection! broadcaster reason ip)
+          (admission/rejection-response reason))
       (http-kit/as-channel
         request
         {:on-open  (fn [channel]
-                     (if-some [reason (try-register! broadcaster channel ip)]
+                     (if-some [reason (admission/try-register! broadcaster
+                                                               channel ip)]
                        (reject! broadcaster channel reason ip)
                        (let [now-ms   (System/currentTimeMillis)
                              config-f (config-frame! broadcaster now-ms)
@@ -256,10 +178,10 @@
                                   (http-kit/send! channel config-f false)
                                   (http-kit/send! channel snapshot false)
                                   (http-kit/send! channel stats-f false))
-                           (mark-ready! broadcaster channel)
+                           (admission/mark-ready! broadcaster channel)
                            (drop-client! broadcaster channel)))))
          :on-close (fn [channel _status]
-                     (unregister! broadcaster channel))}))))
+                     (admission/unregister! broadcaster channel))}))))
 
 (def ^:private broadcast-threads
   (reify ThreadFactory
@@ -277,14 +199,6 @@
                         (long initial-delay-ms)
                         (long period-ms)
                         TimeUnit/MILLISECONDS))
-
-(defn- env-limit [var-name]
-  (when-some [value (System/getenv var-name)]
-    (when-some [n (parse-long (str/trim value))]
-      (when (pos? n) n))))
-
-(defn- env-flag? [var-name]
-  (= "true" (some-> (System/getenv var-name) str/trim str/lower-case)))
 
 (defn start!
   "Start the ticks, the heartbeat, and the per-aircraft upsert fan-out
@@ -324,9 +238,11 @@
                    this app publishes; nil means no boundary is drawn.
 
   Connection limits (ns docstring) — an explicit option wins, else the
-  environment variable, else the compiled default. The env fallback
-  lives here, at the lifecycle seam, so every entry point that starts a
-  broadcaster gets the same operator-tunable limits:
+  environment variable, else the compiled default. The env fallback reads
+  System/getenv only, so it misses values set solely in .env; the composition
+  root (adsb.main) resolves the four knobs from the .env-merged env map and
+  passes them as explicit options (adsb-rgv). The fallback stays here so
+  entry points that skip env.clj still get operator-tunable limits:
 
     :max-clients      total concurrent SSE cap
     :max-per-ip       concurrent cap per client IP
@@ -360,28 +276,34 @@
                      :stream/clients            (atom {})
                      :stream/deltas             (ArrayBlockingQueue.
                                                   (int delta-queue-depth))
+                     :stream/deltas-dropped     (atom 0)
+                     :stream/last-delta-drop-log-ms (atom 0)
                      :stream/delta-running?     (atom true)
                      :stream/limits
                      {:max-clients (or max-clients
-                                       (env-limit "ADSB_SSE_MAX_CLIENTS")
+                                       (env/positive-long (System/getenv)
+                                                          sse-max-clients-env)
                                        default-max-clients)
                       :max-per-ip  (or max-per-ip
-                                       (env-limit "ADSB_SSE_MAX_PER_IP")
+                                       (env/positive-long (System/getenv)
+                                                          sse-max-per-ip-env)
                                        default-max-per-ip)}
                      :stream/trust-forwarded?
                      (if (some? trust-forwarded?)
                        trust-forwarded?
-                       (env-flag? "ADSB_TRUST_FORWARDED_FOR"))
+                       (env/flag? (System/getenv) trust-forwarded-for-env))
                      :stream/trusted-proxy-hops
                      (or trusted-proxy-hops
-                         (env-limit "ADSB_TRUSTED_PROXY_HOPS")
+                         (env/positive-long (System/getenv)
+                                            trusted-proxy-hops-env)
                          default-trusted-proxy-hops)
                      :stream/last-reject-log-ms (atom 0)
                      :stream/diagnose-remaining
                      (when (if (some? diagnose-client-ip?)
                              diagnose-client-ip?
-                             (env-flag? diagnose-client-ip-env))
-                       (atom diagnose-budget))
+                             (env/flag? (System/getenv)
+                                        admission/diagnose-client-ip-env))
+                       (atom admission/diagnose-budget))
                      :stream/frame-id           (atom 0)
                      :stream/executor           executor}]
     (when interval-ms
@@ -394,6 +316,12 @@
       :stream/delta-thread (start-delta-fan-out! broadcaster))))
 
 (defn client-count [{:stream/keys [clients]}] (count @clients))
+
+(defn deltas-dropped
+  "How many per-aircraft upserts offer-delta! has shed because the fan-out
+  queue was full — 0 on a healthy broadcaster."
+  [broadcaster]
+  @(:stream/deltas-dropped broadcaster))
 
 (defn stop! [{:stream/keys [^ScheduledExecutorService executor clients
                             delta-running? ^Thread delta-thread]}]

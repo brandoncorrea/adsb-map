@@ -36,6 +36,19 @@
 (defn origin-token [env]
   (some-> (get env origin-token-env) str/trim not-empty))
 
+(defn sse-options
+  "The four operator-tunable SSE admission knobs, resolved from the
+  .env-merged env map (adsb.env/read!) so a value set only in .env is honored.
+  broadcast/start! reads System/getenv only as a fallback for entry points
+  that skip env.clj, and that fallback misses .env — so the composition root
+  resolves them here and passes them as explicit options (adsb-rgv). Unset
+  limits stay nil and let start! fall through to its compiled defaults."
+  [env]
+  {:max-clients        (env/positive-long env broadcast/sse-max-clients-env)
+   :max-per-ip         (env/positive-long env broadcast/sse-max-per-ip-env)
+   :trust-forwarded?   (env/flag? env broadcast/trust-forwarded-for-env)
+   :trusted-proxy-hops (env/positive-long env broadcast/trusted-proxy-hops-env)})
+
 (defn env->config [env]
   {:port            (parse-port (get env "PORT"))
    :source          (get env config/source-env)
@@ -121,20 +134,22 @@
                                                             crop %)})
             _                 (swap! !started assoc :system/poller poller)
             broadcaster       (broadcast/start!
-                                {:picture     state/age-out!
-                                 :crop        crop
-                                 :interval-ms (when-not streaming?
-                                                broadcast/default-interval-ms)
-                                 :stats       (fn [picture now-ms]
-                                                (stats/compute!
-                                                  accumulator
-                                                  {:picture           picture
-                                                   :receiver-position receiver-position
-                                                   :now-ms            now-ms
-                                                   :messages          (:messages
-                                                                        (source/metadata
-                                                                          source))}))
-                                 :feeder      #(poll/status poller)})
+                                (merge
+                                  {:picture     state/age-out!
+                                   :crop        crop
+                                   :interval-ms (when-not streaming?
+                                                  broadcast/default-interval-ms)
+                                   :stats       (fn [picture now-ms]
+                                                  (stats/compute!
+                                                    accumulator
+                                                    {:picture           picture
+                                                     :receiver-position receiver-position
+                                                     :now-ms            now-ms
+                                                     :messages          (:messages
+                                                                          (source/metadata
+                                                                            source))}))
+                                   :feeder      #(poll/status poller)}
+                                  (sse-options env)))
             _                 (swap! !started assoc :system/broadcaster
                                      broadcaster)
             http-server       (server/start-server!

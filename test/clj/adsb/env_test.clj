@@ -4,6 +4,36 @@
   (:import (java.io File)
            (java.util HashMap)))
 
+(deftest positive-long-test
+  (testing "a strictly-positive integer string parses to a long"
+    (is (= 7 (env/positive-long {"N" "7"} "N")))
+    (is (= 100 (env/positive-long {"N" "  100 "} "N"))))
+
+  (testing "absent, blank, non-numeric, zero, and negative all yield nil —
+            an operator knob is either a real positive limit or unset"
+    (is (nil? (env/positive-long {} "N")))
+    (is (nil? (env/positive-long {"N" "   "} "N")))
+    (is (nil? (env/positive-long {"N" "lots"} "N")))
+    (is (nil? (env/positive-long {"N" "0"} "N")))
+    (is (nil? (env/positive-long {"N" "-4"} "N"))))
+
+  (testing "the java.util.Map from System/getenv is handled, not just a
+            Clojure map"
+    (is (= 5 (env/positive-long (HashMap. {"N" "5"}) "N")))))
+
+(deftest flag?-test
+  (testing "only the exact word true, case- and space-insensitive, is on"
+    (is (true? (env/flag? {"F" "true"} "F")))
+    (is (true? (env/flag? {"F" " TRUE "} "F"))))
+
+  (testing "a boundary is not lowered by a typo, a leftover 0, a synonym, or
+            an absent entry"
+    (is (false? (env/flag? {} "F")))
+    (is (false? (env/flag? {"F" "0"} "F")))
+    (is (false? (env/flag? {"F" "false"} "F")))
+    (is (false? (env/flag? {"F" "yes"} "F")))
+    (is (false? (env/flag? {"F" ""} "F")))))
+
 (defn- temp-file-with [contents]
   (let [f (File/createTempFile "adsb-env" ".env")]
     (.deleteOnExit f)

@@ -5,6 +5,7 @@
             [adsb.ingest.sbs :as sbs]
             [adsb.ingest.source :as source]
             [adsb.ingest.tcp :as tcp]
+            [adsb.stream.admission :as admission]
             [adsb.stream.broadcast :as broadcast]
             [cheshire.core :as json]
             [clojure.java.io :as io]
@@ -337,9 +338,15 @@
                                broadcaster #:aircraft{:icao (str i)} i))
                            (range 10))
           elapsed-ms (/ (- (System/nanoTime) started-at) 1e6)]
-      (is (= [true true true true] (take 4 results)))
-      (is (every? false? (drop 4 results)))
-      (is (< elapsed-ms 200)))))
+      (testing "a full queue never blocks the reader: the four that fit are
+                accepted, the rest are shed, and the whole burst returns well
+                under the blocking-put timeout"
+        (is (= [true true true true] (take 4 results)))
+        (is (every? false? (drop 4 results)))
+        (is (< elapsed-ms 200)))
+      (testing "every shed delta is counted, not silently discarded, so a
+                saturated fan-out is observable rather than invisible (adsb-u7z)"
+        (is (= 6 (broadcast/deltas-dropped broadcaster)))))))
 
 (deftest the-age-out-sweep-outlives-the-update-tick
   (testing "with no update tick (streaming) and zero clients, the injected
@@ -406,7 +413,7 @@
     (testing "connect! returns a plain 503 map, not an upgraded channel"
       (is (map? response))
       (is (= 503 (:status response)))
-      (is (= (str broadcast/retry-after-s) (get-in response [:headers "Retry-After"])))
+      (is (= (str admission/retry-after-s) (get-in response [:headers "Retry-After"])))
       (is (str/includes? (:body response) "server-full")))
     (testing "and nothing was registered — a synchronous refusal claims no slot"
       (is (zero? (broadcast/client-count broadcaster))))))
@@ -474,27 +481,17 @@
           (.close admitted)
           (stop-streaming-server! streaming))))))
 
-(deftest the-client-ip-diagnostic-is-bounded-and-opt-in
-  (let [request  {:headers     {"cf-connecting-ip" "1.2.3.4"
-                                "x-forwarded-for"  "1.2.3.4, 172.71.9.9"}
-                  :remote-addr "10.0.0.9"}
-        diagnose #'broadcast/diagnose-client-ip!]
-    (testing "with the flag off there is no counter, and a connect logs
-              nothing and does not throw"
-      (is (nil? (:stream/diagnose-remaining
-                  (start-and-stop-broadcaster {:diagnose-client-ip? false}))))
-      (is (nil? (diagnose {:stream/diagnose-remaining nil} request "1.2.3.4"))))
+(deftest start!-seeds-the-client-ip-diagnostic-budget
+  (testing "with the diagnostic off, start! creates no counter — it is
+            opt-in and costs nothing when unused"
+    (is (nil? (:stream/diagnose-remaining
+                (start-and-stop-broadcaster {:diagnose-client-ip? false})))))
 
-    (testing "with the flag on the budget counts down, once per connect,
-              and stops dead at zero rather than logging forever"
-      (let [remaining {:stream/diagnose-remaining (atom 2)}]
-        (dotimes [_ 5] (diagnose remaining request "1.2.3.4"))
-        (is (zero? @(:stream/diagnose-remaining remaining)))))
-
-    (testing "the env flag / option seeds the hard-capped budget"
-      (is (= broadcast/diagnose-budget
-             @(:stream/diagnose-remaining
-                (start-and-stop-broadcaster {:diagnose-client-ip? true})))))))
+  (testing "with the diagnostic on, start! seeds the hard-capped budget so
+            the connect-time logging cannot run forever"
+    (is (= admission/diagnose-budget
+           @(:stream/diagnose-remaining
+              (start-and-stop-broadcaster {:diagnose-client-ip? true}))))))
 
 (deftest disconnect-frees-the-slot
   (testing "a client's disconnect releases its slot; the next connect
@@ -519,34 +516,26 @@
         (finally
           (stop-streaming-server! streaming))))))
 
-(deftest forwarded-ip-picks-the-entry-the-proxy-chain-vouches-for
-  (testing "one trusted hop — the proxy appended the peer it saw, so the
-            rightmost entry is the client and anything left of it is the
-            client's own writing"
-    (is (= "1.2.3.4" (broadcast/forwarded-ip 1 "1.2.3.4")))
-    (is (= "1.2.3.4" (broadcast/forwarded-ip 1 "9.9.9.9, 1.2.3.4"))))
-
-  (testing "two trusted hops — the rightmost entry is the inner proxy;
-            the client is one further left"
-    (is (= "1.2.3.4" (broadcast/forwarded-ip 2 "1.2.3.4, 10.0.0.7")))
-    (is (= "1.2.3.4"
-           (broadcast/forwarded-ip 2 "9.9.9.9, 1.2.3.4, 10.0.0.7"))))
-
-  (testing "a header shorter than the configured chain means the hop
-            count is misconfigured: clamp to the leftmost entry, which
-            weakens the per-IP cap but keeps distinct clients distinct.
-            Reaching past the left end instead would collapse every
-            visitor into one bucket — an outage, which is worse"
-    (is (= "1.2.3.4" (broadcast/forwarded-ip 5 "1.2.3.4, 10.0.0.7"))))
-
-  (testing "no header, or nothing in it, is not an address"
-    (is (nil? (broadcast/forwarded-ip 1 nil)))
-    (is (nil? (broadcast/forwarded-ip 1 "")))
-    (is (nil? (broadcast/forwarded-ip 1 " , , ")))
-    (is (= "1.2.3.4" (broadcast/forwarded-ip 1 "  ,  , 1.2.3.4 ,"))))
-
-  (testing "an IPv6 client survives the split (no colon confusion)"
-    (is (= "2001:db8::1" (broadcast/forwarded-ip 1 "2001:db8::1")))))
+(deftest a-short-xff-header-falls-to-the-socket-peer
+  (testing "with trust on and two hops configured but only ONE X-Forwarded-For
+            entry, the header is too short to name the client — forwarded-ip
+            returns nil and the per-IP key falls to the socket peer, so two
+            such connections collide on that peer and the second is refused.
+            The old clamp-to-leftmost would have trusted each spoofable single
+            entry as a distinct client and admitted both (adsb-u7z)"
+    (let [streaming (start-streaming-server! {:max-per-ip         1
+                                              :trust-forwarded?   true
+                                              :trusted-proxy-hops 2})
+          port      (:port streaming)
+          admitted  (stream-response! port {"X-Forwarded-For" "203.0.113.7"})]
+      (try
+        (is (= 200 (.statusCode admitted)))
+        (let [refused (stream-response! port {"X-Forwarded-For" "203.0.113.8"})]
+          (is (= 503 (.statusCode refused)))
+          (is (str/includes? (slurp (.body refused)) "ip-full")))
+        (finally
+          (.close (.body admitted))
+          (stop-streaming-server! streaming))))))
 
 (deftest forwarded-for-trust-model
   (testing "behind the trusted proxy, the rightmost X-Forwarded-For
