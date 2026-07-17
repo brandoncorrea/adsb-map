@@ -33,7 +33,7 @@
       (close!)
       (catch Throwable _))))
 
-(defn- sleep-quietly! [ms]
+(defn- sleep-quietly [ms]
   (try
     (Thread/sleep (long ms))
     (catch InterruptedException _)))
@@ -77,7 +77,7 @@
     (when @running?
       (serve-connection! state)
       (when @running?
-        (sleep-quietly! reconnect-ms)
+        (sleep-quietly reconnect-ms)
         (recur)))))
 
 (defn- start-reader! [{:keys [thread-name] :as state}]

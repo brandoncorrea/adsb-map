@@ -49,7 +49,7 @@
       (mark-ok! status)
       true)))
 
-(defn- sleep! [ms]
+(defn- sleep [ms]
   (try
     (Thread/sleep (long ms))
     true
@@ -62,7 +62,7 @@
     (when @running?
       (let [ok?  (poll-once! source on-batch! status running?)
             wait (if ok? interval-ms backoff)]
-        (when (and @running? (sleep! wait))
+        (when (and @running? (sleep wait))
           (recur (if ok?
                    initial-backoff-ms
                    (next-backoff backoff max-backoff-ms))))))))
