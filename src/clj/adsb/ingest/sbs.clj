@@ -1,6 +1,5 @@
 (ns adsb.ingest.sbs
-  (:require [adsb.ingest.source :as source]
-            [adsb.ingest.tcp :as tcp]
+  (:require [adsb.ingest.tcp :as tcp]
             [adsb.schema :as schema]
             [clojure.string :as str]
             [malli.core :as m])
@@ -114,18 +113,7 @@
   (let [reader (BufferedReader. (InputStreamReader. in StandardCharsets/US_ASCII))]
     (read-lines! reader state)))
 
-(defrecord SbsSource [host port transport connect-timeout-ms idle-timeout-ms
-                      reconnect-ms clock on-delta consume! thread-name
-                      picture messages swept-at-ms running? connected?
-                      last-error connection reader-thread]
-  source/Source
-  (open! [this] (tcp/open! this))
-  (fetch! [this] (tcp/snapshot-or-throw! this))
-  (close! [this] (tcp/close! this))
-  source/Metadata
-  (last-metadata [this] (tcp/last-metadata this)))
-
 (defn ->source
   ([host port] (->source host port {}))
   ([host port opts]
-   (map->SbsSource (tcp/reader-state host port opts consume! "adsb-sbs-reader"))))
+   (tcp/->source host port opts consume! "adsb-sbs-reader")))

@@ -1,6 +1,7 @@
 (ns adsb.ingest.sbs-test
   (:require [adsb.ingest.sbs :as sbs]
             [adsb.ingest.source :as source]
+            [adsb.ingest.streaming-source-contract :as contract]
             [adsb.ingest.tcp :as tcp]
             [adsb.stats :as stats]
             [clojure.string :as str]
@@ -166,19 +167,11 @@
 (def ^:private fixture-message-count 8)
 
 (deftest metadata-reports-the-decoded-message-count
-  (testing "a streaming Source counts every message it decodes and exposes
-            the running total through Metadata, so a streaming deployment's
-            message rate is known rather than permanently absent"
-    (with-sbs-feed fixture-lines
-      (fn [host port]
-        (let [src (source/open! (sbs/->source host port))]
-          (try
-            (is (= {:messages fixture-message-count}
-                   (wait-until
-                     (fn []
-                       (let [m (source/metadata src)]
-                         (when (= fixture-message-count (:messages m)) m))))))
-            (finally (source/close! src))))))))
+  (contract/assert-metadata-reports-message-count!
+    sbs/->source
+    (fn [body] (with-sbs-feed fixture-lines body))
+    {}
+    fixture-message-count))
 
 (deftest the-counter-differences-into-a-message-rate
   (testing "adsb.stats turns two samples of the Source's counter into a
@@ -201,28 +194,12 @@
       (is (= 0 (sample (+ t0 2000)))))))
 
 (deftest quiet-feed-returns-a-snapshot-not-a-throw
-  (testing "a connected feed that has said nothing yet is not unreachable —
-            fetch! returns the (empty) snapshot rather than throwing"
-    (with-sbs-feed []
-      (fn [host port]
-        (let [src (source/open! (sbs/->source host port))]
-          (try
-            (let [batch (wait-until #(fetch-quietly src))]
-              (is (vector? batch))
-              (is (empty? batch)))
-            (finally (source/close! src))))))))
+  (contract/assert-quiet-feed-returns-a-snapshot!
+    sbs/->source
+    (fn [body] (with-sbs-feed [] body))))
 
 (deftest fetch-throws-while-unreachable
-  (testing "a stream that never connects is unreachable, so fetch! throws and
-            the poll loop's backoff engages"
-    (let [server (doto (ServerSocket.)
-                   (.bind (InetSocketAddress. "127.0.0.1" 0)))
-          port   (.getLocalPort server)]
-      (.close server)
-      (let [src (source/open! (sbs/->source "127.0.0.1" port {:reconnect-ms 50}))]
-        (try
-          (is (thrown? ExceptionInfo (source/fetch! src)))
-          (finally (source/close! src)))))))
+  (contract/assert-fetch-throws-while-unreachable! sbs/->source))
 
 (def ^:private identification-line
   "MSG,1,1,1,A1B2C3,1,,,,,UAL123  ,,,,,,,,,,,")

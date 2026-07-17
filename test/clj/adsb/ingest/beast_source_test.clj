@@ -2,6 +2,7 @@
   (:require [adsb.ingest.beast-source :as beast-source]
             [adsb.ingest.mode-s :as mode-s]
             [adsb.ingest.source :as source]
+            [adsb.ingest.streaming-source-contract :as contract]
             [adsb.ingest.tcp :as tcp]
             [clojure.test :refer [deftest is testing]])
   (:import (clojure.lang ExceptionInfo)
@@ -129,21 +130,11 @@
 (def ^:private decoded-message-count 3)
 
 (deftest metadata-reports-the-decoded-message-count
-  (testing "the Beast Source counts every frame it decodes and exposes the
-            running total through Metadata (adsb-3mw), so adsb.stats can
-            difference it into a rate on a streaming deployment"
-    (with-beast-feed wire-bytes
-      (fn [host port]
-        (let [src (source/open!
-                    (beast-source/->source host port
-                                           {:clock (constantly 1000000)}))]
-          (try
-            (is (= {:messages decoded-message-count}
-                   (wait-until
-                     (fn []
-                       (let [m (source/metadata src)]
-                         (when (= decoded-message-count (:messages m)) m))))))
-            (finally (source/close! src))))))))
+  (contract/assert-metadata-reports-message-count!
+    beast-source/->source
+    (fn [body] (with-beast-feed wire-bytes body))
+    {:clock (constantly 1000000)}
+    decoded-message-count))
 
 (deftest read-loop-sweeps-the-cpr-state
   (testing "the read loop's sweep step drops the aircraft that have gone
@@ -169,26 +160,9 @@
           (is (= book-position (get-in swept ["40621d" :cpr/reference :cpr/position]))))))))
 
 (deftest quiet-feed-returns-a-snapshot-not-a-throw
-  (testing "a connected feed that has said nothing yet is not unreachable —
-            fetch! returns the (empty) snapshot rather than throwing"
-    (with-beast-feed (byte-array 0)
-      (fn [host port]
-        (let [src (source/open! (beast-source/->source host port))]
-          (try
-            (let [batch (wait-until #(fetch-quietly src))]
-              (is (vector? batch))
-              (is (empty? batch)))
-            (finally (source/close! src))))))))
+  (contract/assert-quiet-feed-returns-a-snapshot!
+    beast-source/->source
+    (fn [body] (with-beast-feed (byte-array 0) body))))
 
 (deftest fetch-throws-while-unreachable
-  (testing "a stream that never connects is unreachable, so fetch! throws
-            and the poll loop's backoff engages — like the SBS Source"
-    (let [server (doto (ServerSocket.)
-                   (.bind (InetSocketAddress. "127.0.0.1" 0)))
-          port   (.getLocalPort server)]
-      (.close server)
-      (let [src (source/open!
-                  (beast-source/->source "127.0.0.1" port {:reconnect-ms 50}))]
-        (try
-          (is (thrown? ExceptionInfo (source/fetch! src)))
-          (finally (source/close! src)))))))
+  (contract/assert-fetch-throws-while-unreachable! beast-source/->source))

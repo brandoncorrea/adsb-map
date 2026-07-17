@@ -1,6 +1,7 @@
 (ns adsb.ingest.tcp
   (:require [adsb.accumulator :as accumulator]
             [adsb.ingest.plausibility :as plausibility]
+            [adsb.ingest.source :as source]
             [clojure.tools.logging :as log])
   (:import (java.net InetSocketAddress Socket)))
 
@@ -153,3 +154,29 @@
    :last-error         (atom nil)
    :connection         (atom nil)
    :reader-thread      (atom nil)})
+
+;; The record IS the reader-state map, so the lifecycle fns above (and
+;; tcp/accumulate!) destructure it directly. The protocol methods delegate
+;; to those fns — the bare names below resolve to this namespace's vars, not
+;; to source/Source's like-named methods, so there is no recursion.
+(defrecord TcpSource [host port transport connect-timeout-ms idle-timeout-ms
+                      reconnect-ms clock on-delta consume! thread-name
+                      picture messages swept-at-ms running? connected?
+                      last-error connection reader-thread]
+  source/Source
+  (open! [this] (open! this))
+  (fetch! [this] (snapshot-or-throw! this))
+  (close! [this] (close! this))
+  source/Metadata
+  (last-metadata [this] (last-metadata this)))
+
+(defn ->source
+  "A streaming Source over a TCP-style feed. `consume!` is the per-format
+  pump (a fn of [InputStream state]) and `thread-name` names its reader
+  thread; both are folded into the shared reader-state. See `reader-state`
+  for the option map. SBS and Beast each supply their own consume! and
+  become one-line constructors over this."
+  ([host port consume! thread-name]
+   (->source host port {} consume! thread-name))
+  ([host port opts consume! thread-name]
+   (map->TcpSource (reader-state host port opts consume! thread-name))))

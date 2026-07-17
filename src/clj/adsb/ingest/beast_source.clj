@@ -1,7 +1,6 @@
 (ns adsb.ingest.beast-source
   (:require [adsb.ingest.beast :as beast]
             [adsb.ingest.mode-s :as mode-s]
-            [adsb.ingest.source :as source]
             [adsb.ingest.tcp :as tcp])
   (:import (java.io InputStream)
            (java.util Arrays)))
@@ -45,19 +44,7 @@
 (defn- consume! [^InputStream in state]
   (read-frames! in state))
 
-(defrecord BeastSource [host port transport connect-timeout-ms idle-timeout-ms
-                        reconnect-ms clock on-delta consume! thread-name
-                        picture messages swept-at-ms running? connected?
-                        last-error connection reader-thread]
-  source/Source
-  (open! [this] (tcp/open! this))
-  (fetch! [this] (tcp/snapshot-or-throw! this))
-  (close! [this] (tcp/close! this))
-  source/Metadata
-  (last-metadata [this] (tcp/last-metadata this)))
-
 (defn ->source
   ([host port] (->source host port {}))
   ([host port opts]
-   (map->BeastSource
-     (tcp/reader-state host port opts consume! "adsb-beast-reader"))))
+   (tcp/->source host port opts consume! "adsb-beast-reader")))
