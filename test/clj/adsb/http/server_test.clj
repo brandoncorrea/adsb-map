@@ -1,9 +1,7 @@
 (ns adsb.http.server-test
   (:require [adsb.http.server :as server]
-            [adsb.state :as state]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [clojure.tools.logging.test :refer [logged? with-log]]
-            [org.httpkit.client :as http]
             [org.httpkit.server :as http-kit])
   (:import (java.net ConnectException Socket)))
 
@@ -84,19 +82,3 @@
       (let [second-server (server/start! ephemeral)]
         (is (some? second-server))
         (is (not (identical? first-server second-server)))))))
-
-(deftest default-state-lookup
-  (testing "with no injected lookup, the aircraft API reads adsb.state"
-    (try
-      (state/apply-batch! [{:aircraft/icao   "a1b2c3"
-                            :aircraft/seen-s 0.2}]
-                          1720713600000)
-      (let [srv      (server/start! ephemeral)
-            port     (http-kit/server-port srv)
-            response @(http/request
-                        {:url     (str "http://localhost:" port
-                                       "/api/aircraft/a1b2c3")
-                         :method  :get
-                         :headers {"Accept" "application/json"}})]
-        (is (= 200 (:status response))))
-      (finally (state/clear!)))))

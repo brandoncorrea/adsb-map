@@ -79,10 +79,19 @@
       (is (not (plausibility/position-jump? previous one-degree-east
                                             ms-per-hour implied-kt))))
 
-    (testing "a changed position with zero elapsed time is the most
+    (testing "a genuine same-millisecond teleport still flags — a step far
+              above quantization noise with zero elapsed time is the most
               impossible jump of all"
       (is (plausibility/position-jump? previous one-degree-east 0
                                        plausibility/default-max-implied-speed-kt)))
+
+    (testing "same-millisecond CPR jitter is not a jump — two messages sharing
+              a timestamp that differ by ~1 m are the decoder re-quantizing a
+              stationary aircraft, not a teleport, and must not set the
+              permanent suspect flag"
+      (let [jittered {:geo/lat 0 :geo/lon 0.000001}]
+        (is (not (plausibility/position-jump? previous jittered 0
+                                              plausibility/default-max-implied-speed-kt)))))
 
     (testing "an unchanged position with zero elapsed time is the feeder
               repeating itself, not a jump"

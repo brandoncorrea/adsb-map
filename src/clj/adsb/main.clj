@@ -29,7 +29,7 @@
 (def ^:const dev-csp-env "ADSB_DEV_CSP")
 
 (defn dev-csp? [env]
-  (= "true" (some-> (get env dev-csp-env) str/trim str/lower-case)))
+  (env/flag? env dev-csp-env))
 
 (def ^:const origin-token-env "ADSB_ORIGIN_TOKEN")
 
@@ -156,6 +156,7 @@
                                 {:port           port
                                  :dev-csp?       dev-csp?
                                  :origin-token   origin-token
+                                 :state-lookup   state/lookup
                                  :feeder-status  #(poll/status poller)
                                  :stream-connect #(broadcast/connect!
                                                     broadcaster %)})]

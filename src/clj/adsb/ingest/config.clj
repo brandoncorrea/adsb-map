@@ -5,14 +5,10 @@
 (def ^:const feeder-url-env "ADSB_ULTRAFEEDER_URL")
 (def ^:const source-env "ADSB_SOURCE")
 (def ^:const feed-url-env "ADSB_FEED_URL")
-(def ^:const replay-source "replay")
 (def ^:private allowed-schemes #{"http" "https"})
 
 (defn- normalize-source [source]
   (some-> source str/trim str/lower-case not-empty))
-
-(defn replay-source? [source]
-  (= replay-source (normalize-source source)))
 
 (defn source-kind [source]
   (case (normalize-source source)

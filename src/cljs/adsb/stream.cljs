@@ -79,8 +79,6 @@
     {:db                  (assoc db :stream/connection :live :stream/attempts 0)
      :stream/clear-timer! nil}))
 
-(def ^:const silent-after-frames 3)
-
 (defn silent-frames [previous message-rate]
   (cond
     (nil? message-rate) 0

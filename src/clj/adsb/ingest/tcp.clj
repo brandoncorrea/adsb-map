@@ -28,9 +28,10 @@
      :close! #(close-quietly! socket)}))
 
 (defn- close-connection! [connection]
-  (try
-    (some-> connection :close! (as-> close! (close!)))
-    (catch Throwable _)))
+  (when-let [close! (:close! connection)]
+    (try
+      (close!)
+      (catch Throwable _))))
 
 (defn- sleep-quietly! [ms]
   (try

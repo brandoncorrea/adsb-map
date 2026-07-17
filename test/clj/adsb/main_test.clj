@@ -193,6 +193,15 @@
         (let [{:keys [status content-type]} (head-stream port)]
           (is (= 200 status))
           (is (str/starts-with? content-type "text/event-stream"))))
+      (testing "the aircraft API reads the live picture — start! injects
+                adsb.state/lookup as the state-lookup, wiring the composition
+                root does now that http.server no longer defaults it. The
+                unreachable feeder never writes, so this hand-applied entry is
+                the only thing in the picture."
+        (state/apply-batch! [{:aircraft/icao "a1b2c3" :aircraft/seen-s 0.2}]
+                            1720713600000)
+        (let [{:keys [status]} (get-json port "/api/aircraft/a1b2c3")]
+          (is (= 200 status))))
       (finally
         (main/stop! system)
         (state/clear!)))))

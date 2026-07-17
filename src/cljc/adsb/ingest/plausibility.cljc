@@ -16,6 +16,14 @@
 
 (def ^:const ^:private ms-per-hour 3600000)
 
+;; Two messages sharing a timestamp yield no elapsed time and so no speed;
+;; we fall back to raw distance. CPR quantization noise is ~5-10 m at these
+;; latitudes, so re-decoding a stationary aircraft jitters its position by a
+;; few metres — require the step to clear a wide margin above that before
+;; flagging, or same-ms jitter would set the permanent suspect flag. 300 m is
+;; far above quantization noise and far below any real teleport.
+(def ^:const ^:private same-ms-jump-min-m 300)
+
 (defn position-jump? [previous position position-at-ms max-implied-speed-kt]
   (let [elapsed-ms (- position-at-ms (:aircraft/position-at-ms previous))
         distance-m (geo/distance (:aircraft/position previous) position)]
@@ -23,7 +31,7 @@
       (> (/ (geo/meters->nm distance-m)
             (/ elapsed-ms ms-per-hour))
          max-implied-speed-kt)
-      (pos? distance-m))))
+      (> distance-m same-ms-jump-min-m))))
 
 (defn- flag-position-jump [picture observation captured-at-ms max-implied-speed-kt]
   (let [{:aircraft/keys [icao position]} observation

@@ -2,9 +2,9 @@
   (:require ["@testing-library/react" :as rtl]
             [adsb.corejs :as cjs]
             [adsb.events]
-            [adsb.stream :as stream]
+            [adsb.stream]
             [adsb.stream.source :as source]
-            [adsb.subs]
+            [adsb.subs :as subs]
             [adsb.test-dom :as test-dom]
             [adsb.ui.health :as health]
             [clojure.test :refer-macros [deftest testing is use-fixtures]]
@@ -28,7 +28,7 @@
     (rf-test/run-test-sync
       (rf/dispatch [:test/set-connection :live])
       (rf/dispatch [:test/set-feeder :ok])
-      (rf/dispatch [:test/set-silent-frames stream/silent-after-frames])
+      (rf/dispatch [:test/set-silent-frames subs/silent-after-frames])
       (render-header!)
       (is (= :silent @(rf/subscribe [:feeder/health])))
       (let [chip (.getByTestId rtl/screen "feeder-indicator")]
@@ -44,7 +44,7 @@
     (rf-test/run-test-sync
       (rf/dispatch [:test/set-connection :live])
       (rf/dispatch [:test/set-feeder :ok])
-      (rf/dispatch [:test/set-silent-frames (dec stream/silent-after-frames)])
+      (rf/dispatch [:test/set-silent-frames (dec subs/silent-after-frames)])
       (render-header!)
       (is (= :ok @(rf/subscribe [:feeder/health])))))
 

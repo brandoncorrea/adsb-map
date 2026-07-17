@@ -9,6 +9,9 @@
 (def longitude [:and number? [:>= -180] [:<= 180]])
 
 (def emitter-category
+  ;; Set D (D0-D7) is omitted deliberately: readsb occasionally emits it, but
+  ;; the category is mostly reserved and carries nothing we render, so a set-D
+  ;; value drops the FIELD (advisory), never the aircraft.
   (into [:enum]
         (for [set  ["A" "B" "C"]
               code (range 8)]
@@ -50,6 +53,9 @@
    [:aircraft/ground-speed-kt {:optional true} number?]
    [:aircraft/track-deg {:optional true} number?]
    [:aircraft/baro-rate-fpm {:optional true} number?]
+   ;; seen-s / position-seen-s are feeder-relative ages: inputs that
+   ;; aircraft/->observation converts to absolute -at-ms and dissocs pre-merge,
+   ;; so they are accepted on the way in but never served on the way out.
    [:aircraft/seen-s {:optional true} number?]
    [:aircraft/seen-at-ms {:optional true} number?]
    [:aircraft/position-seen-s {:optional true} number?]

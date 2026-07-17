@@ -2,9 +2,9 @@
   (:require [clojure.math :as math]))
 
 ;; Compact Position Reporting, per DO-260B §A.1.7 / ICAO Annex 10 Vol IV.
-(def ^:const cpr-scale 131072.0)  ; 2^17 — the fields are 17-bit fractions
-(def ^:const even-zone-count 60)
-(def ^:const odd-zone-count 59)
+(def ^:const ^:private cpr-scale 131072.0)  ; 2^17 — the fields are 17-bit fractions
+(def ^:const ^:private even-zone-count 60)
+(def ^:const ^:private odd-zone-count 59)
 
 ;; NZ, the number of latitude zones.
 (def ^:private nz 15)

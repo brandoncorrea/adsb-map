@@ -92,15 +92,6 @@
       (is (not (re-find (re-pattern secret) (str message))))
       (is (not (re-find (re-pattern secret) (pr-str data)))))))
 
-(deftest replay-source-selection
-  (testing "ADSB_SOURCE=replay selects the fixture-replay Source, case-
-            and whitespace-insensitively"
-    (doseq [value ["replay" "REPLAY" "  replay  "]]
-      (is (config/replay-source? value))))
-  (testing "unset (the default) and any other value keep the live feeder"
-    (doseq [value [nil "" "ultrafeeder" "live"]]
-      (is (not (config/replay-source? value))))))
-
 (deftest source-kind-classifies-each-source
   (testing "unset and \"poll\" both select the HTTP poll Source — the default"
     (doseq [value [nil "" "  " "poll" "POLL" "  Poll  "]]

@@ -1,7 +1,13 @@
 (ns adsb.subs
   (:require [adsb.aircraft :as aircraft]
-            [adsb.stream :as stream]
             [re-frame.core :as rf]))
+
+;; How many consecutive zero-rate stats frames read as :silent below. The
+;; threshold is health-display policy, so it lives with the :feeder/health
+;; sub that reads it, not with the frame counter in adsb.stream. Small
+;; because the fact is urgent, but non-zero so a single rounded-to-zero
+;; sample doesn't blink the light — stats frames arrive every ~10 s.
+(def ^:const silent-after-frames 3)
 
 (rf/reg-sub
   :aircraft/selected-icao
@@ -52,7 +58,7 @@
                     (not= :ok feeder-status)
                     (or feeder-status :unknown)
 
-                    (>= silent-frames stream/silent-after-frames)
+                    (>= silent-frames silent-after-frames)
                     :silent
 
                     :else :ok)

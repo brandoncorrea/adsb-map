@@ -1,6 +1,5 @@
 (ns adsb.http.server
   (:require [adsb.http.routes :as routes]
-            [adsb.state :as state]
             [clojure.tools.logging :as log]
             [org.httpkit.server :as http-kit]))
 
@@ -12,8 +11,7 @@
 (defn start-server!
   ([] (start-server! {}))
   ([{:keys [port] :or {port default-port} :as options}]
-   (let [dependencies (merge {:state-lookup state/lookup}
-                             (dissoc options :port))
+   (let [dependencies (dissoc options :port)
          srv          (http-kit/run-server
                         (routes/handler dependencies)
                         {:port                 port
@@ -34,6 +32,9 @@
 (defonce ^:private server (atom nil))
 
 (defn start!
+  "The REPL entry point: an idempotent singleton around start-server! so a
+  REPL session can (start!)/(stop!) one server without juggling handles.
+  Production boots through adsb.main, which calls start-server! directly."
   ([] (start! {}))
   ([options]
    (if-let [{:keys [srv] :as running} @server]

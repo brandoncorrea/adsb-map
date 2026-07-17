@@ -194,8 +194,12 @@ decision down:
   in `adsb.state/apply-batch!` — the one place the previous observation is
   available.) A new position implying a sustained speed strictly above **1200 kt**
   from the aircraft's previous observation sets `:aircraft/position-suspect? true`
-  on the domain aircraft. Clearing rule: **nothing the aircraft transmits clears
-  it.** The flag means "this track has made at least one impossible jump since we
+  on the domain aircraft. Two messages sharing a **timestamp** yield no elapsed
+  time and so no speed; there the jump gate falls back to raw distance and
+  demands the step clear **300 m** before flagging — well above the few metres
+  of CPR quantization jitter that re-decoding a stationary aircraft produces, so
+  same-millisecond jitter never sets this permanent flag. Clearing rule:
+  **nothing the aircraft transmits clears it.** The flag means "this track has made at least one impossible jump since we
   picked it up," so it sticks for the track's life in the picture — on both ingest
   paths, so the badge means one thing regardless of deployment (adsb-caf). A track
   that could clear its own mark by settling down would only need one plausible

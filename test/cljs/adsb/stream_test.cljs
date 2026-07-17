@@ -4,6 +4,7 @@
             [adsb.fixtures :as fixtures]
             [adsb.stream :as stream]
             [adsb.stream.source :as source]
+            [adsb.subs :as subs]
             [adsb.wire :as wire]
             [clojure.test :refer-macros [deftest is testing]]
             [day8.re-frame.test :as rf-test]
@@ -233,9 +234,11 @@
 
   (testing "the threshold is small, because the fact is urgent — but it exists,
             because the light must not blink. Stats frames arrive every ~10 s,
-            so each unit here is ~10 s of wall clock"
-    (is (pos? stream/silent-after-frames))
-    (is (<= stream/silent-after-frames 6))))
+            so each unit here is ~10 s of wall clock. It lives in adsb.subs
+            now — the :feeder/health sub owns the display policy, adsb.stream
+            only counts the frames"
+    (is (pos? subs/silent-after-frames))
+    (is (<= subs/silent-after-frames 6))))
 
 (deftest backoff-grows
   (testing "each consecutive CLOSED error schedules a longer reconnect"
