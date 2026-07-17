@@ -2,6 +2,7 @@
   (:require [adsb.ingest.coerce :as coerce]
             [adsb.ingest.poll :as poll]
             [adsb.ingest.source :as source]
+            [adsb.test-feed :as feed]
             [clojure.test :refer [deftest is testing]]))
 
 (def ^:private fast
@@ -19,14 +20,6 @@
     :flight "SWA349  "
     :squawk "6040"}])
 
-(defn- wait-until [pred]
-  (let [deadline (+ (System/currentTimeMillis) 2000)]
-    (loop []
-      (or (pred)
-          (when (< (System/currentTimeMillis) deadline)
-            (Thread/sleep 2)
-            (recur))))))
-
 (deftest success-path-invokes-callback-with-coerced-batch
   (testing "each poll hands the callback a coerced domain-aircraft batch"
     (let [seen   (atom nil)
@@ -34,7 +27,7 @@
           poller (poll/start! (merge fast {:source    src
                                            :on-batch! #(reset! seen %)}))]
       (try
-        (let [batch (wait-until #(deref seen))]
+        (let [batch (feed/wait-until #(deref seen))]
           (is (some? batch))
           (is (= 2 (count batch)))
           (is (= #{"abc0e4" "ac5697"} (set (map :aircraft/icao batch))))
@@ -55,8 +48,8 @@
           poller     (poll/start! (merge fast {:source    src
                                                :on-batch! #(reset! seen %)}))]
       (try
-        (is (wait-until #(= :down (:feeder/status (poll/status poller)))))
-        (let [batch (wait-until #(deref seen))]
+        (is (feed/wait-until #(= :down (:feeder/status (poll/status poller)))))
+        (let [batch (feed/wait-until #(deref seen))]
           (is (some? batch))
           (is (> @calls fail-count))
           (is (= :ok (:feeder/status (poll/status poller)))))
@@ -82,7 +75,7 @@
           poller (poll/start! (merge fast {:source    src
                                            :on-batch! (fn [_] (throw (ex-info "boom" {})))}))]
       (try
-        (is (wait-until #(> @calls 3)))
+        (is (feed/wait-until #(> @calls 3)))
         (is (= :ok (:feeder/status (poll/status poller))))
         (finally (poll/stop! poller))))))
 
@@ -105,7 +98,7 @@
                                            (reset! in-batch? true)
                                            (Thread/sleep 300)
                                            (swap! landed inc))}))]
-      (wait-until #(deref in-batch?))
+      (feed/wait-until #(deref in-batch?))
       (poll/stop! poller)
       (is (not (.isAlive ^Thread (:poll/thread poller))))
       (let [at-stop @landed]
@@ -117,7 +110,7 @@
     (let [calls  (atom 0)
           src    (source/fn-source #(do (swap! calls inc) []))
           poller (poll/start! (merge fast {:source src :on-batch! identity}))]
-      (wait-until #(> @calls 1))
+      (feed/wait-until #(> @calls 1))
       (is (nil? (poll/stop! poller)))
       (let [after (do (Thread/sleep 30) @calls)]
         (Thread/sleep 30)
@@ -139,7 +132,7 @@
                         []))
           poller    (poll/start! (merge fast {:source    src
                                               :on-batch! identity}))]
-      (is (wait-until #(deref in-fetch?)))
+      (is (feed/wait-until #(deref in-fetch?)))
       (poll/stop! poller)
       (is (not= :down (:feeder/status (poll/status poller))))
       (is (not (.isAlive ^Thread (:poll/thread poller)))))))

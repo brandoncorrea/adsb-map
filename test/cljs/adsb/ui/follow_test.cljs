@@ -6,6 +6,7 @@
             [adsb.stream]
             [adsb.subs]
             [adsb.test-dom :as test-dom]
+            [adsb.test-rf :as test-rf]
             [adsb.ui.follow :as follow]
             [clojure.test :refer-macros [deftest is use-fixtures async]]
             [day8.re-frame.test :as rf-test]
@@ -14,9 +15,6 @@
 (use-fixtures :each
   {:before (fn [] (rf/dispatch-sync [:app/initialize-db]))
    :after  rtl/cleanup})
-
-(rf/reg-event-db :test/set-picture
-  (fn [db [_ picture]] (assoc db :aircraft/picture picture)))
 
 (rf/reg-fx :enrich/fetch! (fn [_]))
 
@@ -52,26 +50,24 @@
       (is (= "false" (cjs/get-attribute button "aria-pressed")))
       (is (= "Follow aircraft" (cjs/get-attribute button "aria-label")))
       (.click rtl/fireEvent button)
-      (-> (rtl/waitFor
-            (fn []
-              (assert (= "follow"
-                         (cjs/get-attribute (.getByTestId rtl/screen "camera-follow")
-                                            "data-camera")))))
-          (.then (fn [_]
-                   (is (= :follow @(rf/subscribe [:map/camera-mode])))
-                   (let [btn (.getByTestId rtl/screen "camera-follow")]
-                     (is (= "true" (cjs/get-attribute btn "aria-pressed")))
-                     (is (= "Stop following" (cjs/get-attribute btn "aria-label")))
-                     (.click rtl/fireEvent btn))
-                   (rtl/waitFor
-                     (fn []
-                       (assert (= "free"
-                                  (cjs/get-attribute
-                                    (.getByTestId rtl/screen "camera-follow")
-                                    "data-camera")))))))
-          (.then (fn [_]
-                   (is (= :free @(rf/subscribe [:map/camera-mode])))
-                   (done)))
-          (.catch (fn [err]
-                    (is false (str "camera toggle did not land: " err))
-                    (done)))))))
+      (test-rf/wait-for! done
+        (fn []
+          (assert (= "follow"
+                     (cjs/get-attribute (.getByTestId rtl/screen "camera-follow")
+                                        "data-camera"))))
+        (fn [_]
+          (is (= :follow @(rf/subscribe [:map/camera-mode])))
+          (let [btn (.getByTestId rtl/screen "camera-follow")]
+            (is (= "true" (cjs/get-attribute btn "aria-pressed")))
+            (is (= "Stop following" (cjs/get-attribute btn "aria-label")))
+            (.click rtl/fireEvent btn))
+          (-> (rtl/waitFor
+                (fn []
+                  (assert (= "free"
+                             (cjs/get-attribute
+                               (.getByTestId rtl/screen "camera-follow")
+                               "data-camera")))))
+              (.then (fn [_]
+                       (is (= :free @(rf/subscribe [:map/camera-mode])))
+                       (done)))))
+        "camera toggle did not land"))))

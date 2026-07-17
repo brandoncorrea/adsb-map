@@ -10,11 +10,11 @@
             [day8.re-frame.test :as rf-test]
             [re-frame.core :as rf]))
 
-(def ^:const at-ms 1720713600000)
+(def ^:const at-ms fixtures/captured-at-ms)
 
 (defn- frame [aircraft]
-  (let [picture (into {} (map (juxt :aircraft/icao identity)) aircraft)]
-    (js-invoke js/JSON "stringify" (clj->js (wire/picture->wire picture at-ms)))))
+  (js-invoke js/JSON "stringify"
+             (clj->js (wire/picture->wire (fixtures/by-icao aircraft) at-ms))))
 
 (defn- stats-frame
   ([stats] (stats-frame stats nil))
@@ -28,13 +28,22 @@
   (reify source/Connection
     (close! [_])))
 
+(defn- with-fake-stream!
+  "Start the stream against a fake connection with reconnect stubbed to a
+  no-op, then run `(f !cbs)` with the source callbacks captured in !cbs — the
+  prelude every connection-lifecycle test opened with."
+  [f]
+  (let [!cbs (atom nil)]
+    (with-redefs [source/connect!            (fn [_url cbs] (reset! !cbs cbs) (fake-connection))
+                  stream/schedule-reconnect! (constantly nil)]
+      (rf/dispatch [:stream/start])
+      (f !cbs))))
+
 (deftest snapshot-populates-picture
   (testing "a snapshot frame lands as the decoded, namespaced domain picture"
     (rf-test/run-test-sync
-      (let [!cbs (atom nil)]
-        (with-redefs [source/connect!            (fn [_url cbs] (reset! !cbs cbs) (fake-connection))
-                      stream/schedule-reconnect! (constantly nil)]
-          (rf/dispatch [:stream/start])
+      (with-fake-stream!
+        (fn [!cbs]
           ((:on-open @!cbs))
           ((:on-frame @!cbs) (frame [fixtures/ups-2717 fixtures/squawking-7700]))
 
@@ -50,10 +59,8 @@
   (testing "the stats event's scalars decode onto :stats/session, and
             an absent scalar stays absent"
     (rf-test/run-test-sync
-      (let [!cbs (atom nil)]
-        (with-redefs [source/connect!            (fn [_url cbs] (reset! !cbs cbs) (fake-connection))
-                      stream/schedule-reconnect! (constantly nil)]
-          (rf/dispatch [:stream/start])
+      (with-fake-stream!
+        (fn [!cbs]
           ((:on-stats @!cbs)
            (stats-frame {:stats/max-range-km 312
                          :stats/message-rate 148}))
@@ -67,10 +74,8 @@
   (testing "the stats event's feeder status decodes onto :feeder/status, and
             an absent status stays nil (unknown)"
     (rf-test/run-test-sync
-      (let [!cbs (atom nil)]
-        (with-redefs [source/connect!            (fn [_url cbs] (reset! !cbs cbs) (fake-connection))
-                      stream/schedule-reconnect! (constantly nil)]
-          (rf/dispatch [:stream/start])
+      (with-fake-stream!
+        (fn [!cbs]
           ((:on-stats @!cbs)
            (stats-frame nil {:feeder/status          :ok
                              :feeder/last-success-ms 1720713599000}))
@@ -86,10 +91,8 @@
             the stream drops, the derived health goes :unknown rather than
             asserting a stale :ok"
     (rf-test/run-test-sync
-      (let [!cbs (atom nil)]
-        (with-redefs [source/connect!            (fn [_url cbs] (reset! !cbs cbs) (fake-connection))
-                      stream/schedule-reconnect! (constantly nil)]
-          (rf/dispatch [:stream/start])
+      (with-fake-stream!
+        (fn [!cbs]
           ((:on-open @!cbs))
           ((:on-stats @!cbs) (stats-frame nil {:feeder/status :ok}))
           (is (= :ok @(rf/subscribe [:feeder/health])))
@@ -101,10 +104,8 @@
 (deftest update-replaces-wholesale
   (testing "an update is a full picture, never a merge: a dropped aircraft is gone"
     (rf-test/run-test-sync
-      (let [!cbs (atom nil)]
-        (with-redefs [source/connect!            (fn [_url cbs] (reset! !cbs cbs) (fake-connection))
-                      stream/schedule-reconnect! (constantly nil)]
-          (rf/dispatch [:stream/start])
+      (with-fake-stream!
+        (fn [!cbs]
           ((:on-frame @!cbs) (frame [fixtures/ups-2717 fixtures/squawking-7700]))
           (is (= 2 (count @(rf/subscribe [:aircraft/picture]))))
 
@@ -117,10 +118,8 @@
             picture by icao — updating the aircraft it names, touching no
             other, and adding one not yet seen (adsb-jpf)"
     (rf-test/run-test-sync
-      (let [!cbs (atom nil)]
-        (with-redefs [source/connect!            (fn [_url cbs] (reset! !cbs cbs) (fake-connection))
-                      stream/schedule-reconnect! (constantly nil)]
-          (rf/dispatch [:stream/start])
+      (with-fake-stream!
+        (fn [!cbs]
           ((:on-frame @!cbs) (frame [fixtures/ups-2717
                                      fixtures/squawking-7700]))
           (let [icao  (:aircraft/icao fixtures/ups-2717)
@@ -162,10 +161,8 @@
 (deftest connection-state-tracks-reality
   (testing ":live on open, :reconnecting while the browser retries, :down after repeated failure, healing on recovery"
     (rf-test/run-test-sync
-      (let [!cbs (atom nil)]
-        (with-redefs [source/connect!            (fn [_url cbs] (reset! !cbs cbs) (fake-connection))
-                      stream/schedule-reconnect! (constantly nil)]
-          (rf/dispatch [:stream/start])
+      (with-fake-stream!
+        (fn [!cbs]
           ((:on-open @!cbs))
           (is (= :live @(rf/subscribe [:stream/connection])))
 

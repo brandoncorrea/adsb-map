@@ -1,9 +1,7 @@
 (ns adsb.geo-test
-  (:require [adsb.geo :as geo]
+  (:require [adsb.fixtures :refer [close?]]
+            [adsb.geo :as geo]
             [clojure.test :refer [deftest testing is]]))
-
-(defn- close? [expected actual tol]
-  (< (abs (- expected actual)) tol))
 
 (def ^:private equator-degree-m 111194.9)
 

@@ -1,5 +1,6 @@
 (ns adsb.stats-test
-  (:require [adsb.geo :as geo]
+  (:require [adsb.fixtures :as fixtures]
+            [adsb.geo :as geo]
             [adsb.stats :as stats]
             [clojure.math :as math]
             [clojure.test :refer [deftest is testing]]))
@@ -15,9 +16,7 @@
 (def ^:private unplaced {:aircraft/icao "ccc333"})
 
 (defn- picture [& aircraft]
-  (->> aircraft
-       (map (juxt :aircraft/icao identity))
-       (into {})))
+  (fixtures/by-icao aircraft))
 
 (defn- km [receiver-position aircraft]
   (-> (geo/distance receiver-position (:aircraft/position aircraft))

@@ -1,8 +1,10 @@
 (ns adsb.ingest.wss-test
-  (:require [adsb.ingest.beast-source :as beast-source]
+  (:require [adsb.fixtures :as fixtures]
+            [adsb.ingest.beast-source :as beast-source]
             [adsb.ingest.sbs :as sbs]
             [adsb.ingest.source :as source]
             [adsb.ingest.wss :as wss]
+            [adsb.test-feed :as feed]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [org.httpkit.server :as hk])
@@ -54,51 +56,18 @@
   (with-ws-server (ws-app next-chunks!) f))
 
 (def ^:private wait-timeout-ms 4000)
-
-(defn- wait-until [thunk]
-  (let [deadline (+ (System/currentTimeMillis) wait-timeout-ms)]
-    (loop []
-      (or (thunk)
-          (when (< (System/currentTimeMillis) deadline)
-            (Thread/sleep 25)
-            (recur))))))
-
-(defn- fetch-quietly [src]
-  (try (source/fetch! src) (catch ExceptionInfo _)))
-
-(defn- by-icao [batch]
-  (->> batch
-       (map (juxt :aircraft/icao identity))
-       (into {})))
-
-(defn- with-tcp-feed [^bytes capture f]
-  (let [server (doto (ServerSocket.)
-                 (.bind (InetSocketAddress. "127.0.0.1" 0)))
-        port   (.getLocalPort server)
-        conn   (future
-                 (with-open [client (.accept server)]
-                   (let [out (.getOutputStream client)]
-                     (doseq [chunk (partition-all 512 capture)]
-                       (.write out (byte-array chunk))
-                       (.flush out)
-                       (Thread/sleep 1))
-                     (.read (.getInputStream client)))))]
-    (try
-      (f "127.0.0.1" port)
-      (finally
-        (future-cancel conn)
-        (.close server)))))
+(def ^:private wait-opts {:timeout-ms wait-timeout-ms :sleep-ms 25})
 
 (defn- picture-of [src expected-count]
   (try
     (loop [previous ::none
            deadline (+ (System/currentTimeMillis) wait-timeout-ms)]
-      (let [batch (fetch-quietly src)]
+      (let [batch (feed/fetch-quietly src)]
         (if (and (= expected-count (count batch)) (= previous batch))
-          (by-icao batch)
+          (fixtures/by-icao batch)
           (if (< (System/currentTimeMillis) deadline)
             (do (Thread/sleep 50) (recur batch deadline))
-            (by-icao batch)))))
+            (fixtures/by-icao batch)))))
     (finally (source/close! src))))
 
 (deftest sbs-capture-streams-identically-over-wss-and-tcp
@@ -115,7 +84,7 @@
                                             (assoc clock :transport
                                                          (wss/transport uri nil))))
                             sbs-aircraft-count)))
-          tcp-picture (with-tcp-feed
+          tcp-picture (feed/with-byte-feed
                         capture
                         (fn [host port]
                           (picture-of
@@ -140,7 +109,7 @@
                                 (assoc clock :transport
                                              (wss/transport uri nil))))
                             beast-aircraft-count)))
-          tcp-picture (with-tcp-feed
+          tcp-picture (feed/with-byte-feed
                         capture
                         (fn [host port]
                           (picture-of
@@ -177,10 +146,11 @@
                                      :idle-timeout-ms 2000
                                      :reconnect-ms    50}))]
             (try
-              (let [picture (wait-until
+              (let [picture (feed/wait-until
                               (fn []
-                                (let [planes (by-icao (fetch-quietly src))]
-                                  (when (contains? planes "bbbbbb") planes))))]
+                                (let [planes (fixtures/by-icao (feed/fetch-quietly src))]
+                                  (when (contains? planes "bbbbbb") planes)))
+                              wait-opts)]
                 (is (= "ALPHA123" (get-in picture ["aaaaaa" :aircraft/callsign])))
                 (is (= "BRAVO123" (get-in picture ["bbbbbb" :aircraft/callsign])))
                 (is (= 1 @connections)))
@@ -206,10 +176,11 @@
                                      :idle-timeout-ms 200
                                      :reconnect-ms    50}))]
             (try
-              (let [picture (wait-until
+              (let [picture (feed/wait-until
                               (fn []
-                                (let [planes (by-icao (fetch-quietly src))]
-                                  (when (contains? planes "bbbbbb") planes))))]
+                                (let [planes (fixtures/by-icao (feed/fetch-quietly src))]
+                                  (when (contains? planes "bbbbbb") planes)))
+                              wait-opts)]
                 (is (some? picture))
                 (is (< 1 @connections))
                 (is (= "ALPHA123" (get-in picture ["aaaaaa" :aircraft/callsign]))))
@@ -259,7 +230,7 @@
                                      :idle-timeout-ms 100
                                      :reconnect-ms    25}))]
             (try
-              (is (wait-until #(<= 4 @connections)))
+              (is (feed/wait-until #(<= 4 @connections) wait-opts))
               (is (>= 1 (- (selector-thread-count) before)))
               (finally (source/close! src)))))))))
 

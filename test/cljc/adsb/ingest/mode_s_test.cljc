@@ -1,5 +1,6 @@
 (ns adsb.ingest.mode-s-test
   (:require [adsb.aircraft :as aircraft]
+            [adsb.fixtures :refer [close?]]
             [adsb.ingest.mode-s :as mode-s]
             [adsb.schema :as schema]
             [clojure.test :refer [deftest is testing]]
@@ -34,9 +35,6 @@
   (with-parity (into [0x8d 0x40 0x62 0x1d]
                      (position-me type-code altitude-field parity
                                   lat-cpr lon-cpr))))
-
-(defn- approximately? [expected actual tolerance]
-  (< (abs (double (- expected actual))) tolerance))
 
 (def identification-payload (hex->payload "8D4840D6202CC371C32CE0576098"))
 (def even-position-payload (hex->payload "8D40621D58C382D690C8AC2863A7"))
@@ -139,8 +137,8 @@
     (let [{:aircraft/keys [icao ground-speed-kt track-deg]
            :as            delta} (decode-delta ground-speed-payload)]
       (is (= "485020" icao))
-      (is (approximately? 159.20 ground-speed-kt 0.01))
-      (is (approximately? 182.88 track-deg 0.01))
+      (is (close? 159.20 ground-speed-kt 0.01))
+      (is (close? 182.88 track-deg 0.01))
       (is (not (contains? delta :aircraft/baro-rate-fpm)))))
 
   (testing "the full ME-level truth, including the published vertical
@@ -162,7 +160,7 @@
     (let [velocity (mode-s/airborne-velocity airspeed-payload)]
       (is (= 375 (:velocity/speed-kt velocity)))
       (is (= :airspeed-true (:velocity/speed-source velocity)))
-      (is (approximately? 243.98 (:velocity/direction-deg velocity) 0.01))
+      (is (close? 243.98 (:velocity/direction-deg velocity) 0.01))
       (is (= :heading (:velocity/direction-source velocity)))
       (is (= -2304 (:velocity/vertical-rate-fpm velocity)))
       (is (= :baro (:velocity/vertical-rate-source velocity))))))
@@ -282,7 +280,7 @@
                                              1000 nil)
           delta (decode-delta tc20 1500 cpr-state)]
       (is (= book-position (:aircraft/position delta)))
-      (is (approximately? (* 3000 3.28084) (:aircraft/altitude-ft delta) 1e-6)))))
+      (is (close? (* 3000 3.28084) (:aircraft/altitude-ft delta) 1e-6)))))
 
 (deftest downlink-formats
   (testing "DF18 CF0 and CF2 decode like DF17"

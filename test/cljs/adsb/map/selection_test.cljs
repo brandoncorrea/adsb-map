@@ -2,33 +2,15 @@
   (:require [adsb.corejs :as cjs]
             [adsb.events]
             [adsb.fixtures :as fixtures]
-            [adsb.map.maplibre :as maplibre]
             [adsb.map.selection :as selection]
             [adsb.stream]
             [adsb.subs]
+            [adsb.test-map :as test-map]
+            [adsb.test-rf :as test-rf]
             [clojure.test :refer-macros [deftest is testing]]
             [day8.re-frame.test :as rf-test]
             [re-frame.core :as rf]
             [reagent.core :as r]))
-
-(rf/reg-event-db :test/set-picture
-  (fn [db [_ picture]] (assoc db :aircraft/picture picture)))
-
-(defn- by-icao [aircraft]
-  (into {} (map (juxt :aircraft/icao identity)) aircraft))
-
-(defn- recording-map []
-  (let [!rec (atom {:added [] :moves [] :removed []})]
-    {:rec !rec
-     :m   (reify maplibre/Map
-            (add-marker! [_ element lng-lat]
-              (let [marker {:element element :id (count (:added @!rec))}]
-                (swap! !rec update :added conj {:marker marker :lng-lat lng-lat})
-                marker))
-            (move-marker! [_ marker lng-lat]
-              (swap! !rec update :moves conj {:marker marker :lng-lat lng-lat}))
-            (remove-marker! [_ marker]
-              (swap! !rec update :removed conj marker)))}))
 
 (def ^:private ups-icao (:aircraft/icao fixtures/ups-2717))
 (def ^:private ups-lng-lat
@@ -47,14 +29,14 @@
 
 (deftest the-ring-follows-the-selection
   (rf-test/run-test-sync
-    (let [{:keys [m rec]} (recording-map)
+    (let [{:keys [m rec]} (test-map/recording-map)
           handle (selection/attach! m)]
       (testing "no selection, no marker"
         (r/flush)
         (is (= [] (:added @rec))))
 
-      (rf/dispatch [:test/set-picture (by-icao [fixtures/ups-2717
-                                                fixtures/on-the-ground])])
+      (test-rf/set-picture! [fixtures/ups-2717
+                             fixtures/on-the-ground])
       (rf/dispatch [:aircraft/select ups-icao])
       (r/flush)
 
@@ -70,11 +52,10 @@
 
       (testing "the same aircraft moving MOVES the marker — no redraw,
                 so the settled ink holds still"
-        (rf/dispatch [:test/set-picture
-                      (by-icao [(assoc fixtures/ups-2717
-                                  :aircraft/position
-                                  #:geo{:lat 28.0 :lon -83.9})
-                                fixtures/on-the-ground])])
+        (test-rf/set-picture! [(assoc fixtures/ups-2717
+                                 :aircraft/position
+                                 #:geo{:lat 28.0 :lon -83.9})
+                               fixtures/on-the-ground])
         (r/flush)
         (is (= 1 (count (:added @rec))))
         (is (= [-83.9 28.0] (:lng-lat (last (:moves @rec))))))
@@ -95,10 +76,10 @@
 
 (deftest hover-draws-a-label-without-a-ring
   (rf-test/run-test-sync
-    (let [{:keys [m rec]} (recording-map)
+    (let [{:keys [m rec]} (test-map/recording-map)
           handle (selection/attach! m)]
-      (rf/dispatch [:test/set-picture (by-icao [fixtures/ups-2717
-                                                fixtures/on-the-ground])])
+      (test-rf/set-picture! [fixtures/ups-2717
+                             fixtures/on-the-ground])
       (rf/dispatch [:aircraft/hover ups-icao])
       (r/flush)
       (testing "hover alone pins a label, not the selection ring"
@@ -119,9 +100,9 @@
 
 (deftest deselect-clears-a-sticky-hover-label
   (rf-test/run-test-sync
-    (let [{:keys [m rec]} (recording-map)
+    (let [{:keys [m rec]} (test-map/recording-map)
           handle (selection/attach! m)]
-      (rf/dispatch [:test/set-picture (by-icao [fixtures/ups-2717])])
+      (test-rf/set-picture! [fixtures/ups-2717])
       (rf/dispatch [:aircraft/select ups-icao])
       (rf/dispatch [:aircraft/hover ups-icao])
       (r/flush)
@@ -144,9 +125,9 @@
 
 (deftest a-position-less-selection-draws-nothing
   (rf-test/run-test-sync
-    (let [{:keys [m rec]} (recording-map)
+    (let [{:keys [m rec]} (test-map/recording-map)
           handle (selection/attach! m)]
-      (rf/dispatch [:test/set-picture (by-icao [fixtures/never-positioned])])
+      (test-rf/set-picture! [fixtures/never-positioned])
       (rf/dispatch [:aircraft/select
                     (:aircraft/icao fixtures/never-positioned)])
       (r/flush)
@@ -155,9 +136,9 @@
 
 (deftest detach-removes-a-live-ring
   (rf-test/run-test-sync
-    (let [{:keys [m rec]} (recording-map)
+    (let [{:keys [m rec]} (test-map/recording-map)
           handle (selection/attach! m)]
-      (rf/dispatch [:test/set-picture (by-icao [fixtures/ups-2717])])
+      (test-rf/set-picture! [fixtures/ups-2717])
       (rf/dispatch [:aircraft/select ups-icao])
       (r/flush)
       (is (= 1 (count (:added @rec))))

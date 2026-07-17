@@ -1,10 +1,8 @@
 (ns adsb.ingest.cpr-test
-  (:require [adsb.ingest.cpr :as cpr]
+  (:require [adsb.fixtures :refer [close?]]
+            [adsb.ingest.cpr :as cpr]
             [clojure.math :as math]
             [clojure.test :refer [deftest is testing]]))
-
-(defn- approximately? [expected actual tolerance]
-  (< (abs (double (- expected actual))) tolerance))
 
 (def book-even
   {:cpr/parity      :even
@@ -38,14 +36,14 @@
 (deftest global-decode-known-answer
   (testing "the book's pair, even frame newest — the published answer"
     (let [{:geo/keys [lat lon]} (cpr/global-position book-even book-odd)]
-      (is (approximately? book-even-lat lat 1e-9))
-      (is (approximately? book-lon lon 1e-9))))
+      (is (close? book-even-lat lat 1e-9))
+      (is (close? book-lon lon 1e-9))))
 
   (testing "the same pair with the odd frame newest uses the odd
             latitude — the book publishes both candidates"
     (let [newest-odd (assoc book-odd :cpr/heard-at-ms 1000)
           {:geo/keys [lat]} (cpr/global-position book-even newest-odd)]
-      (is (approximately? book-odd-lat lat 1e-9)))))
+      (is (close? book-odd-lat lat 1e-9)))))
 
 (def ^:private cpr-scale 131072)
 
@@ -86,8 +84,8 @@
       (let [position (global-round-trip lat lon)]
         (is (some? position) (str "no decode at " [lat lon]))
         (when position
-          (is (approximately? lat (:geo/lat position) round-trip-tolerance))
-          (is (approximately? lon (:geo/lon position) round-trip-tolerance)))))))
+          (is (close? lat (:geo/lat position) round-trip-tolerance))
+          (is (close? lon (:geo/lon position) round-trip-tolerance)))))))
 
 (deftest zone-boundary-crossing
   (testing "a pair straddling the NL 59->58 transition (~10.47047°N)
@@ -112,15 +110,15 @@
                                 :cpr/heard-at-ms 0)
                               (assoc (encode-cpr 10.4702 20.0 :odd)
                                 :cpr/heard-at-ms 1))]
-      (is (approximately? 10.4702 lat 1e-3)))))
+      (is (close? 10.4702 lat 1e-3)))))
 
 (deftest local-decode-known-answer
   (testing "the book's even frame against its reference (52.258, 3.918)
             recovers the published position"
     (let [{:geo/keys [lat lon]}
           (cpr/local-position book-even {:geo/lat 52.258 :geo/lon 3.918})]
-      (is (approximately? book-even-lat lat 1e-9))
-      (is (approximately? book-lon lon 1e-9)))))
+      (is (close? book-even-lat lat 1e-9))
+      (is (close? book-lon lon 1e-9)))))
 
 (deftest local-decode-round-trips
   (testing "either parity decodes locally against a nearby reference"
@@ -131,8 +129,8 @@
             {lat' :geo/lat lon' :geo/lon}
             (cpr/local-position half {:geo/lat ref-lat
                                       :geo/lon ref-lon})]
-        (is (approximately? lat lat' round-trip-tolerance))
-        (is (approximately? lon lon' round-trip-tolerance))))))
+        (is (close? lat lat' round-trip-tolerance))
+        (is (close? lon lon' round-trip-tolerance))))))
 
 (deftest local-decode-impossible-latitude
   (testing "a reference so near the pole that the nearest candidate

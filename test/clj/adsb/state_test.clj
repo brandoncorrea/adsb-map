@@ -1,10 +1,9 @@
 (ns adsb.state-test
-  (:require [adsb.fixtures :as fixtures]
+  (:require [adsb.fixtures :as fixtures :refer [captured-at-ms]]
             [adsb.state :as state]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]))
 
-(def ^:private captured-at-ms 1720713600000)
 (def ^:private ups-icao (:aircraft/icao fixtures/ups-2717))
 (def ^:private long-silent-icao (:aircraft/icao fixtures/long-silent))
 

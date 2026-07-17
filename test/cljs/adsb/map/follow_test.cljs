@@ -5,13 +5,12 @@
             [adsb.map.maplibre :as maplibre]
             [adsb.stream]
             [adsb.subs]
+            [adsb.test-map :as test-map]
+            [adsb.test-rf]
             [clojure.test :refer-macros [deftest is testing]]
             [day8.re-frame.test :as rf-test]
             [re-frame.core :as rf]
             [reagent.core :as r]))
-
-(rf/reg-event-db :test/set-picture
-  (fn [db [_ picture]] (assoc db :aircraft/picture picture)))
 
 (def ^:private ups fixtures/ups-2717)
 (def ^:private ups-icao (:aircraft/icao ups))
@@ -19,24 +18,6 @@
 
 (defn- moved []
   (update-in ups [:aircraft/position :geo/lon] #(+ % 0.05)))
-
-(defn- recording-map []
-  (let [!rec  (atom {:ease-to [] :fly-to [] :dragstart nil})
-        !drag (atom nil)
-        !move (atom nil)]
-    {:rec           !rec
-     :fire-drag!    (fn [] (when-let [f @!drag] (f)))
-     :fire-moveend! (fn [] (when-let [f @!move] (f)))
-     :m             (reify maplibre/Map
-                      (ease-to! [_ pos]
-                        (swap! !rec update :ease-to conj pos))
-                      (fly-to! [_ pos]
-                        (swap! !rec update :fly-to conj pos))
-                      (on-move! [_ f]
-                        (reset! !move f))
-                      (on-drag-start! [_ f]
-                        (reset! !drag f)
-                        (swap! !rec assoc :dragstart true)))}))
 
 (deftest following?-only-follow
   (is (follow/following? :follow))
@@ -158,7 +139,7 @@
 
 (deftest follow-eases-when-the-selected-plane-moves
   (rf-test/run-test-sync
-    (let [{:keys [m rec fire-drag! fire-moveend!]} (recording-map)
+    (let [{:keys [m rec] :as fake} (test-map/recording-map)
           handle (follow/attach! m)]
       (rf/dispatch [:app/initialize-db])
       (rf/dispatch [:test/set-picture {ups-icao ups}])
@@ -185,7 +166,7 @@
 
       (testing "moveend flushes the buffered position once"
         (let [mid-pos (:aircraft/position (moved))]
-          (fire-moveend!)
+          (test-map/fire-move! fake)
           (is (= [mid-pos] (:ease-to @rec)))))
 
       (testing "after settle, a new position eases (keeps zoom)"
@@ -198,7 +179,7 @@
 
       (testing "dragstart dispatches user-pan → free, and stops easing"
         (is (true? (:dragstart @rec)))
-        (fire-drag!)
+        (test-map/fire-drag! fake)
         (is (= :free @(rf/subscribe [:map/camera-mode])))
         (let [before (count (:ease-to @rec))
               next   (update-in (moved) [:aircraft/position :geo/lon] #(+ % 0.2))]
@@ -209,5 +190,5 @@
       (follow/detach! handle)
       (rf/dispatch [:map/follow])
       (r/flush)
-      (fire-drag!)
+      (test-map/fire-drag! fake)
       (is (= :follow @(rf/subscribe [:map/camera-mode]))))))

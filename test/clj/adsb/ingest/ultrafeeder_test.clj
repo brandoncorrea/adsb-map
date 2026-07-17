@@ -1,9 +1,9 @@
 (ns adsb.ingest.ultrafeeder-test
   (:require [adsb.ingest.source :as source]
             [adsb.ingest.ultrafeeder :as ultrafeeder]
+            [adsb.test-feed :as feed]
             [clojure.test :refer [deftest is testing]]
-            [clojure.tools.logging :as log]
-            [org.httpkit.server :as http-kit])
+            [clojure.tools.logging :as log])
   (:import (clojure.lang ExceptionInfo)))
 
 (def ^:private fixture (slurp "test/resources/aircraft-sample.json"))
@@ -13,16 +13,9 @@
     {:status 200 :headers {"Content-Type" "application/json"} :body fixture}
     {:status 404 :body "not here"}))
 
-(defn- with-server [handler f]
-  (let [srv  (http-kit/run-server handler {:port 0 :legacy-return-value? false})
-        port (http-kit/server-port srv)]
-    (try
-      (f (str "http://localhost:" port))
-      (finally (http-kit/server-stop! srv)))))
-
 (deftest fetches-and-coerces-the-fixture
   (testing "fetch! GETs aircraft.json and returns coerced domain aircraft"
-    (with-server
+    (feed/with-http-server
       stub-handler
       (fn [base-url]
         (let [batch (source/fetch! (ultrafeeder/->source base-url))]
@@ -50,7 +43,7 @@
                         "{\"hex\":\"abc0e4\",\"alt_baro\":34775},"
                         "{\"hex\":\"nothex\",\"alt_baro\":{}}]}")]
       (with-redefs [log/log* (fn [_ _ _ message] (swap! warnings conj message))]
-        (with-server
+        (feed/with-http-server
           (fn [_] {:status  200
                    :headers {"Content-Type" "application/json"}
                    :body    body})
@@ -63,7 +56,7 @@
 (deftest sends-auth-headers-when-configured
   (testing "the feeder-auth headers ride every request to the tunnel"
     (let [seen (atom nil)]
-      (with-server
+      (feed/with-http-server
         (capturing-handler seen)
         (fn [base-url]
           (source/fetch!
@@ -77,7 +70,7 @@
 (deftest omits-auth-headers-when-not-configured
   (testing "no service token means no CF-Access headers on the wire"
     (let [seen (atom nil)]
-      (with-server
+      (feed/with-http-server
         (capturing-handler seen)
         (fn [base-url]
           (source/fetch! (ultrafeeder/->source base-url))
@@ -102,7 +95,7 @@
 
 (deftest non-200-throws
   (testing "a non-200 status becomes an ex-info the poll loop can catch"
-    (with-server
+    (feed/with-http-server
       (fn [_] {:status 503 :body "unavailable"})
       (fn [base-url]
         (is (thrown? ExceptionInfo

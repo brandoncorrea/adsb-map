@@ -1,5 +1,5 @@
 (ns adsb.stream.broadcast-test
-  (:require [adsb.fixtures :as fixtures]
+  (:require [adsb.fixtures :as fixtures :refer [captured-at-ms declared-crop]]
             [adsb.http.server :as server]
             [adsb.ingest.sbs :as sbs]
             [adsb.ingest.source :as source]
@@ -7,6 +7,7 @@
             [adsb.picture :as picture]
             [adsb.stream.admission :as admission]
             [adsb.stream.broadcast :as broadcast]
+            [adsb.test-feed :as feed]
             [cheshire.core :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -17,12 +18,11 @@
            (java.net.http HttpClient HttpRequest HttpRequest$Builder HttpResponse HttpResponse$BodyHandlers)
            (java.nio.charset StandardCharsets)))
 
-(def ^:private captured-at-ms 1720713600000)
 (def ^:private cast-picture (picture/merge-batch {} fixtures/all captured-at-ms))
 (def ^:const ^:private frame-timeout-ms 2000)
 (def ^:const ^:private delta-latency-samples 10)
 (def ^:const ^:private max-delta-latency-ms 100)
-(def ^:const ^:private await-timeout-ms 2000)
+(def ^:private await-opts {:sleep-ms 10})
 
 (defn- start-streaming-server!
   [{:keys [picture stats feeder crop interval-ms stats-interval-ms heartbeat-ms
@@ -37,16 +37,13 @@
            max-clients        100
            max-per-ip         100
            trust-forwarded?   false
-           trusted-proxy-hops 1}
-    :as   opts}]
+           trusted-proxy-hops 1}}]
   (let [broadcaster (broadcast/start!
                       {:picture            picture
                        :stats              stats
                        :feeder             feeder
                        :crop               crop
-                       :interval-ms        (if (contains? opts :interval-ms)
-                                             (:interval-ms opts)
-                                             interval-ms)
+                       :interval-ms        interval-ms
                        :stats-interval-ms  stats-interval-ms
                        :heartbeat-ms       heartbeat-ms
                        :max-clients        max-clients
@@ -114,19 +111,6 @@
 
 (defn- frame-data [frame]
   (json/parse-string (frame-json frame) true))
-
-(defn- eventually [thunk]
-  (let [deadline (+ (System/currentTimeMillis) await-timeout-ms)]
-    (loop []
-      (let [value (thunk)]
-        (if (or value (>= (System/currentTimeMillis) deadline))
-          value
-          (do (Thread/sleep 10)
-              (recur)))))))
-
-(def ^:private declared-crop
-  {:crop/center   {:geo/lat 27.9753 :geo/lon -82.5331}
-   :crop/radius-m 100000})
 
 (deftest config-event-leads-the-connection
   (testing "the FIRST frame of a connection is `config`, carrying the crop's
@@ -271,7 +255,7 @@
                              :on-delta  on-delta}))
         w   (OutputStreamWriter. out StandardCharsets/US_ASCII)]
     (try
-      (is (true? (eventually #(deref (:connected? src)))))
+      (is (true? (feed/wait-until #(deref (:connected? src)) await-opts)))
       (f (fn write-line! [line]
            (.write w (str line "\n"))
            (.flush w)))
@@ -360,7 +344,7 @@
                          :interval-ms       nil
                          :stats-interval-ms 20})]
       (try
-        (is (true? (eventually #(< 2 @sweeps))))
+        (is (true? (feed/wait-until #(< 2 @sweeps) await-opts)))
         (finally
           (broadcast/stop! broadcaster))))))
 
@@ -376,9 +360,9 @@
                               "Host: localhost\r\n"
                               "Accept: text/event-stream\r\n\r\n"))
           (.flush writer))
-        (is (true? (eventually #(= 1 (connected)))))
+        (is (true? (feed/wait-until #(= 1 (connected)) await-opts)))
         (.close socket)
-        (is (true? (eventually #(zero? (connected)))))
+        (is (true? (feed/wait-until #(zero? (connected)) await-opts)))
         (finally
           (stop-streaming-server! streaming))))))
 
@@ -506,10 +490,10 @@
                               "Host: localhost\r\n"
                               "Accept: text/event-stream\r\n\r\n"))
           (.flush writer))
-        (is (true? (eventually #(= 1 (connected)))))
+        (is (true? (feed/wait-until #(= 1 (connected)) await-opts)))
         (is (= 503 (.statusCode (stream-response! port {}))))
         (.close socket)
-        (is (true? (eventually #(zero? (connected)))))
+        (is (true? (feed/wait-until #(zero? (connected)) await-opts)))
         (let [reader (open-admitted! port)]
           (is (= 1 (connected)))
           (.close reader))

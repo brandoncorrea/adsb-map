@@ -8,6 +8,7 @@
             [adsb.map.view :as view]
             [adsb.stream]
             [adsb.test-dom :as test-dom]
+            [adsb.test-map :as test-map]
             [adsb.views :as views]
             [adsb.wire :as wire]
             [clojure.test :refer-macros [deftest is testing]]
@@ -16,70 +17,27 @@
             [reagent.core :as r]))
 
 (defn- frame [aircraft]
-  (let [picture (into {} (map (juxt :aircraft/icao identity)) aircraft)]
-    (js/JSON.stringify
-      (clj->js (wire/picture->wire picture 1720713600000)))))
+  (js/JSON.stringify
+    (clj->js (wire/picture->wire (fixtures/by-icao aircraft)
+                                 fixtures/captured-at-ms))))
 
-(defn- recording-map []
-  (let [!rec (atom {:on-load           nil
-                    :sources           {}
-                    :layers            []
-                    :set-data          []
-                    :images            []
-                    :on-layer-click    nil
-                    :on-layer-dblclick nil
-                    :hover-layers      []})]
-    {:rec !rec
-     :m   (reify maplibre/Map
-            (destroy! [_] (swap! !rec assoc :destroyed? true))
-            (on-load! [_ f] (swap! !rec assoc :on-load f))
-            (add-source! [_ id source] (swap! !rec update :sources assoc id source))
-            (add-layer! [_ l] (swap! !rec update :layers conj l))
-            (set-source-data! [_ id data]
-              (swap! !rec update :set-data conj {:source id :data data}))
-            (add-image! [_ id image opts]
-              (swap! !rec update :images conj {:id id :image image :opts opts}))
-            (on-layer-click! [_ _layer-id f]
-              (swap! !rec assoc :on-layer-click f))
-            (on-layer-dblclick! [_ _layer-id f]
-              (swap! !rec assoc :on-layer-dblclick f))
-            (on-layer-hover! [_ layer-id _on-enter _on-leave]
-              (swap! !rec update :hover-layers conj layer-id))
-            (bounds [_] {:geo/min-lat 27.0 :geo/max-lat 29.0
-                         :geo/min-lon -83.0 :geo/max-lon -81.0})
-            (fly-to! [_ _lng-lat] nil)
-            (ease-to! [_ _lng-lat] nil)
-            (on-move! [_ _f] nil)
-            (on-drag-start! [_ _f] nil)
-            (fit-bounds! [_ _bounds _padding] nil))}))
-
-(defn- fire-load! [{:keys [rec]}] ((:on-load @rec)))
-(def ^:private fixture-style {:version 8 :sources {} :layers []})
-(defn- stub-load-style! [_url cb] (cb fixture-style))
-(defn- set-data-calls [{:keys [rec]}] (:set-data @rec))
-(defn- source-set-data [fake sid]
-  (filter #(= sid (:source %)) (set-data-calls fake)))
-
-(defn- aircraft-set-data [fake] (source-set-data fake layer/source-id))
-(defn- trail-set-data [fake] (source-set-data fake layer/trail-source-id))
-
-(defn- last-features [coll]
-  (get-in (last coll) [:data :features]))
+(defn- aircraft-set-data [fake] (test-map/set-data fake layer/source-id))
+(defn- trail-set-data [fake] (test-map/set-data fake layer/trail-source-id))
 
 (defn- last-aircraft-features [fake]
-  (last-features (aircraft-set-data fake)))
+  (test-map/last-features fake layer/source-id))
 
 (defn- last-trail-features [fake]
-  (last-features (trail-set-data fake)))
+  (test-map/last-features fake layer/trail-source-id))
 
 (defn- feature-by-icao [features icao]
   (some #(when (= icao (-> % :properties :icao)) %) features))
 
 (deftest set-data-carries-exactly-the-positioned-aircraft
   (rf-test/run-test-sync
-    (let [{:keys [m rec] :as fake} (recording-map)
+    (let [{:keys [m rec] :as fake} (test-map/recording-map)
           handle (layer/attach! m)]
-      (fire-load! fake)
+      (test-map/fire-load! fake)
 
       (testing "load adds both sources and both layers, trail beneath aircraft"
         (is (= {layer/source-id       layer/source-spec
@@ -110,11 +68,11 @@
 
 (deftest feature-properties-carry-the-styling-contract
   (rf-test/run-test-sync
-    (let [{:keys [m] :as fake} (recording-map)
+    (let [{:keys [m] :as fake} (test-map/recording-map)
           handle     (layer/attach! m)
           long-quiet (assoc fixtures/ups-2717 :aircraft/seen-at-ms 1000)
           just-heard (assoc fixtures/squawking-7700 :aircraft/seen-at-ms 95000)]
-      (fire-load! fake)
+      (test-map/fire-load! fake)
       (with-redefs [cjs/now-ms (constantly 100000)]
         (rf/dispatch [:stream/received (frame [long-quiet
                                                just-heard
@@ -144,9 +102,9 @@
 
 (deftest load-registers-every-silhouette-sdf
   (rf-test/run-test-sync
-    (let [{:keys [m rec] :as fake} (recording-map)
+    (let [{:keys [m rec] :as fake} (test-map/recording-map)
           handle (layer/attach! m)]
-      (fire-load! fake)
+      (test-map/fire-load! fake)
       (let [images (:images @rec)]
         (testing "every icon the symbology can choose is registered via the
                   seam's add-image! — a style naming an image nobody drew
@@ -202,10 +160,10 @@
 
 (deftest clicking-a-feature-dispatches-click-with-its-icao-and-detail
   (rf-test/run-test-sync
-    (let [{:keys [m rec] :as fake} (recording-map)
+    (let [{:keys [m rec] :as fake} (test-map/recording-map)
           handle     (layer/attach! m)
           dispatched (atom [])]
-      (fire-load! fake)
+      (test-map/fire-load! fake)
       (testing "the layer wired click, dblclick, and hover through the seam"
         (is (fn? (:on-layer-click @rec)))
         (is (fn? (:on-layer-dblclick @rec)))
@@ -221,10 +179,10 @@
 
 (deftest click-and-dblclick-both-report-a-click-event
   (rf-test/run-test-sync
-    (let [{:keys [m rec] :as fake} (recording-map)
+    (let [{:keys [m rec] :as fake} (test-map/recording-map)
           handle     (layer/attach! m)
           dispatched (atom [])]
-      (fire-load! fake)
+      (test-map/fire-load! fake)
       (with-redefs [rf/dispatch (fn [ev] (swap! dispatched conj ev))]
         ((:on-layer-click @rec) {:icao "abc0e4" :click/detail 2})
         ((:on-layer-dblclick @rec) {:icao "abc0e4" :callsign "UPS2717"}))
@@ -236,7 +194,7 @@
 
 (deftest frames-before-map-load-buffer-latest-wins
   (rf-test/run-test-sync
-    (let [{:keys [m rec] :as fake} (recording-map)
+    (let [{:keys [m rec] :as fake} (test-map/recording-map)
           handle (layer/attach! m)]
       (rf/dispatch [:stream/received (frame [fixtures/ups-2717])])
       (r/flush)
@@ -245,9 +203,9 @@
 
       (testing "before load, the map is untouched — no source, no pushes"
         (is (empty? (:sources @rec)))
-        (is (zero? (count (set-data-calls fake)))))
+        (is (zero? (count (test-map/set-data fake)))))
 
-      (fire-load! fake)
+      (test-map/fire-load! fake)
 
       (testing "load flushes exactly once, with the LATEST picture — no replay"
         (is (= 1 (count (aircraft-set-data fake))))
@@ -259,9 +217,9 @@
 
 (deftest detach-stops-updates
   (rf-test/run-test-sync
-    (let [{:keys [m] :as fake} (recording-map)
+    (let [{:keys [m] :as fake} (test-map/recording-map)
           handle (layer/attach! m)]
-      (fire-load! fake)
+      (test-map/fire-load! fake)
       (rf/dispatch [:stream/received (frame [fixtures/ups-2717])])
       (r/flush)
       (let [pushes-while-attached (count (aircraft-set-data fake))]
@@ -274,19 +232,19 @@
 
 (deftest detach-before-load-never-touches-the-map
   (rf-test/run-test-sync
-    (let [{:keys [m rec] :as fake} (recording-map)
+    (let [{:keys [m rec] :as fake} (test-map/recording-map)
           handle (layer/attach! m)]
       (layer/detach! handle)
-      (fire-load! fake)
+      (test-map/fire-load! fake)
       (rf/dispatch [:stream/received (frame [fixtures/ups-2717])])
       (r/flush)
       (is (empty? (:sources @rec)))
       (is (empty? (:layers @rec)))
-      (is (zero? (count (set-data-calls fake)))))))
+      (is (zero? (count (test-map/set-data fake)))))))
 
 (deftest client-tick-ages-and-removes-between-frames
   (rf-test/run-test-sync
-    (let [{:keys [m] :as fake} (recording-map)
+    (let [{:keys [m] :as fake} (test-map/recording-map)
           !tick    (atom nil)
           !cleared (atom [])]
       (with-redefs [layer/set-interval!   (fn [f _ms] (reset! !tick f) :tick-id)
@@ -296,7 +254,7 @@
               icao   (:aircraft/icao heard)
               age-of (fn [] (get-in (feature-by-icao (last-aircraft-features fake) icao)
                                     [:properties :age-s]))]
-          (fire-load! fake)
+          (test-map/fire-load! fake)
           (testing "attach! started a client tick through the seam"
             (is (fn? @!tick)))
 
@@ -325,7 +283,7 @@
 
 (deftest client-tick-flips-the-stale-flag-on-the-clock
   (rf-test/run-test-sync
-    (let [{:keys [m] :as fake} (recording-map)
+    (let [{:keys [m] :as fake} (test-map/recording-map)
           !tick (atom nil)]
       (with-redefs [layer/set-interval!   (fn [f _ms] (reset! !tick f) :tick-id)
                     layer/clear-interval! (constantly nil)]
@@ -336,7 +294,7 @@
                                   (feature-by-icao icao)
                                   :properties
                                   :stale))]
-          (fire-load! fake)
+          (test-map/fire-load! fake)
           (testing "heard 30 s ago — under the 60 s line, so not yet stale"
             (with-redefs [cjs/now-ms (constantly 30000)]
               (rf/dispatch [:stream/received (frame [heard])])
@@ -354,9 +312,9 @@
 
 (deftest trail-source-and-layer-are-born-at-load-with-line-metrics
   (rf-test/run-test-sync
-    (let [{:keys [m rec] :as fake} (recording-map)
+    (let [{:keys [m rec] :as fake} (test-map/recording-map)
           handle (layer/attach! m)]
-      (fire-load! fake)
+      (test-map/fire-load! fake)
       (testing "the trail source exists and carries lineMetrics for the gradient"
         (is (= layer/trail-source-spec
                (get (:sources @rec) layer/trail-source-id)))
@@ -367,10 +325,10 @@
 
 (deftest a-moving-aircraft-accumulates-a-multi-point-trail
   (rf-test/run-test-sync
-    (let [{:keys [m] :as fake} (recording-map)
+    (let [{:keys [m] :as fake} (test-map/recording-map)
           handle (layer/attach! m)
           icao   (:aircraft/icao fixtures/ups-2717)]
-      (fire-load! fake)
+      (test-map/fire-load! fake)
       (doseq [[lat lon] [[27.0 -83.0] [27.1 -83.0] [27.2 -83.0]]]
         (rf/dispatch [:stream/received (moving-frame lat lon)])
         (r/flush))
@@ -389,7 +347,7 @@
 
 (deftest an-aged-out-aircraft-leaves-no-trail
   (rf-test/run-test-sync
-    (let [{:keys [m] :as fake} (recording-map)
+    (let [{:keys [m] :as fake} (test-map/recording-map)
           !tick (atom nil)]
       (with-redefs [layer/set-interval!   (fn [f _ms] (reset! !tick f) :tick-id)
                     layer/clear-interval! (constantly nil)]
@@ -398,7 +356,7 @@
               heard  (fn [lat] (assoc fixtures/ups-2717
                                  :aircraft/seen-at-ms 0
                                  :aircraft/position {:geo/lat lat :geo/lon -83.0}))]
-          (fire-load! fake)
+          (test-map/fire-load! fake)
           (with-redefs [cjs/now-ms (constantly 70000)]
             (rf/dispatch [:stream/received (frame [(heard 27.0)])])
             (r/flush)
@@ -417,9 +375,9 @@
 
 (deftest detach-stops-trail-updates
   (rf-test/run-test-sync
-    (let [{:keys [m] :as fake} (recording-map)
+    (let [{:keys [m] :as fake} (test-map/recording-map)
           handle (layer/attach! m)]
-      (fire-load! fake)
+      (test-map/fire-load! fake)
       (rf/dispatch [:stream/received (moving-frame 27.0 -83.0)])
       (r/flush)
       (let [trail-pushes (count (trail-set-data fake))]
@@ -433,7 +391,7 @@
   (rf-test/run-test-sync
     (let [node           (cjs/create-element "div")
           _              (cjs/append-child (.-body js/document) node)
-          {:keys [m] :as fake} (recording-map)
+          {:keys [m] :as fake} (test-map/recording-map)
           !mounts        (atom 0)
           !renders       (atom 0)
           real-container view/map-container
@@ -441,12 +399,12 @@
       (with-redefs [maplibre/create!   (fn [_container _opts]
                                          (swap! !mounts inc)
                                          m)
-                    view/load-style!   stub-load-style!
+                    view/load-style!   test-map/stub-load-style!
                     view/map-container (fn [!c]
                                          (swap! !renders inc)
                                          (real-container !c))]
         (let [root             (test-dom/mount! [views/app-root] node)
-              _                (fire-load! fake)
+              _                (test-map/fire-load! fake)
               renders-at-mount @!renders
               pushes-at-load   (count (aircraft-set-data fake))]
           (is (= 1 @!mounts))

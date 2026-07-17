@@ -1,6 +1,7 @@
 (ns adsb.ingest.tcp-test
   (:require [adsb.aircraft :as aircraft]
             [adsb.ingest.tcp :as tcp]
+            [adsb.test-feed :as feed]
             [clojure.test :refer [deftest is testing]])
   (:import (java.io ByteArrayInputStream)))
 
@@ -81,14 +82,6 @@
       (is (= [swa-icao] (keys @picture)))
       (is (= {:messages 2} (tcp/last-metadata state))))))
 
-(defn- wait-until [pred]
-  (let [deadline (+ (System/currentTimeMillis) 2000)]
-    (loop []
-      (or (pred)
-          (when (< (System/currentTimeMillis) deadline)
-            (Thread/sleep 2)
-            (recur))))))
-
 (defn- stuck-transport [dialing? release? closed?]
   (fn [_host _port _opts]
     (reset! dialing? true)
@@ -116,9 +109,9 @@
                       (fn [_in _state] (reset! consumed? true))
                       "test-reader")]
       (tcp/open! state)
-      (is (wait-until #(deref dialing?)))
+      (is (feed/wait-until #(deref dialing?)))
       (tcp/close! state)
       (reset! release? true)
-      (is (wait-until #(deref closed?)))
+      (is (feed/wait-until #(deref closed?)))
       (is (not @consumed?))
       (is (not @(:connected? state))))))

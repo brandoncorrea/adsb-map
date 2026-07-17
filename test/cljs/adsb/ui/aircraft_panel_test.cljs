@@ -6,6 +6,7 @@
             [adsb.stream]
             [adsb.subs]
             [adsb.test-dom :as test-dom]
+            [adsb.test-rf :as test-rf]
             [adsb.ui.aircraft-panel :as panel]
             [clojure.string :as str]
             [clojure.test :refer-macros [deftest testing is use-fixtures async]]
@@ -17,7 +18,6 @@
   {:before (fn [] (rf/dispatch-sync [:app/initialize-db]))
    :after  rtl/cleanup})
 
-(rf/reg-event-db :test/set-picture (fn [db [_ picture]] (assoc db :aircraft/picture picture)))
 (rf/reg-event-db :test/set-shards (fn [db [_ shards]] (assoc db :enrich/shards shards)))
 (rf/reg-fx :enrich/fetch! (fn [_]))
 
@@ -26,8 +26,6 @@
 
 (defn- render-panel! []
   (test-dom/render! [panel/aircraft-panel]))
-
-(defn- fresh-db! [] (rf/dispatch-sync [:app/initialize-db]))
 
 (deftest escape-deselect-ignores-typing-fields
   (is (panel/escape-deselect?
@@ -39,7 +37,7 @@
 
 (deftest escape-clears-the-selection
   (async done
-    (fresh-db!)
+    (test-rf/fresh-db!)
     (rf/dispatch-sync [:test/set-picture {ups-icao ups}])
     (rf/dispatch-sync [:aircraft/select ups-icao])
     (render-panel!)
@@ -47,20 +45,18 @@
     (panel/start-keyboard!)
     (.dispatchEvent js/document (js/KeyboardEvent. "keydown" #js {:key "Escape" :bubbles true}))
     (r/flush)
-    (-> (rtl/waitFor
-          (fn []
-            (assert (nil? (.queryByTestId rtl/screen "aircraft-panel")))))
-        (.then (fn [_]
-                 (is (nil? (.queryByTestId rtl/screen "aircraft-panel"))
-                     "Escape deselects and closes the panel")
-                 (done)))
-        (.catch (fn [err]
-                  (is false (str "Escape did not close panel: " err))
-                  (done))))))
+    (test-rf/wait-for! done
+      (fn []
+        (assert (nil? (.queryByTestId rtl/screen "aircraft-panel"))))
+      (fn [_]
+        (is (nil? (.queryByTestId rtl/screen "aircraft-panel"))
+            "Escape deselects and closes the panel")
+        (done))
+      "Escape did not close panel")))
 
 (deftest collapsed-panel-stays-collapsed-when-switching-flights
   (async done
-    (fresh-db!)
+    (test-rf/fresh-db!)
     (let [dal      fixtures/squawking-7700
           dal-icao (:aircraft/icao dal)]
       (rf/dispatch-sync [:test/set-picture {ups-icao ups dal-icao dal}])
@@ -70,31 +66,29 @@
                                        "data-expanded")))
       (rf/dispatch-sync [:panel/toggle-expanded])
       (r/flush)
-      (-> (rtl/waitFor
-            (fn []
-              (assert (= "false"
-                         (cjs/get-attribute (.getByTestId rtl/screen "aircraft-panel")
-                                            "data-expanded")))))
-          (.then (fn [_]
-                   (rf/dispatch-sync [:aircraft/select dal-icao])
-                   (r/flush)
-                   (rtl/waitFor
-                     (fn []
-                       (assert (= "false"
-                                  (cjs/get-attribute (.getByTestId rtl/screen "aircraft-panel")
-                                                     "data-expanded")))
-                       (assert (str/includes?
-                                 (.-textContent (.getByTestId rtl/screen "panel-title"))
-                                 (or (:aircraft/callsign dal) dal-icao)))))))
-          (.then (fn [_]
-                   (is (= "false"
-                          (cjs/get-attribute (.getByTestId rtl/screen "aircraft-panel")
-                                             "data-expanded"))
-                       "switching flights does not re-expand a minimized panel")
-                   (done)))
-          (.catch (fn [err]
-                    (is false (str "collapse did not stick: " err))
-                    (done)))))))
+      (test-rf/wait-for! done
+        (fn []
+          (assert (= "false"
+                     (cjs/get-attribute (.getByTestId rtl/screen "aircraft-panel")
+                                        "data-expanded"))))
+        (fn [_]
+          (rf/dispatch-sync [:aircraft/select dal-icao])
+          (r/flush)
+          (-> (rtl/waitFor
+                (fn []
+                  (assert (= "false"
+                             (cjs/get-attribute (.getByTestId rtl/screen "aircraft-panel")
+                                                "data-expanded")))
+                  (assert (str/includes?
+                            (.-textContent (.getByTestId rtl/screen "panel-title"))
+                            (or (:aircraft/callsign dal) dal-icao)))))
+              (.then (fn [_]
+                       (is (= "false"
+                              (cjs/get-attribute (.getByTestId rtl/screen "aircraft-panel")
+                                                 "data-expanded"))
+                           "switching flights does not re-expand a minimized panel")
+                       (done)))))
+        "collapse did not stick"))))
 
 (deftest selecting-an-aircraft-renders-its-fields
   (testing "the panel shows the selected aircraft's facts"
@@ -221,7 +215,7 @@
 
 (deftest picture-that-drops-the-selected-aircraft-closes-the-panel
   (testing "the DOM panel disappears when its subject ages out"
-    (fresh-db!)
+    (test-rf/fresh-db!)
     (rf/dispatch-sync [:test/set-picture {ups-icao ups}])
     (rf/dispatch-sync [:aircraft/select ups-icao])
     (render-panel!)
@@ -236,7 +230,7 @@
 
 (deftest close-button-clears-the-selection
   (testing "clicking Close dismisses the panel and clears the selection"
-    (fresh-db!)
+    (test-rf/fresh-db!)
     (rf/dispatch-sync [:test/set-picture {ups-icao ups}])
     (rf/dispatch-sync [:aircraft/select ups-icao])
     (render-panel!)

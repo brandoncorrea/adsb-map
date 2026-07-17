@@ -1,13 +1,12 @@
 (ns adsb.picture-test
   (:require [adsb.aircraft :as aircraft]
-            [adsb.fixtures :as fixtures]
+            [adsb.fixtures :as fixtures :refer [captured-at-ms]]
             [adsb.picture :as picture]
             [clojure.test :refer [deftest is testing]]))
 
 ;; The poll path stamps against captured-at-ms, the streaming path against
 ;; heard-at-ms; both instants coincide here, but the names keep the two
 ;; vocabularies distinct at the call sites below.
-(def ^:private captured-at-ms 1720713600000)
 (def ^:private t0 captured-at-ms)
 (def ^:private ups-icao (:aircraft/icao fixtures/ups-2717))
 (def ^:private swa-icao "d4e5f6")

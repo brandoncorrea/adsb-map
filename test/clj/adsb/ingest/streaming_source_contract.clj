@@ -8,22 +8,10 @@
   naming which implementation is under test — and delegates the body to one
   of these asserts, so a failure still points at the format that broke."
   (:require [adsb.ingest.source :as source]
+            [adsb.test-feed :as feed]
             [clojure.test :refer [is testing]])
   (:import (clojure.lang ExceptionInfo)
            (java.net InetSocketAddress ServerSocket)))
-
-(def ^:private wait-timeout-ms 2000)
-
-(defn- wait-until [thunk]
-  (let [deadline (+ (System/currentTimeMillis) wait-timeout-ms)]
-    (loop []
-      (or (thunk)
-          (when (< (System/currentTimeMillis) deadline)
-            (Thread/sleep 20)
-            (recur))))))
-
-(defn- fetch-quietly [src]
-  (try (source/fetch! src) (catch ExceptionInfo _)))
 
 (defn assert-quiet-feed-returns-a-snapshot!
   "`with-quiet-feed` runs its `(fn [host port])` body against a connected but
@@ -35,7 +23,7 @@
       (fn [host port]
         (let [src (source/open! (->source host port))]
           (try
-            (let [batch (wait-until #(fetch-quietly src))]
+            (let [batch (feed/wait-until #(feed/fetch-quietly src))]
               (is (vector? batch))
               (is (empty? batch)))
             (finally (source/close! src))))))))
@@ -67,7 +55,7 @@
         (let [src (source/open! (->source host port opts))]
           (try
             (is (= {:messages expected-count}
-                   (wait-until
+                   (feed/wait-until
                      (fn []
                        (let [m (source/metadata src)]
                          (when (= expected-count (:messages m)) m))))))

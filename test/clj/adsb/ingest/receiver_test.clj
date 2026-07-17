@@ -1,8 +1,8 @@
 (ns adsb.ingest.receiver-test
   (:require [adsb.ingest.receiver :as receiver]
+            [adsb.test-feed :as feed]
             [clojure.test :refer [deftest is testing]]
-            [clojure.tools.logging :as log]
-            [org.httpkit.server :as http-kit]))
+            [clojure.tools.logging :as log]))
 
 (def ^:private fixture (slurp "test/resources/receiver-sample.json"))
 (def ^:private fixture-position {:geo/lat 28.0 :geo/lon -82.5})
@@ -15,26 +15,19 @@
        :body    body}
       {:status 404 :body "not here"})))
 
-(defn- with-server [handler f]
-  (let [srv  (http-kit/run-server handler {:port 0 :legacy-return-value? false})
-        port (http-kit/server-port srv)]
-    (try
-      (f (str "http://localhost:" port))
-      (finally (http-kit/server-stop! srv)))))
-
 (def ^:private unreachable-url "http://192.0.2.1:1")
 (def ^:private short-timeout-ms 200)
 
 (deftest fetch-position!
   (testing "reads the receiver position from the feeder's receiver.json"
-    (with-server
+    (feed/with-http-server
       (receiver-json-handler fixture)
       (fn [base-url]
         (is (= fixture-position (receiver/fetch-position! base-url))))))
 
   (testing "a non-200 answer yields nil, not a throw — the gate is
             disabled, the boot is not failed"
-    (with-server
+    (feed/with-http-server
       (fn [_] {:status 503 :body "unavailable"})
       (fn [base-url]
         (is (nil? (receiver/fetch-position! base-url))))))
@@ -44,20 +37,20 @@
                                         short-timeout-ms))))
 
   (testing "a body that is not JSON yields nil"
-    (with-server
+    (feed/with-http-server
       (receiver-json-handler "<html>surprise</html>")
       (fn [base-url]
         (is (nil? (receiver/fetch-position! base-url))))))
 
   (testing "a receiver.json without lat/lon yields nil — a feeder that
             does not know where it is offers no horizon"
-    (with-server
+    (feed/with-http-server
       (receiver-json-handler "{\"refresh\": 1000, \"version\": \"3.16.5\"}")
       (fn [base-url]
         (is (nil? (receiver/fetch-position! base-url))))))
 
   (testing "an out-of-range coordinate is rejected, never clamped"
-    (with-server
+    (feed/with-http-server
       (receiver-json-handler "{\"lat\": 999.0, \"lon\": -82.5}")
       (fn [base-url]
         (is (nil? (receiver/fetch-position! base-url)))))))
@@ -66,7 +59,7 @@
   (testing "the feeder-auth headers ride the receiver.json request too, so a
             token-gated tunnel serves the receiver position"
     (let [seen (atom nil)]
-      (with-server
+      (feed/with-http-server
         (fn [{:keys [uri headers]}]
           (reset! seen headers)
           (if (= "/data/receiver.json" uri)
@@ -104,7 +97,7 @@
 
 (deftest resolve-position!
   (testing "the environment override wins over the feeder's receiver.json"
-    (with-server
+    (feed/with-http-server
       (receiver-json-handler fixture)
       (fn [base-url]
         (is (= {:geo/lat 28.25 :geo/lon -82.75}
@@ -114,7 +107,7 @@
                   :base-url base-url}))))))
 
   (testing "without an override, the feeder's receiver.json is used"
-    (with-server
+    (feed/with-http-server
       (receiver-json-handler fixture)
       (fn [base-url]
         (is (= fixture-position

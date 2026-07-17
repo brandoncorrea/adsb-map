@@ -9,15 +9,14 @@
 
 (defn- pos [lat lon] {:geo/lat lat :geo/lon lon})
 
+;; The plain cruising case is ups-2717 trimmed to the fields these feature
+;; tests read — derived from the cast so it cannot drift from it.
 (def cruising
-  {:aircraft/icao        "abc0e4"
-   :aircraft/callsign    "UPS2717"
-   :aircraft/position    {:geo/lat 27.961166 :geo/lon -83.975953}
-   :aircraft/altitude-ft 34775
-   :aircraft/track-deg   97.14
-   :aircraft/squawk      "6040"})
+  (select-keys fixtures/ups-2717
+               [:aircraft/icao :aircraft/callsign :aircraft/position
+                :aircraft/altitude-ft :aircraft/track-deg :aircraft/squawk]))
 
-(def bare-mode-s {:aircraft/icao "a10202"})
+(def bare-mode-s (select-keys fixtures/never-positioned [:aircraft/icao]))
 
 (deftest aircraft->feature-geometry
   (testing "a positioned aircraft becomes a Point Feature with [lon lat]

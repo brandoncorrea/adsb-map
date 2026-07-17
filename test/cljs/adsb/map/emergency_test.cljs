@@ -3,47 +3,14 @@
             [adsb.events]
             [adsb.fixtures :as fixtures]
             [adsb.map.emergency :as emergency]
-            [adsb.map.maplibre :as maplibre]
             [adsb.stream]
             [adsb.subs]
+            [adsb.test-map :as test-map]
+            [adsb.test-rf :as test-rf]
             [clojure.test :refer-macros [deftest is testing]]
             [day8.re-frame.test :as rf-test]
             [re-frame.core :as rf]
             [reagent.core :as r]))
-
-(rf/reg-event-db :test/set-picture
-  (fn [db [_ picture]] (assoc db :aircraft/picture picture)))
-
-(defn- by-icao [aircraft]
-  (into {} (map (juxt :aircraft/icao identity)) aircraft))
-
-(def ^:private viewport
-  {:geo/min-lat 27.0
-   :geo/max-lat 29.0
-   :geo/min-lon -83.0
-   :geo/max-lon -81.0})
-
-(defn- recording-map []
-  (let [!rec    (atom {:added [] :moves [] :removed []})
-        !bounds (atom viewport)
-        !move   (atom nil)]
-    {:rec     !rec
-     :!bounds !bounds
-     :!move   !move
-     :m       (reify maplibre/Map
-                (add-marker! [_ element lng-lat]
-                  (let [marker {:element element :id (count (:added @!rec))}]
-                    (swap! !rec update :added conj
-                           {:marker marker :lng-lat lng-lat})
-                    marker))
-                (move-marker! [_ marker lng-lat]
-                  (swap! !rec update :moves conj
-                         {:marker marker :lng-lat lng-lat}))
-                (remove-marker! [_ marker]
-                  (swap! !rec update :removed conj marker))
-                (bounds [_] @!bounds)
-                (on-move! [_ f] (reset! !move f))
-                (fit-bounds! [_ _bounds _padding] nil))}))
 
 (def ^:private emergency-icao (:aircraft/icao fixtures/squawking-7700))
 (def ^:private emergency-lng-lat
@@ -53,21 +20,18 @@
 (defn- added-elements [rec]
   (map #(get-in % [:marker :element]) (:added @rec)))
 
-(defn- close? [expected actual tol]
-  (< (abs (- expected actual)) tol))
-
 (deftest the-red-pen-circles-an-emergency-and-lifts-when-it-clears
   (rf-test/run-test-sync
-    (let [{:keys [m rec]} (recording-map)
+    (let [{:keys [m rec]} (test-map/recording-map)
           handle (emergency/attach! m)]
       (testing "a calm sky wears no annotation"
-        (rf/dispatch [:test/set-picture (by-icao [fixtures/ups-2717])])
+        (test-rf/set-picture! [fixtures/ups-2717])
         (r/flush)
         (is (= [] (:added @rec))))
 
       (testing "an in-view emergency is circled at its position"
-        (rf/dispatch [:test/set-picture (by-icao [fixtures/ups-2717
-                                                  fixtures/squawking-7700])])
+        (test-rf/set-picture! [fixtures/ups-2717
+                               fixtures/squawking-7700])
         (r/flush)
         (is (= 1 (count (:added @rec))))
         (is (= emergency-lng-lat (:lng-lat (first (:added @rec)))))
@@ -76,10 +40,9 @@
           (is (= 2 (.-length (.querySelectorAll el "ellipse"))))))
 
       (testing "the squawk clearing lifts the ink off the chart"
-        (rf/dispatch [:test/set-picture
-                      (by-icao [fixtures/ups-2717
-                                (assoc fixtures/squawking-7700
-                                  :aircraft/squawk "1200")])])
+        (test-rf/set-picture! [fixtures/ups-2717
+                               (assoc fixtures/squawking-7700
+                                 :aircraft/squawk "1200")])
         (r/flush)
         (is (= 1 (count (:removed @rec))))
         (is (= 1 (count (:added @rec)))))
@@ -88,9 +51,9 @@
 
 (deftest the-ink-draws-once-then-holds
   (rf-test/run-test-sync
-    (let [{:keys [m rec]} (recording-map)
+    (let [{:keys [m rec]} (test-map/recording-map)
           handle (emergency/attach! m)]
-      (rf/dispatch [:test/set-picture (by-icao [fixtures/squawking-7700])])
+      (test-rf/set-picture! [fixtures/squawking-7700])
       (r/flush)
 
       (testing "each pass of the pen is a ONE-iteration entrance — never
@@ -106,10 +69,9 @@
       (testing "the same emergency tracking across the chart MOVES the
                 marker — the element is never rebuilt, so the entrance
                 cannot replay"
-        (rf/dispatch [:test/set-picture
-                      (by-icao [(assoc fixtures/squawking-7700
+        (test-rf/set-picture! [(assoc fixtures/squawking-7700
                                   :aircraft/position
-                                  #:geo{:lat 28.0 :lon -82.5})])])
+                                  #:geo{:lat 28.0 :lon -82.5})])
         (r/flush)
         (is (= 1 (count (:added @rec))))
         (is (= [-82.5 28.0] (:lng-lat (last (:moves @rec))))))
@@ -118,9 +80,9 @@
 
 (deftest the-stamp-reads-the-squawk
   (rf-test/run-test-sync
-    (let [{:keys [m rec]} (recording-map)
+    (let [{:keys [m rec]} (test-map/recording-map)
           handle (emergency/attach! m)]
-      (rf/dispatch [:test/set-picture (by-icao [fixtures/squawking-7700])])
+      (test-rf/set-picture! [fixtures/squawking-7700])
       (r/flush)
       (let [el    (first (added-elements rec))
             stamp (cjs/select el ".adsb-mayday-stamp")
@@ -134,10 +96,9 @@
           (is (re-find #"↓1152 fpm" text))))
 
       (testing "the stamp's DATA updates in place — same element, new facts"
-        (rf/dispatch [:test/set-picture
-                      (by-icao [(assoc fixtures/squawking-7700
+        (test-rf/set-picture! [(assoc fixtures/squawking-7700
                                   :aircraft/altitude-ft 9000
-                                  :aircraft/baro-rate-fpm 320)])])
+                                  :aircraft/baro-rate-fpm 320)])
         (r/flush)
         (is (= 1 (count (:added @rec))) "no rebuild, no replayed entrance")
         (let [text (.-textContent
@@ -151,9 +112,9 @@
 
 (deftest an-off-screen-emergency-raises-the-edge-arrow
   (rf-test/run-test-sync
-    (let [{:keys [m rec]} (recording-map)
+    (let [{:keys [m rec]} (test-map/recording-map)
           handle (emergency/attach! m)]
-      (rf/dispatch [:test/set-picture (by-icao [off-screen-north])])
+      (test-rf/set-picture! [off-screen-north])
       (r/flush)
 
       (testing "the annotation is the ARROW, not the ellipse — the arrow
@@ -168,7 +129,7 @@
                 aircraft (due north of centre -> the top midpoint), pulled
                 past the header + NOTAM chrome"
         (let [[lng lat] (:lng-lat (first (:added @rec)))]
-          (is (close? -82.0 lng 1e-6))
+          (is (fixtures/close? -82.0 lng 1e-6))
           (is (< 28.5 lat 29.0))))
 
       (testing "the label carries callsign and great-circle distance"
@@ -184,9 +145,9 @@
 
 (deftest clicking-the-arrow-offers-selection-and-hijacks-nothing
   (rf-test/run-test-sync
-    (let [{:keys [m rec]} (recording-map)
+    (let [{:keys [m rec]} (test-map/recording-map)
           handle (emergency/attach! m)]
-      (rf/dispatch [:test/set-picture (by-icao [off-screen-north])])
+      (test-rf/set-picture! [off-screen-north])
       (r/flush)
       (.click (first (added-elements rec)))
       (is (= emergency-icao @(rf/subscribe [:aircraft/selected-icao])))
@@ -194,9 +155,9 @@
 
 (deftest a-settled-camera-move-re-judges-the-annotations
   (rf-test/run-test-sync
-    (let [{:keys [m rec !bounds !move]} (recording-map)
+    (let [{:keys [m rec !bounds] :as fake} (test-map/recording-map)
           handle (emergency/attach! m)]
-      (rf/dispatch [:test/set-picture (by-icao [off-screen-north])])
+      (test-rf/set-picture! [off-screen-north])
       (r/flush)
       (is (= "adsb-edge-arrow" (.-className (first (added-elements rec)))))
 
@@ -204,7 +165,7 @@
                 ellipse via the captured moveend handler"
         (reset! !bounds {:geo/min-lat 30.0 :geo/max-lat 32.0
                          :geo/min-lon -83.0 :geo/max-lon -81.0})
-        (@!move)
+        (test-map/fire-move! fake)
         (is (= 1 (count (:removed @rec))))
         (is (= 2 (count (:added @rec))))
         (is (= "adsb-mayday" (.-className (last (added-elements rec)))))
@@ -213,7 +174,7 @@
       (testing "a move that changes nothing MOVES the marker in place —
                 settled ink holds still"
         (let [added-before (count (:added @rec))]
-          (@!move)
+          (test-map/fire-move! fake)
           (is (= added-before (count (:added @rec))))
           (is (= [-82.0 31.0] (:lng-lat (last (:moves @rec)))))))
 
@@ -221,7 +182,7 @@
 
 (deftest every-emergency-gets-its-own-annotation
   (rf-test/run-test-sync
-    (let [{:keys [m rec]} (recording-map)
+    (let [{:keys [m rec]} (test-map/recording-map)
           handle           (emergency/attach! m)
           off-screen-south (assoc fixtures/squawking-7700
                              :aircraft/icao "b00001"
@@ -229,10 +190,9 @@
                              :aircraft/squawk "7600"
                              :aircraft/position
                              #:geo{:lat 25.0 :lon -82.0})]
-      (rf/dispatch [:test/set-picture
-                    (by-icao [fixtures/ups-2717
+      (test-rf/set-picture! [fixtures/ups-2717
                               fixtures/squawking-7700
-                              off-screen-south])])
+                              off-screen-south])
       (r/flush)
       (is (= 2 (count (:added @rec))))
       (let [classes (set (map #(.-className %) (added-elements rec)))]
@@ -243,24 +203,23 @@
 
 (deftest an-unpositioned-emergency-marks-nothing
   (rf-test/run-test-sync
-    (let [{:keys [m rec]} (recording-map)
+    (let [{:keys [m rec]} (test-map/recording-map)
           handle (emergency/attach! m)]
-      (rf/dispatch [:test/set-picture
-                    (by-icao [(-> fixtures/squawking-7700
-                                  (dissoc :aircraft/position))])])
+      (test-rf/set-picture! [(-> fixtures/squawking-7700
+                                  (dissoc :aircraft/position))])
       (r/flush)
       (is (= [] (:added @rec)))
       (emergency/detach! m handle))))
 
 (deftest detach-lifts-live-annotations
   (rf-test/run-test-sync
-    (let [{:keys [m rec]} (recording-map)
+    (let [{:keys [m rec]} (test-map/recording-map)
           handle (emergency/attach! m)]
-      (rf/dispatch [:test/set-picture (by-icao [fixtures/squawking-7700])])
+      (test-rf/set-picture! [fixtures/squawking-7700])
       (r/flush)
       (is (= 1 (count (:added @rec))))
       (emergency/detach! m handle)
       (is (= 1 (count (:removed @rec))))
-      (rf/dispatch [:test/set-picture (by-icao [fixtures/squawking-7700])])
+      (test-rf/set-picture! [fixtures/squawking-7700])
       (r/flush)
       (is (= 1 (count (:added @rec)))))))

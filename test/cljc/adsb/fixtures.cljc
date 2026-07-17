@@ -1,6 +1,29 @@
 (ns adsb.fixtures
   (:require [adsb.ingest.coerce :as coerce]))
 
+(def ^:const captured-at-ms
+  "The instant the committed captures were recorded. Every replay path stamps
+  against it, so tests that need a wall-clock reference share one."
+  1720713600000)
+
+(def declared-crop
+  "The published boundary a streaming config frame carries: a 100 km disc over
+  the receiver's rough region, never the receiver's own coordinate."
+  {:crop/center   {:geo/lat 27.9753 :geo/lon -82.5331}
+   :crop/radius-m 100000})
+
+(defn by-icao
+  "Index a batch of domain aircraft by ICAO — the shape most tests reach for
+  to look one up by identity."
+  [batch]
+  (into {} (map (juxt :aircraft/icao identity)) batch))
+
+(defn close?
+  "True when `actual` falls within `tolerance` of `expected`. The double
+  coercion keeps integer and ratio inputs honest before the comparison."
+  [expected actual tolerance]
+  (< (abs (double (- expected actual))) tolerance))
+
 (def ups-2717-raw
   {:hex       "abc0e4"
    :type      "adsb_icao"

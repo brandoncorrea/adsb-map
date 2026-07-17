@@ -1,6 +1,6 @@
 (ns adsb.ingest.plausibility-test
   (:require [adsb.aircraft :as aircraft]
-            [adsb.fixtures :as fixtures]
+            [adsb.fixtures :as fixtures :refer [captured-at-ms]]
             [adsb.geo :as geo]
             [adsb.ingest.coerce :as coerce]
             [adsb.ingest.plausibility :as plausibility]
@@ -9,7 +9,6 @@
             [clojure.test :refer [deftest is testing]]
             [malli.core :as m]))
 
-(def ^:private captured-at-ms 1720713600000)
 (def ^:private ups-icao (:aircraft/icao fixtures/ups-2717))
 (def ^:private receiver-position {:geo/lat 28.0 :geo/lon -82.5})
 (def ^:private mid-atlantic {:geo/lat 28.0 :geo/lon -60.0})

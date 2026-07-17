@@ -6,6 +6,7 @@
             [adsb.stream]
             [adsb.subs]
             [adsb.test-dom :as test-dom]
+            [adsb.test-rf :as test-rf]
             [adsb.ui.roster :as roster]
             [clojure.test :refer-macros [deftest is testing use-fixtures async]]
             [day8.re-frame.test :as rf-test]
@@ -13,8 +14,6 @@
             [reagent.core :as r]))
 
 (use-fixtures :each {:after rtl/cleanup})
-
-(rf/reg-event-db :test/set-picture (fn [db [_ picture]] (assoc db :aircraft/picture picture)))
 
 (def ^:private ups fixtures/ups-2717)
 (def ^:private ups-icao (:aircraft/icao fixtures/ups-2717))
@@ -29,9 +28,6 @@
 
 (defn- render-roster! []
   (test-dom/render! [roster/roster]))
-
-(defn- fresh-db! []
-  (rf/dispatch-sync [:app/initialize-db]))
 
 (defn- open-roster! []
   (rf/dispatch-sync [:roster/set-sheet :half]))
@@ -81,42 +77,38 @@
 
 (deftest the-whole-lip-toggles-not-just-the-button
   (async done
-    (fresh-db!)
+    (test-rf/fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
     (render-roster!)
     (let [dock (.getByTestId rtl/screen "roster")]
       (click! dock)
-      (-> (rtl/waitFor
-            (fn [] (assert (= "true" (cjs/get-attribute dock "data-open")))))
-          (.then (fn [_]
-                   (is (= "true" (cjs/get-attribute dock "data-open")))
-                   (click! (.getByTestId rtl/screen "roster-toggle"))
-                   (rtl/waitFor
-                     (fn [] (assert (= "false" (cjs/get-attribute dock "data-open")))))))
-          (.then (fn [_]
-                   (is (= "false" (cjs/get-attribute dock "data-open")))
-                   (done)))
-          (.catch (fn [err]
-                    (is false (str "the lip did not toggle the drawer: " err))
-                    (done)))))))
+      (test-rf/wait-for! done
+        (fn [] (assert (= "true" (cjs/get-attribute dock "data-open"))))
+        (fn [_]
+          (is (= "true" (cjs/get-attribute dock "data-open")))
+          (click! (.getByTestId rtl/screen "roster-toggle"))
+          (-> (rtl/waitFor
+                (fn [] (assert (= "false" (cjs/get-attribute dock "data-open")))))
+              (.then (fn [_]
+                       (is (= "false" (cjs/get-attribute dock "data-open")))
+                       (done)))))
+        "the lip did not toggle the drawer"))))
 
 (deftest a-row-click-is-not-a-tap-on-the-drawer
   (async done
-    (fresh-db!)
+    (test-rf/fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
     (open-roster!)
     (render-roster!)
     (let [dock (.getByTestId rtl/screen "roster")]
       (click! (.getByTestId rtl/screen (str "roster-row:" ups-icao)))
-      (-> (rtl/waitFor
-            (fn [] (assert (= ups-icao @(rf/subscribe [:aircraft/selected-icao])))))
-          (.then (fn [_]
-                   (is (= ups-icao @(rf/subscribe [:aircraft/selected-icao])))
-                   (is (= "half" (cjs/get-attribute dock "data-sheet")))
-                   (done)))
-          (.catch (fn [err]
-                    (is false (str "row click did not land: " err))
-                    (done)))))))
+      (test-rf/wait-for! done
+        (fn [] (assert (= ups-icao @(rf/subscribe [:aircraft/selected-icao]))))
+        (fn [_]
+          (is (= ups-icao @(rf/subscribe [:aircraft/selected-icao])))
+          (is (= "half" (cjs/get-attribute dock "data-sheet")))
+          (done))
+        "row click did not land"))))
 
 (defn- pointer! [el kind opts]
   (rtl/act (fn []
@@ -130,7 +122,7 @@
 
 (deftest the-drawer-is-not-empty-while-it-opens
   (async done
-    (fresh-db!)
+    (test-rf/fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
     (render-roster!)
     (with-redefs [cjs/phone-stance? (constantly true)]
@@ -138,20 +130,18 @@
         (is (nil? (.queryByTestId rtl/screen "roster-list")))
         (pointer! dock "pointerdown" {:clientY 700})
         (pointer! dock "pointermove" {:clientY 500})
-        (-> (rtl/waitFor
-              (fn [] (assert (some? (.queryByTestId rtl/screen "roster-list")))))
-            (.then (fn [_]
-                     (is (some? (.getByTestId rtl/screen "roster-list")))
-                     (is (some? (.getByTestId rtl/screen (str "roster-row:" ups-icao))))
-                     (is (= "false" (cjs/get-attribute dock "data-open")))
-                     (done)))
-            (.catch (fn [err]
-                      (is false (str "the drawer stayed blank mid-drag: " err))
-                      (done))))))))
+        (test-rf/wait-for! done
+          (fn [] (assert (some? (.queryByTestId rtl/screen "roster-list"))))
+          (fn [_]
+            (is (some? (.getByTestId rtl/screen "roster-list")))
+            (is (some? (.getByTestId rtl/screen (str "roster-row:" ups-icao))))
+            (is (= "false" (cjs/get-attribute dock "data-open")))
+            (done))
+          "the drawer stayed blank mid-drag")))))
 
 (deftest a-press-is-not-a-gesture
   (async done
-    (fresh-db!)
+    (test-rf/fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
     (render-roster!)
     (with-redefs [cjs/phone-stance? (constantly true)]
@@ -177,32 +167,31 @@
 
 (deftest a-release-ends-the-gesture-so-the-mouse-cannot-hang-on
   (async done
-    (fresh-db!)
+    (test-rf/fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
     (render-roster!)
     (with-redefs [cjs/phone-stance? (constantly true)]
       (let [dock (.getByTestId rtl/screen "roster")]
         (pointer! dock "pointerdown" {:clientY 700})
         (pointer! dock "pointermove" {:clientY 300})
-        (-> (rtl/waitFor (fn [] (assert (cjs/has-class? dock "is-dragging"))))
-            (.then (fn [_]
-                     (pointer! dock "pointerup" {:clientY 300})
-                     (rtl/waitFor
-                       (fn []
-                         (assert (not (cjs/has-class? dock "is-dragging")))
-                         (assert (not (cjs/has-class? dock "is-settling")))))))
-            (.then (fn [_]
-                     (let [committed (cjs/get-attribute dock "data-sheet")
-                           settled-h (-> dock .-style .-height)]
-                       (pointer! dock "pointermove" {:clientY 600 :buttons 0})
-                       (r/flush)
-                       (is (= committed (cjs/get-attribute dock "data-sheet")))
-                       (is (not (cjs/has-class? dock "is-dragging")))
-                       (is (= settled-h (.. dock -style -height)))
-                       (done))))
-            (.catch (fn [err]
-                      (is false (str "the release did not end the gesture: " err))
-                      (done))))))))
+        (test-rf/wait-for! done
+          (fn [] (assert (cjs/has-class? dock "is-dragging")))
+          (fn [_]
+            (pointer! dock "pointerup" {:clientY 300})
+            (-> (rtl/waitFor
+                  (fn []
+                    (assert (not (cjs/has-class? dock "is-dragging")))
+                    (assert (not (cjs/has-class? dock "is-settling")))))
+                (.then (fn [_]
+                         (let [committed (cjs/get-attribute dock "data-sheet")
+                               settled-h (-> dock .-style .-height)]
+                           (pointer! dock "pointermove" {:clientY 600 :buttons 0})
+                           (r/flush)
+                           (is (= committed (cjs/get-attribute dock "data-sheet")))
+                           (is (not (cjs/has-class? dock "is-dragging")))
+                           (is (= settled-h (.. dock -style -height)))
+                           (done))))))
+          "the release did not end the gesture")))))
 
 (deftest the-roster-renders-the-picture
   (rf-test/run-test-sync
@@ -217,85 +206,79 @@
 
 (deftest find-filters-the-roster-in-place
   (async done
-    (fresh-db!)
+    (test-rf/fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
     (open-roster!)
     (render-roster!)
     (rf/dispatch-sync [:roster/set-query "UPS"])
     (r/flush)
-    (-> (rtl/waitFor
-          (fn []
-            (assert (some? (.getByTestId rtl/screen (str "roster-row:" ups-icao))))
-            (assert (nil? (.queryByTestId rtl/screen (str "roster-row:" dal-icao))))))
-        (.then (fn [_]
-                 (is (some? (.getByTestId rtl/screen (str "roster-row:" ups-icao))))
-                 (is (nil? (.queryByTestId rtl/screen (str "roster-row:" dal-icao))))
-                 (done)))
-        (.catch (fn [err]
-                  (is false (str "filter did not land: " err))
-                  (done))))))
+    (test-rf/wait-for! done
+      (fn []
+        (assert (some? (.getByTestId rtl/screen (str "roster-row:" ups-icao))))
+        (assert (nil? (.queryByTestId rtl/screen (str "roster-row:" dal-icao)))))
+      (fn [_]
+        (is (some? (.getByTestId rtl/screen (str "roster-row:" ups-icao))))
+        (is (nil? (.queryByTestId rtl/screen (str "roster-row:" dal-icao))))
+        (done))
+      "filter did not land")))
 
 (deftest collapsing-the-dock-sets-data-open-false
   (async done
-    (fresh-db!)
+    (test-rf/fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
     (open-roster!)
     (render-roster!)
     (rf/dispatch-sync [:roster/toggle])
     (r/flush)
-    (-> (rtl/waitFor
-          (fn []
-            (assert (= "false"
-                       (cjs/get-attribute (.getByTestId rtl/screen "roster")
-                                          "data-open")))
-            (assert (= "closed"
-                       (cjs/get-attribute (.getByTestId rtl/screen "roster")
-                                          "data-sheet")))))
-        (.then (fn [_]
-                 (is (= "false"
-                        (cjs/get-attribute (.getByTestId rtl/screen "roster")
-                                           "data-open")))
-                 (is (= "closed"
-                        (cjs/get-attribute (.getByTestId rtl/screen "roster")
-                                           "data-sheet")))
-                 (done)))
-        (.catch (fn [err]
-                  (is false (str "collapse did not land: " err))
-                  (done))))))
+    (test-rf/wait-for! done
+      (fn []
+        (assert (= "false"
+                   (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                      "data-open")))
+        (assert (= "closed"
+                   (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                      "data-sheet"))))
+      (fn [_]
+        (is (= "false"
+               (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                  "data-open")))
+        (is (= "closed"
+               (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                  "data-sheet")))
+        (done))
+      "collapse did not land")))
 
 (deftest phone-cycle-walks-the-three-snaps
   (async done
-    (fresh-db!)
+    (test-rf/fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
     (render-roster!)
     (rf/dispatch-sync [:roster/cycle])
     (rf/dispatch-sync [:roster/cycle])
     (r/flush)
-    (-> (rtl/waitFor
-          (fn []
-            (assert (= "full"
-                       (cjs/get-attribute (.getByTestId rtl/screen "roster")
-                                          "data-sheet")))))
-        (.then (fn [_]
-                 (rf/dispatch-sync [:roster/cycle])
-                 (r/flush)
-                 (rtl/waitFor
-                   (fn []
-                     (assert (= "closed"
-                                (cjs/get-attribute (.getByTestId rtl/screen "roster")
-                                                   "data-sheet")))))))
-        (.then (fn [_]
-                 (is (= "closed"
-                        (cjs/get-attribute (.getByTestId rtl/screen "roster")
-                                           "data-sheet")))
-                 (done)))
-        (.catch (fn [err]
-                  (is false (str "cycle did not land: " err))
-                  (done))))))
+    (test-rf/wait-for! done
+      (fn []
+        (assert (= "full"
+                   (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                      "data-sheet"))))
+      (fn [_]
+        (rf/dispatch-sync [:roster/cycle])
+        (r/flush)
+        (-> (rtl/waitFor
+              (fn []
+                (assert (= "closed"
+                           (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                              "data-sheet")))))
+            (.then (fn [_]
+                     (is (= "closed"
+                            (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                               "data-sheet")))
+                     (done)))))
+      "cycle did not land")))
 
 (deftest selecting-scrolls-the-correlated-row-into-view
   (async done
-    (fresh-db!)
+    (test-rf/fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
     (open-roster!)
     (let [!scrolled (atom nil)]
@@ -303,36 +286,31 @@
         (render-roster!)
         (rf/dispatch-sync [:aircraft/select ups-icao])
         (r/flush)
-        (-> (rtl/waitFor
-              (fn []
-                (assert (= ups-icao @!scrolled))))
-            (.then (fn [_]
-                     (is (= ups-icao @!scrolled))
-                     (done)))
-            (.catch (fn [err]
-                      (is false (str "scroll-into-view did not fire: " err))
-                      (done))))))))
+        (test-rf/wait-for! done
+          (fn [] (assert (= ups-icao @!scrolled)))
+          (fn [_]
+            (is (= ups-icao @!scrolled))
+            (done))
+          "scroll-into-view did not fire")))))
 
 (deftest set-sheet-lands-data-sheet
   (async done
-    (fresh-db!)
+    (test-rf/fresh-db!)
     (rf/dispatch-sync [:test/set-picture (picture)])
     (render-roster!)
     (rf/dispatch-sync [:roster/set-sheet :full])
     (r/flush)
-    (-> (rtl/waitFor
-          (fn []
-            (assert (= "full"
-                       (cjs/get-attribute (.getByTestId rtl/screen "roster")
-                                          "data-sheet")))))
-        (.then (fn [_]
-                 (is (= "true"
-                        (cjs/get-attribute (.getByTestId rtl/screen "roster")
-                                           "data-open")))
-                 (is (= "full"
-                        (cjs/get-attribute (.getByTestId rtl/screen "roster")
-                                           "data-sheet")))
-                 (done)))
-        (.catch (fn [err]
-                  (is false (str "full sheet did not land: " err))
-                  (done))))))
+    (test-rf/wait-for! done
+      (fn []
+        (assert (= "full"
+                   (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                      "data-sheet"))))
+      (fn [_]
+        (is (= "true"
+               (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                  "data-open")))
+        (is (= "full"
+               (cjs/get-attribute (.getByTestId rtl/screen "roster")
+                                  "data-sheet")))
+        (done))
+      "full sheet did not land")))

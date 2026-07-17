@@ -1,12 +1,12 @@
 (ns adsb.ingest.beast-source-test
-  (:require [adsb.ingest.beast-source :as beast-source]
+  (:require [adsb.fixtures :as fixtures]
+            [adsb.ingest.beast-source :as beast-source]
             [adsb.ingest.mode-s :as mode-s]
             [adsb.ingest.source :as source]
             [adsb.ingest.streaming-source-contract :as contract]
             [adsb.ingest.tcp :as tcp]
-            [clojure.test :refer [deftest is testing]])
-  (:import (clojure.lang ExceptionInfo)
-           (java.net InetSocketAddress ServerSocket)))
+            [adsb.test-feed :as feed]
+            [clojure.test :refer [deftest is testing]]))
 
 (def ^:private escape-byte 0x1a)
 (def ^:private long-type-byte 0x33)
@@ -61,60 +61,27 @@
                  (beast-frame long-type-byte corrupt-payload) ; no trace
                  [escape-byte 0x00 0x88]))))                ; bad type, resync
 
-(def ^:private chunk-size 5)
-
-(defn- with-beast-feed [^bytes wire f]
-  (let [server (doto (ServerSocket.)
-                 (.bind (InetSocketAddress. "127.0.0.1" 0)))
-        port   (.getLocalPort server)
-        conn   (future
-                 (with-open [client (.accept server)]
-                   (let [out (.getOutputStream client)]
-                     (doseq [chunk (partition-all chunk-size wire)]
-                       (.write out (byte-array chunk))
-                       (.flush out)
-                       (Thread/sleep 1))
-                     (.read (.getInputStream client)))))]
-    (try
-      (f "127.0.0.1" port)
-      (finally
-        (future-cancel conn)
-        (.close server)))))
-
-(def ^:private wait-timeout-ms 2000)
-
-(defn- wait-until [thunk]
-  (let [deadline (+ (System/currentTimeMillis) wait-timeout-ms)]
-    (loop []
-      (or (thunk)
-          (when (< (System/currentTimeMillis) deadline)
-            (Thread/sleep 20)
-            (recur))))))
-
-(defn- fetch-quietly [src]
-  (try (source/fetch! src)
-       (catch ExceptionInfo _)))
-
-(defn- by-icao [batch]
-  (into {} (map (juxt :aircraft/icao identity)) batch))
+;; Beast frames are pushed in tiny 5-byte chunks so decode reassembly across
+;; socket reads is exercised, not just whole-frame delivery.
+(def ^:private beast-feed-opts {:chunk-size 5})
 
 (deftest streams-decodes-and-accumulates-the-beast-feed
   (testing "the full stack — socket, framing, DF17 decode, accumulator —
             yields the published aircraft, folding CPR halves from separate
             frames into a position and dropping every hostile frame"
-    (with-beast-feed wire-bytes
+    (feed/with-byte-feed wire-bytes beast-feed-opts
       (fn [host port]
         (let [src (source/open!
                     (beast-source/->source host port
                                            {:clock (constantly 1000000)}))]
           (try
-            (let [batch  (wait-until
+            (let [batch  (feed/wait-until
                            (fn []
-                             (let [b (fetch-quietly src)]
-                               (when (get-in (by-icao b)
+                             (let [b (feed/fetch-quietly src)]
+                               (when (get-in (fixtures/by-icao b)
                                              ["40621d" :aircraft/position])
                                  b))))
-                  planes (by-icao batch)]
+                  planes (fixtures/by-icao batch)]
               (is (some? batch))
               (testing "the KLM1023 identification frame yields its callsign"
                 (is (= "KLM1023" (get-in planes ["4840d6" :aircraft/callsign])))
@@ -132,7 +99,7 @@
 (deftest metadata-reports-the-decoded-message-count
   (contract/assert-metadata-reports-message-count!
     beast-source/->source
-    (fn [body] (with-beast-feed wire-bytes body))
+    (fn [body] (feed/with-byte-feed wire-bytes beast-feed-opts body))
     {:clock (constantly 1000000)}
     decoded-message-count))
 
@@ -162,7 +129,7 @@
 (deftest quiet-feed-returns-a-snapshot-not-a-throw
   (contract/assert-quiet-feed-returns-a-snapshot!
     beast-source/->source
-    (fn [body] (with-beast-feed (byte-array 0) body))))
+    (fn [body] (feed/with-byte-feed (byte-array 0) beast-feed-opts body))))
 
 (deftest fetch-throws-while-unreachable
   (contract/assert-fetch-throws-while-unreachable! beast-source/->source))

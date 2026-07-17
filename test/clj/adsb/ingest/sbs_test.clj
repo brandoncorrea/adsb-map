@@ -1,15 +1,13 @@
 (ns adsb.ingest.sbs-test
-  (:require [adsb.ingest.sbs :as sbs]
+  (:require [adsb.fixtures :as fixtures]
+            [adsb.ingest.sbs :as sbs]
             [adsb.ingest.source :as source]
             [adsb.ingest.streaming-source-contract :as contract]
             [adsb.ingest.tcp :as tcp]
             [adsb.stats :as stats]
+            [adsb.test-feed :as feed]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]])
-  (:import (clojure.lang ExceptionInfo)
-           (java.io OutputStreamWriter)
-           (java.net InetSocketAddress ServerSocket)
-           (java.nio.charset StandardCharsets)))
+            [clojure.test :refer [deftest is testing]]))
 
 (def ^:private fixture-lines
   (str/split-lines (slurp "test/resources/sbs-sample.txt")))
@@ -106,49 +104,19 @@
       (is (nil? (try (sbs/line->delta line) nil (catch Throwable _ :threw)))
           (str "line->delta must not throw on: " (pr-str line))))))
 
-(defn- with-sbs-feed [lines f]
-  (let [server (doto (ServerSocket.)
-                 (.bind (InetSocketAddress. "127.0.0.1" 0)))
-        port   (.getLocalPort server)
-        conn   (future
-                 (with-open [client (.accept server)]
-                   (let [w (OutputStreamWriter. (.getOutputStream client)
-                                                StandardCharsets/US_ASCII)]
-                     (doseq [line lines] (.write w (str line "\n")))
-                     (.flush w)
-                     (.read (.getInputStream client)))))]
-    (try
-      (f "127.0.0.1" port)
-      (finally
-        (future-cancel conn)
-        (.close server)))))
-
-(def ^:private wait-timeout-ms 2000)
-
-(defn- wait-until [thunk]
-  (let [deadline (+ (System/currentTimeMillis) wait-timeout-ms)]
-    (loop []
-      (or (thunk)
-          (when (< (System/currentTimeMillis) deadline)
-            (Thread/sleep 20)
-            (recur))))))
-
-(defn- fetch-quietly [src]
-  (try (source/fetch! src) (catch ExceptionInfo _)))
-
 (deftest streams-and-accumulates-the-fixture
   (testing "open!/fetch!/close! stream the fixture through the accumulator,
             folding fields from separate messages into per-ICAO tracks and
             dropping every hostile line at the boundary"
-    (with-sbs-feed fixture-lines
+    (feed/with-line-feed fixture-lines
       (fn [host port]
         (let [src (source/open! (sbs/->source host port))]
           (try
-            (let [batch   (wait-until
+            (let [batch   (feed/wait-until
                             (fn []
-                              (let [b (fetch-quietly src)]
+                              (let [b (feed/fetch-quietly src)]
                                 (when (= 4 (count b)) b))))
-                  by-icao (into {} (map (juxt :aircraft/icao identity)) batch)]
+                  by-icao (fixtures/by-icao batch)]
               (is (some? batch)
                   "the reader accumulates the fixture within the timeout")
               (testing "a1b2c3's four messages fold into one track"
@@ -169,7 +137,7 @@
 (deftest metadata-reports-the-decoded-message-count
   (contract/assert-metadata-reports-message-count!
     sbs/->source
-    (fn [body] (with-sbs-feed fixture-lines body))
+    (fn [body] (feed/with-line-feed fixture-lines body))
     {}
     fixture-message-count))
 
@@ -196,7 +164,7 @@
 (deftest quiet-feed-returns-a-snapshot-not-a-throw
   (contract/assert-quiet-feed-returns-a-snapshot!
     sbs/->source
-    (fn [body] (with-sbs-feed [] body))))
+    (fn [body] (feed/with-line-feed [] body))))
 
 (deftest fetch-throws-while-unreachable
   (contract/assert-fetch-throws-while-unreachable! sbs/->source))
@@ -213,7 +181,7 @@
             message's fields too, proving the event unit is the merged
             aircraft, never the bare field delta"
     (let [heard (atom [])]
-      (with-sbs-feed [identification-line position-line]
+      (feed/with-line-feed [identification-line position-line]
         (fn [host port]
           (let [src (source/open!
                       (sbs/->source host port
@@ -222,7 +190,7 @@
                                                  (swap! heard conj
                                                         [aircraft now-ms]))}))]
             (try
-              (is (some? (wait-until #(= 2 (count @heard)))))
+              (is (some? (feed/wait-until #(= 2 (count @heard)))))
               (let [[[first-aircraft _] [second-aircraft now-ms]] @heard]
                 (is (= "UAL123" (:aircraft/callsign first-aircraft)))
                 (is (= {:aircraft/icao           "a1b2c3"
@@ -250,7 +218,7 @@
             as a clean track"
     (let [heard (atom [])
           ticks (atom 0)]
-      (with-sbs-feed [position-line teleported-position-line velocity-line]
+      (feed/with-line-feed [position-line teleported-position-line velocity-line]
         (fn [host port]
           (let [src (source/open!
                       (sbs/->source host port
@@ -258,7 +226,7 @@
                                      :on-delta (fn [aircraft _now-ms]
                                                  (swap! heard conj aircraft))}))]
             (try
-              (is (some? (wait-until #(= 3 (count @heard)))))
+              (is (some? (feed/wait-until #(= 3 (count @heard)))))
               (let [[origin jumped after] @heard]
                 (is (not (contains? origin :aircraft/position-suspect?)))
                 (is (true? (:aircraft/position-suspect? jumped)))
@@ -285,7 +253,7 @@
     (let [heard  (atom [])
           gap-ms 100000
           clocks (atom [1000 (+ 1000 gap-ms)])]
-      (with-sbs-feed [position-line moved-on-position-line]
+      (feed/with-line-feed [position-line moved-on-position-line]
         (fn [host port]
           (let [src (source/open!
                       (sbs/->source host port
@@ -295,7 +263,7 @@
                                      :on-delta (fn [aircraft _now-ms]
                                                  (swap! heard conj aircraft))}))]
             (try
-              (is (some? (wait-until #(= 2 (count @heard)))))
+              (is (some? (feed/wait-until #(= 2 (count @heard)))))
               (let [aircraft (second @heard)]
                 (is (= (+ 1000 gap-ms) (:aircraft/seen-at-ms aircraft)))
                 (is (not (contains? aircraft :aircraft/position-suspect?))))
@@ -305,39 +273,20 @@
   (testing "a hook that throws costs its own notification, not the
             connection: the reader keeps consuming and the picture keeps
             accumulating"
-    (with-sbs-feed [identification-line position-line]
+    (feed/with-line-feed [identification-line position-line]
       (fn [host port]
         (let [src (source/open!
                     (sbs/->source host port
                                   {:on-delta (fn [_aircraft _now-ms]
                                                (throw (ex-info "broken hook" {})))}))]
           (try
-            (let [batch (wait-until
+            (let [batch (feed/wait-until
                           (fn []
-                            (let [b (fetch-quietly src)]
+                            (let [b (feed/fetch-quietly src)]
                               (when (some :aircraft/position b) b))))]
               (is (some? batch))
               (is (= "UAL123" (:aircraft/callsign (first batch)))))
             (finally (source/close! src))))))))
-
-(defn- with-restarting-sbs-feed [next-lines! f]
-  (let [server  (doto (ServerSocket.)
-                  (.bind (InetSocketAddress. "127.0.0.1" 0)))
-        port    (.getLocalPort server)
-        serving (atom true)
-        accept  (future
-                  (while @serving
-                    (let [client (.accept server)
-                          w      (OutputStreamWriter. (.getOutputStream client)
-                                                      StandardCharsets/US_ASCII)]
-                      (doseq [line (next-lines!)] (.write w (str line "\n")))
-                      (.flush w))))]
-    (try
-      (f "127.0.0.1" port)
-      (finally
-        (reset! serving false)
-        (future-cancel accept)
-        (.close server)))))
 
 (deftest silence-drops-the-socket-and-reconnects
   (testing "a connected-but-silent socket past :idle-timeout-ms is treated as
@@ -349,7 +298,7 @@
                         (if (= 1 (swap! connections inc))
                           ["MSG,1,1,1,AAAAAA,1,,,,,ALPHA123 ,,,,,,,,,,,"]
                           ["MSG,1,1,1,BBBBBB,1,,,,,BRAVO123 ,,,,,,,,,,,"]))]
-      (with-restarting-sbs-feed next-lines!
+      (feed/with-restarting-feed next-lines!
         (fn [host port]
           (let [src (source/open!
                       (sbs/->source host port
@@ -357,11 +306,10 @@
                                      :idle-timeout-ms 200
                                      :reconnect-ms    50}))]
             (try
-              (let [picture (wait-until
+              (let [picture (feed/wait-until
                               (fn []
-                                (let [planes (->> (fetch-quietly src)
-                                                  (map (juxt :aircraft/icao identity))
-                                                  (into {}))]
+                                (let [planes (fixtures/by-icao
+                                               (feed/fetch-quietly src))]
                                   (when (contains? planes "bbbbbb") planes))))]
                 (is (some? picture))
                 (is (< 1 @connections)))

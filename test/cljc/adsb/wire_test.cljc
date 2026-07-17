@@ -1,10 +1,9 @@
 (ns adsb.wire-test
-  (:require [adsb.fixtures :as fixtures]
+  (:require [adsb.fixtures :as fixtures :refer [captured-at-ms declared-crop]]
             [adsb.picture :as picture]
             [adsb.wire :as wire]
             [clojure.test :refer [deftest is testing]]))
 
-(def ^:private captured-at-ms 1720713600000)
 (def ^:private the-picture (picture/merge-batch {} fixtures/all captured-at-ms))
 
 (def ^:private wire-keys
@@ -233,10 +232,6 @@
   (testing "an envelope with no feeder decodes to an empty feeder map"
     (is (= {} (wire/wire->feeder (wire/stats-event->wire nil nil captured-at-ms))))
     (is (= {} (wire/wire->feeder {})))))
-
-(def ^:private declared-crop
-  {:crop/center   {:geo/lat 27.9753 :geo/lon -82.5331}
-   :crop/radius-m 100000})
 
 (deftest config-event-round-trip
   (testing "the declared crop survives the round trip, centre and radius"
