@@ -64,8 +64,13 @@ Names are the most important tool for readability. Invest time in them.
 - **Predicates end in `?`** — `stale?`, `emergency?`, `on-ground?`. A predicate
   returns a truthy/falsey value and does nothing else.
 - **Side-effecting functions end in `!`** — `start-poller!`, `dispatch!`,
-  `reset-app-db!`. If a function mutates, does I/O, or touches the outside world,
-  the `!` is not optional. It is the only warning the reader gets.
+  `reset-app-db!`. The bang marks consequences: mutating state (an atom, the
+  DOM, a socket, a db transaction), emitting to the world (a log line, a
+  network send), or being the throwing variant of a safe counterpart (a `read`
+  returns nil where a `read!` would throw). Plain reads stay bare even when
+  they touch the world — a clock (`now-ms`), a file (`env/read`), a computed
+  style (`css-px`) — reading is not a consequence. The `!` is the only warning
+  the reader gets; do not dilute it.
 - **Coercions read as `->`** — `json->aircraft`, `aircraft->geojson`. The arrow
   says "this is a pure transformation from one shape to another."
 - **Avoid abbreviations** unless they're the domain's own vocabulary. `icao`,
@@ -259,7 +264,8 @@ always. That's what makes it testable without a running feeder, and what lets th
 same code run on the JVM and in the browser.
 
 Effects — HTTP calls, atom swaps, SSE writes, `setData` on a map — live at the
-edges, in `src/clj/` and `src/cljs/`, in functions whose names end in `!`.
+edges, in `src/clj/` and `src/cljs/`, in functions whose names end in `!` when
+they have consequences (effectful reads at the edge stay bare — see Naming).
 
 ```clojure
 ;; Bad — the domain reaches out and grabs the clock

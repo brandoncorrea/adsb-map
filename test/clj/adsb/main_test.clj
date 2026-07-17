@@ -82,7 +82,7 @@
 
 (deftest sse-knobs-set-only-in-env-reach-the-running-broadcaster
   (testing "booting from an env map that carries the four knobs — as
-            env/read! produces after backfilling .env — lands them in the
+            env/read produces after backfilling .env — lands them in the
             running broadcaster's resolved limits and identity flags, the
             .env-only path start! used to ignore by reading System/getenv
             directly (adsb-rgv)"

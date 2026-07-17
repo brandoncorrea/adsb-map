@@ -25,9 +25,9 @@
             across restarts and identical across replicas of one image —
             a build clock or a counter would give two containers serving
             the same image two different URLs for the same bytes"
-    (is (= (assets/version!) (assets/version!))))
+    (is (= (assets/version) (assets/version))))
   (testing "it is short, hex, and URL-safe"
-    (is (re-matches #"[0-9a-f]{12}" (assets/version!)))))
+    (is (re-matches #"[0-9a-f]{12}" (assets/version)))))
 
 (defn- bytes* [s] (.getBytes ^String s "UTF-8"))
 
@@ -37,27 +37,27 @@
             to the bundle changes its URL. If the version could stay put
             across a content change, `immutable` would pin browsers to a
             stale app for a year with no way to correct them"
-    (is (not= (assets/content-version! [["js/main.js" (bytes* "the old app")]])
-              (assets/content-version! [["js/main.js" (bytes* "the new app")]]))))
+    (is (not= (assets/content-version [["js/main.js" (bytes* "the old app")]])
+              (assets/content-version [["js/main.js" (bytes* "the new app")]]))))
   (testing "a single flipped byte is enough — nothing is sampled or truncated
             before hashing"
-    (is (not= (assets/content-version! [["js/main.js" (bytes* "aaaa")]])
-              (assets/content-version! [["js/main.js" (bytes* "aaab")]]))))
+    (is (not= (assets/content-version [["js/main.js" (bytes* "aaaa")]])
+              (assets/content-version [["js/main.js" (bytes* "aaab")]]))))
   (testing "the same bytes give the same version, so two containers running
             one image serve one URL — the version is a function of content,
             not of a boot, a clock, or a timestamp that a reproducible build
             may normalise away"
-    (is (= (assets/content-version! [["js/main.js" (bytes* "same")]])
-           (assets/content-version! [["js/main.js" (bytes* "same")]]))))
+    (is (= (assets/content-version [["js/main.js" (bytes* "same")]])
+           (assets/content-version [["js/main.js" (bytes* "same")]]))))
   (testing "it is the bytes AND the name: moving content between assets is a
             different deployment and must not collide"
-    (is (not= (assets/content-version! [["js/main.js" (bytes* "x")]])
-              (assets/content-version! [["app.css" (bytes* "x")]]))))
+    (is (not= (assets/content-version [["js/main.js" (bytes* "x")]])
+              (assets/content-version [["app.css" (bytes* "x")]]))))
   (testing "a missing asset is an absence, not a crash — a checkout that has
             not run `bb build` still serves what it has"
-    (is (string? (assets/content-version! [["js/main.js" nil]])))
-    (is (not= (assets/content-version! [["js/main.js" nil]])
-              (assets/content-version! [["js/main.js" (bytes* "built")]])))))
+    (is (string? (assets/content-version [["js/main.js" nil]])))
+    (is (not= (assets/content-version [["js/main.js" nil]])
+              (assets/content-version [["js/main.js" (bytes* "built")]])))))
 
 (deftest the-document-is-never-stale
   (testing "index.html revalidates every time — it is the map to every
@@ -74,15 +74,15 @@
             whole mechanism: the document is what tells a browser which
             URL to fetch, and it is the only thing that changes"
     (let [html (:body (GET "/index.html"))]
-      (is (str/includes? html (assets/asset-url (assets/version!) "js/main.js")))
+      (is (str/includes? html (assets/asset-url (assets/version) "js/main.js")))
       (is (not (str/includes? html "\"/js/main.js\"")))
-      (is (str/includes? html (assets/asset-url (assets/version!) "app.css"))))))
+      (is (str/includes? html (assets/asset-url (assets/version) "app.css"))))))
 
 (deftest fingerprinted-assets-are-immutable
   (testing "an asset under /assets/<version>/ is cacheable for a year and
             declared immutable — the URL names its bytes, so a different
             body would be a different URL, and there is nothing to revalidate"
-    (let [response (GET (assets/asset-url (assets/version!) "js/main.js"))]
+    (let [response (GET (assets/asset-url (assets/version) "js/main.js"))]
       (is (= 200 (:status response)))
       (is (= assets/immutable-cache-control
              (get-in response [:headers "Cache-Control"])))))
@@ -94,7 +94,7 @@
       (is (= 200 (:status response)))))
   (testing "a versioned URL for a file that does not exist is still a miss,
             so the 404 handler downstream runs"
-    (is (nil? (GET (assets/asset-url (assets/version!) "js/nope.js"))))))
+    (is (nil? (GET (assets/asset-url (assets/version) "js/nope.js"))))))
 
 (deftest data-assets-get-a-ttl-not-a-fingerprint
   (testing "the database shards and the glyphs — the bulk of the bytes, and

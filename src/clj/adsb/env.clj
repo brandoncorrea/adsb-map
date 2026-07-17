@@ -1,4 +1,5 @@
 (ns adsb.env
+  (:refer-clojure :exclude [read])
   (:require [clojure.java.io :as io]
             [clojure.string :as str]))
 
@@ -27,22 +28,20 @@
   (merge (parse file-contents) environment))
 
 (defn positive-long
-  "A strictly-positive long read from an env map entry, or nil when the entry
-  is absent, blank, non-numeric, or not positive. Works over any string map,
-  including the java.util.Map from System/getenv."
+  "A strictly-positive long read from an env map entry.
+   Returns nil otherwise."
   [env var-name]
   (when-some [value (get env var-name)]
     (when-some [n (parse-long (str/trim value))]
       (when (pos? n) n))))
 
 (defn flag?
-  "True only when the env entry is exactly \"true\" (case- and
-  space-insensitive). A boundary is not lowered by \"0\", \"yes\", or a typo."
+  "True only when the env entry is \"true\"."
   [env var-name]
   (= "true" (some-> (get env var-name) str/trim str/lower-case)))
 
-(defn read!
-  ([] (read! default-file (System/getenv)))
+(defn read
+  ([] (read default-file (System/getenv)))
   ([file environment]
    (let [environment (into {} environment)]
      (if (.exists (io/file file))

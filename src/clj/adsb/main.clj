@@ -38,7 +38,7 @@
 
 (defn sse-options
   "The four operator-tunable SSE admission knobs, resolved from the
-  .env-merged env map (adsb.env/read!) so a value set only in .env is honored.
+  .env-merged env map (adsb.env/read) so a value set only in .env is honored.
   broadcast/start! reads System/getenv only as a fallback for entry points
   that skip env.clj, and that fallback misses .env — so the composition root
   resolves them here and passes them as explicit options (adsb-rgv). Unset
@@ -198,5 +198,5 @@
 
 (defn -main [& _args]
   (log/info "adsb starting")
-  (start! (env->config (env/read!)))
+  (start! (env->config (env/read)))
   @(promise))

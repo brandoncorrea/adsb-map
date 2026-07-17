@@ -74,17 +74,17 @@
            (env/merge-file {"A" "from-environment"}
                            "A=from-file\nB=from-file")))))
 
-(deftest read!-test
+(deftest read-test
   (testing "no .env — the process environment, untouched"
-    (is (= {"A" "1"} (env/read! "does/not/exist/.env" {"A" "1"}))))
+    (is (= {"A" "1"} (env/read "does/not/exist/.env" {"A" "1"}))))
 
   (testing "with a .env — backfilled, environment still winning"
     (let [f (temp-file-with "A=from-file\nB=from-file")]
       (is (= {"A" "from-environment" "B" "from-file"}
-             (env/read! f {"A" "from-environment"})))))
+             (env/read f {"A" "from-environment"})))))
 
   (testing "a java.util.Map environment (what System/getenv actually returns)
             is handled, not just a Clojure map"
     (let [f (temp-file-with "B=from-file")]
       (is (= {"A" "from-environment" "B" "from-file"}
-             (env/read! f (HashMap. {"A" "from-environment"})))))))
+             (env/read f (HashMap. {"A" "from-environment"})))))))
