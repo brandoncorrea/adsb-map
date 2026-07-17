@@ -15,13 +15,11 @@
         !last-pos (atom nil)
         !entering (atom false)
         !pending  (atom nil)
-        selected  (rf/subscribe [:aircraft/selected])
-        mode      (rf/subscribe [:map/camera-mode])
         track     (r/track!
                     (fn []
                       (when-not @!disposed
-                        (let [mode* @mode
-                              ac    @selected]
+                        (let [mode* @(rf/subscribe [:map/camera-mode])
+                              ac    @(rf/subscribe [:aircraft/selected])]
                           (if (should-track? mode* ac)
                             (let [pos (:aircraft/position ac)]
                               (cond
