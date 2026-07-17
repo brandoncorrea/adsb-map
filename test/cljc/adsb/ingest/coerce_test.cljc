@@ -41,8 +41,7 @@
             :aircraft/ground-speed-kt 450.5
             :aircraft/track-deg       97.14
             :aircraft/baro-rate-fpm   -960
-            :aircraft/seen-s          0.4
-            :aircraft/rssi            -26.2}
+            :aircraft/seen-s          0.4}
            (coerce/->aircraft cruising-raw))))
 
   (testing "coerces alt_baro of \"ground\" to an on-ground flag, not an altitude"
@@ -181,7 +180,14 @@
             selective copy, byte-for-byte identical with or without them"
     (is (= (coerce/->aircraft cruising-raw)
            (coerce/->aircraft
-             (assoc cruising-raw :r_dst 39.887 :r_dir 231.3))))))
+             (assoc cruising-raw :r_dst 39.887 :r_dir 231.3)))))
+
+  (testing "rssi — the receiver's own signal measurement — is in the same
+            family and never reaches the domain aircraft either (adsb-4qi):
+            with it, without it, byte-identical, and no :aircraft/rssi key"
+    (is (= (coerce/->aircraft (dissoc cruising-raw :rssi))
+           (coerce/->aircraft cruising-raw)))
+    (is (not (contains? (coerce/->aircraft cruising-raw) :aircraft/rssi)))))
 
 (deftest ->aircraft-batch
   (testing "one malformed entry yields the rest of the batch, not an exception"

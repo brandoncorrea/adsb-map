@@ -29,12 +29,14 @@
    [:track {:optional true} [:maybe number?]]
    [:baro_rate {:optional true} [:maybe number?]]
    [:seen {:optional true} [:maybe number?]]
-   [:seen_pos {:optional true} [:maybe number?]]
-   [:rssi {:optional true} [:maybe number?]]])
+   [:seen_pos {:optional true} [:maybe number?]]])
 ;; type/category/mlat are deliberately absent above: they are advisory
 ;; fields, and garbage in them costs the FIELD, never the aircraft — the
 ;; coercion layer field-validates each. The typed fields above are
 ;; arithmetic inputs; garbage there rejects the entry at the boundary.
+;; rssi is absent because it is never read at all: receiver-relative
+;; signal strength locates the antenna, so it dies at ingest (adsb-4qi),
+;; alongside r_dst/r_dir.
 
 (def position
   [:map
@@ -60,7 +62,6 @@
    [:aircraft/seen-at-ms {:optional true} number?]
    [:aircraft/position-seen-s {:optional true} number?]
    [:aircraft/position-at-ms {:optional true} number?]
-   [:aircraft/rssi {:optional true} number?]
    [:aircraft/position-suspect? {:optional true} :boolean]
    [:aircraft/mlat? {:optional true} :boolean]])
 

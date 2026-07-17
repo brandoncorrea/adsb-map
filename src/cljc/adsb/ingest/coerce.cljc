@@ -27,7 +27,7 @@
 
 (defn- raw->aircraft [raw]
   (let [{:keys [hex flight alt_baro lat lon squawk gs track baro_rate
-                seen seen_pos rssi category]} raw
+                seen seen_pos category]} raw
         callsign (some-> flight str/trim not-empty)
         category (emitter-category category)]
     (cond-> {:aircraft/icao (str/lower-case hex)}
@@ -42,7 +42,6 @@
             baro_rate (assoc :aircraft/baro-rate-fpm baro_rate)
             seen (assoc :aircraft/seen-s seen)
             seen_pos (assoc :aircraft/position-seen-s seen_pos)
-            rssi (assoc :aircraft/rssi rssi)
             (mlat-derived? raw) (assoc :aircraft/mlat? true))))
 
 (def ^:private plausible-altitude?
