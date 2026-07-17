@@ -75,7 +75,7 @@
                (seq (admit [aircraft] receiver-position crop)))
       (broadcast/offer-delta! broadcaster aircraft now-ms))))
 
-(defn- ->stream-source [->source {:keys [scheme uri host port]} env on-delta]
+(defn- ->stream-source [->source {:keys! [scheme host port] :keys [uri]} env on-delta]
   (let [opts (case scheme
                :tcp {:on-delta on-delta}
                :wss {:on-delta  on-delta

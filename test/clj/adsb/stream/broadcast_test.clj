@@ -465,6 +465,14 @@
           (.close admitted)
           (stop-streaming-server! streaming))))))
 
+(deftest start!-requires-the-picture-at-boot
+  (testing "the one REQUIRED option is enforced by :keys! — a broadcaster
+            with no picture fn fails at boot with a named key, not later
+            with an NPE on the first tick inside the executor thread"
+    (is (thrown-with-msg? IllegalArgumentException
+                          #"Missing required key: :picture"
+                          (broadcast/start! {})))))
+
 (deftest start!-seeds-the-client-ip-diagnostic-budget
   (testing "with the diagnostic off, start! creates no counter — it is
             opt-in and costs nothing when unused"

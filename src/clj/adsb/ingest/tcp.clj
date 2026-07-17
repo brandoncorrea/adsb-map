@@ -43,7 +43,7 @@
     (reset! swept-at-ms now-ms)
     (swap! picture picture/sweep now-ms)))
 
-(defn accumulate! [{:keys [picture on-delta messages] :as state} delta now-ms]
+(defn accumulate! [{:keys! [picture messages] :keys [on-delta] :as state} delta now-ms]
   (sweep-picture! state now-ms)
   (swap! messages inc)
   (let [merged (-> (swap! picture plausibility/accumulate-flagging-jumps
@@ -91,7 +91,7 @@
   (reset! reader-thread (start-reader! state))
   state)
 
-(defn snapshot-or-throw! [{:keys [connected? picture clock last-error host port]}]
+(defn snapshot-or-throw! [{:keys! [connected? picture clock last-error] :keys [host port]}]
   (if @connected?
     (picture/snapshot @picture (clock))
     (throw (ex-info "TCP feed unreachable"

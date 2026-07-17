@@ -1,4 +1,18 @@
-{:linters {:unresolved-namespace {:level :off}
-           ;; garden.selectors defines root/hover/etc via defpseudoclass —
-           ;; macro-generated vars clj-kondo cannot resolve.
-           :unresolved-var {:exclude [garden.selectors]}}}
+{:linters
+ {:unresolved-namespace {:level :off}
+  ;; garden.selectors defines root/hover/etc via defpseudoclass —
+  ;; macro-generated vars clj-kondo cannot resolve.
+  :unresolved-var {:exclude [garden.selectors]}}
+
+ ;; Clojure 1.13's checked-keys destructuring (:keys! — required keys, get
+ ;; via req!) is not yet understood by clj-kondo, which then reads the bound
+ ;; locals as unresolved. Scoped per namespace to exactly the symbols each
+ ;; :keys! binds; REMOVE each entry when clj-kondo learns the directive.
+ :config-in-ns
+ {adsb.ingest.tcp
+  {:linters {:unresolved-symbol
+             {:exclude [messages picture connected? clock last-error]}}}
+  adsb.main
+  {:linters {:unresolved-symbol {:exclude [scheme host port]}}}
+  adsb.stream.broadcast
+  {:linters {:unresolved-symbol {:exclude [picture]}}}}}

@@ -205,7 +205,8 @@
   (offer-delta! feeds it; a deployment with no streaming Source simply
   never calls it and pays one parked daemon thread). Options:
 
-    :picture       REQUIRED — fn of now-ms returning the picture
+    :picture       REQUIRED (:keys! — boot throws if absent) — fn of
+                   now-ms returning the picture
                    (icao -> aircraft) to put on the wire. Production
                    injects adsb.state/age-out! (see the ns docstring).
     :stats         fn of [picture now-ms] returning the session stats map
@@ -256,9 +257,10 @@
     :diagnose-client-ip?  Log the raw address inputs at SSE connect
 
   Returns a broadcaster to hand to connect!, client-count, and stop!."
-  [{:keys [picture stats feeder stats-interval-ms heartbeat-ms crop
-           delta-queue-depth max-clients max-per-ip trust-forwarded?
-           trusted-proxy-hops diagnose-client-ip?]
+  [{:keys! [picture]
+    :keys  [stats feeder stats-interval-ms heartbeat-ms crop
+            delta-queue-depth max-clients max-per-ip trust-forwarded?
+            trusted-proxy-hops diagnose-client-ip?]
     :or   {stats             (constantly nil)
            feeder            (constantly nil)
            stats-interval-ms default-stats-interval-ms
