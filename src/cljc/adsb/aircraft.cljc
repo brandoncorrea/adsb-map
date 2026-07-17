@@ -41,30 +41,3 @@
               (when position-seen-s
                 (- captured-at-ms (* 1000 position-seen-s)))
               (observed-at-ms aircraft captured-at-ms)))))
-
-(defn- ->observation [aircraft captured-at-ms]
-  (cond-> (-> aircraft
-              (dissoc :aircraft/seen-s :aircraft/position-seen-s)
-              (assoc :aircraft/seen-at-ms (observed-at-ms aircraft captured-at-ms)))
-          (positioned? aircraft)
-          (assoc :aircraft/position-at-ms (position-observed-at-ms aircraft captured-at-ms))))
-
-(defn- merge-observation [previous observation]
-  (if (or (positioned? observation) (not (positioned? previous)))
-    observation
-    (merge observation
-           (select-keys previous [:aircraft/position
-                                  :aircraft/position-at-ms]))))
-
-(defn merge-batch [picture batch captured-at-ms]
-  (reduce
-    (fn [merged aircraft]
-      (update merged (:aircraft/icao aircraft)
-              merge-observation (->observation aircraft captured-at-ms)))
-    picture
-    batch))
-
-(defn age-out [picture now-ms]
-  (into {}
-        (remove (fn [[_icao aircraft]] (aged-out? aircraft now-ms)))
-        picture))

@@ -1,10 +1,10 @@
 (ns adsb.stream.broadcast-test
-  (:require [adsb.aircraft :as aircraft]
-            [adsb.fixtures :as fixtures]
+  (:require [adsb.fixtures :as fixtures]
             [adsb.http.server :as server]
             [adsb.ingest.sbs :as sbs]
             [adsb.ingest.source :as source]
             [adsb.ingest.tcp :as tcp]
+            [adsb.picture :as picture]
             [adsb.stream.admission :as admission]
             [adsb.stream.broadcast :as broadcast]
             [cheshire.core :as json]
@@ -18,7 +18,7 @@
            (java.nio.charset StandardCharsets)))
 
 (def ^:private captured-at-ms 1720713600000)
-(def ^:private cast-picture (aircraft/merge-batch {} fixtures/all captured-at-ms))
+(def ^:private cast-picture (picture/merge-batch {} fixtures/all captured-at-ms))
 (def ^:const ^:private frame-timeout-ms 2000)
 (def ^:const ^:private delta-latency-samples 10)
 (def ^:const ^:private max-delta-latency-ms 100)

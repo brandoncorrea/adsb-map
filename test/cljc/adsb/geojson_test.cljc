@@ -2,6 +2,7 @@
   (:require [adsb.aircraft :as aircraft]
             [adsb.fixtures :as fixtures]
             [adsb.geojson :as geojson]
+            [adsb.picture :as picture]
             [clojure.test :refer [deftest testing is]]
             #?@(:clj [[adsb.ingest.coerce :as coerce]
                       [cheshire.core :as json]])))
@@ -149,7 +150,7 @@
         at-line     (assoc fixtures/ups-2717
                       :aircraft/seen-s
                       (/ aircraft/age-out-threshold-ms 1000))
-        picture     (aircraft/merge-batch {} [at-line] captured)
+        picture     (picture/merge-batch {} [at-line] captured)
         planes      (vals picture)
         threshold-s (quot aircraft/age-out-threshold-ms 1000)]
     (testing "at the age-out line the aircraft still renders — faded, not gone"
@@ -165,7 +166,7 @@
                       planes (inc captured))))))
 
     (testing "long-silent (well past the line) produces no feature at capture"
-      (let [silent (vals (aircraft/merge-batch {} [fixtures/long-silent] captured))]
+      (let [silent (vals (picture/merge-batch {} [fixtures/long-silent] captured))]
         (is (empty? (:features
                       (geojson/aircraft-picture->feature-collection silent captured))))))
 

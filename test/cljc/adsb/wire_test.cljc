@@ -1,11 +1,11 @@
 (ns adsb.wire-test
-  (:require [adsb.aircraft :as aircraft]
-            [adsb.fixtures :as fixtures]
+  (:require [adsb.fixtures :as fixtures]
+            [adsb.picture :as picture]
             [adsb.wire :as wire]
             [clojure.test :refer [deftest is testing]]))
 
 (def ^:private captured-at-ms 1720713600000)
-(def ^:private picture (aircraft/merge-batch {} fixtures/all captured-at-ms))
+(def ^:private the-picture (picture/merge-batch {} fixtures/all captured-at-ms))
 
 (def ^:private wire-keys
   #{:icao :callsign :lat :lon :altitude :on-ground :squawk :category
@@ -78,7 +78,7 @@
       (is (not (contains? wire-aircraft :ground-speed)))))
 
   (testing "the seen-at aging timestamp belongs on the wire"
-    (let [wire-aircraft (wire/aircraft->wire (get picture "abc0e4"))]
+    (let [wire-aircraft (wire/aircraft->wire (get the-picture "abc0e4"))]
       (is (number? (:seen-at wire-aircraft)))))
 
   (testing "a suspect position is surfaced, not hidden"
@@ -106,7 +106,7 @@
 
   (testing "the whole cast, through the real pipeline, emits only
             allowlisted keys"
-    (let [{:keys [aircraft]} (wire/picture->wire picture captured-at-ms)]
+    (let [{:keys [aircraft]} (wire/picture->wire the-picture captured-at-ms)]
       (is (seq aircraft))
       (is (every? wire-keys (mapcat keys aircraft)))))
 
@@ -168,9 +168,9 @@
             in the picture — and NOTHING else: aircraft data and stats never
             share a payload (adsb-jpf)"
     (let [{:keys [at aircraft] :as envelope}
-          (wire/picture->wire picture captured-at-ms)]
+          (wire/picture->wire the-picture captured-at-ms)]
       (is (= captured-at-ms at))
-      (is (= (count picture) (count aircraft)))
+      (is (= (count the-picture) (count aircraft)))
       (is (= #{:at :aircraft} (set (keys envelope)))))))
 
 (deftest stats-event->wire-envelope
@@ -194,20 +194,20 @@
 (deftest wire-round-trip
   (testing "a domain aircraft survives the round trip, minus the fields the
             allowlist deliberately withholds"
-    (doseq [[icao domain-aircraft] picture]
+    (doseq [[icao domain-aircraft] the-picture]
       (is (= (withheld domain-aircraft)
              (wire/wire->aircraft (wire/aircraft->wire domain-aircraft)))
           icao)))
 
   (testing "a decoded frame envelope becomes the picture again, keyed by icao"
-    (let [envelope (wire/picture->wire picture captured-at-ms)]
-      (is (= (update-vals picture withheld)
+    (let [envelope (wire/picture->wire the-picture captured-at-ms)]
+      (is (= (update-vals the-picture withheld)
              (wire/wire->picture envelope)))))
 
   (testing "an upsert envelope decodes back into its one domain aircraft —
             the same decode a full-picture entry gets, so the browser needs
             no second vocabulary (adsb-jpf)"
-    (doseq [[icao domain-aircraft] picture]
+    (doseq [[icao domain-aircraft] the-picture]
       (is (= (withheld domain-aircraft)
              (wire/wire->upsert (wire/upsert->wire domain-aircraft captured-at-ms)))
           icao)))

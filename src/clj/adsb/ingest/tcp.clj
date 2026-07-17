@@ -1,7 +1,7 @@
 (ns adsb.ingest.tcp
-  (:require [adsb.accumulator :as accumulator]
-            [adsb.ingest.plausibility :as plausibility]
+  (:require [adsb.ingest.plausibility :as plausibility]
             [adsb.ingest.source :as source]
+            [adsb.picture :as picture]
             [clojure.tools.logging :as log])
   (:import (java.net InetSocketAddress Socket)))
 
@@ -41,7 +41,7 @@
 (defn- sweep-picture! [{:keys [picture swept-at-ms]} now-ms]
   (when (sweep-due? @swept-at-ms now-ms)
     (reset! swept-at-ms now-ms)
-    (swap! picture accumulator/sweep now-ms)))
+    (swap! picture picture/sweep now-ms)))
 
 (defn accumulate! [{:keys [picture on-delta messages] :as state} delta now-ms]
   (sweep-picture! state now-ms)
@@ -93,7 +93,7 @@
 
 (defn snapshot-or-throw! [{:keys [connected? picture clock last-error host port]}]
   (if @connected?
-    (accumulator/snapshot @picture (clock))
+    (picture/snapshot @picture (clock))
     (throw (ex-info "TCP feed unreachable"
                     {:type ::unreachable :host host :port port}
                     @last-error))))

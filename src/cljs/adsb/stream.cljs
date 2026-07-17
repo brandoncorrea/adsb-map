@@ -1,6 +1,6 @@
 (ns adsb.stream
-  (:require [adsb.aircraft :as aircraft]
-            [adsb.corejs :as cjs]
+  (:require [adsb.corejs :as cjs]
+            [adsb.picture :as picture]
             [adsb.stream.source :as source]
             [adsb.wire :as wire]
             [adsb.worker :as worker]
@@ -105,7 +105,7 @@
   (fn [db [_ data at-ms]]
     (let [{:keys [stats feeder]} (data->stats data)]
       (-> db
-          (update :aircraft/picture aircraft/age-out at-ms)
+          (update :aircraft/picture picture/sweep at-ms)
           (assoc
             :stats/session stats
             :feeder/status (:feeder/status feeder)

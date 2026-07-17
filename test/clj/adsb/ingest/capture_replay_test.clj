@@ -1,8 +1,8 @@
 (ns adsb.ingest.capture-replay-test
-  (:require [adsb.accumulator :as accumulator]
-            [adsb.ingest.beast :as beast]
+  (:require [adsb.ingest.beast :as beast]
             [adsb.ingest.mode-s :as mode-s]
             [adsb.ingest.sbs :as sbs]
+            [adsb.picture :as picture]
             [adsb.schema :as schema]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -40,8 +40,8 @@
       (is (= 69 (count (filter :aircraft/callsign deltas))))
       (is (= 33 (count (distinct (map :aircraft/icao deltas))))))
     (testing "the deltas fold into a full picture"
-      (let [picture (reduce #(accumulator/accumulate %1 %2 0) {} deltas)]
-        (is (= 33 (count (accumulator/snapshot picture 0))))))))
+      (let [picture (reduce #(picture/accumulate %1 %2 0) {} deltas)]
+        (is (= 33 (count (picture/snapshot picture 0))))))))
 
 (deftest beast-capture-replays-through-framing-and-decode
   (let [frames (frames-in-chunks (beast-capture-bytes) 4096)]

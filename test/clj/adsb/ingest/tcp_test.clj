@@ -42,7 +42,7 @@
 
   (testing "the sweep runs before the fold, so a returning aircraft's
             delta lands in an empty slot rather than on its own stale
-            entry — belt and braces with accumulator/merge-delta"
+            entry — belt and braces with picture/merge-delta"
     (let [{:keys [picture] :as state} (reader-state)
           returns-at (+ t0 (inc aircraft/age-out-threshold-ms)
                         tcp/default-sweep-interval-ms)]

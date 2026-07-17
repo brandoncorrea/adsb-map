@@ -1,10 +1,10 @@
 (ns adsb.ingest.plausibility-test
-  (:require [adsb.accumulator :as accumulator]
-            [adsb.aircraft :as aircraft]
+  (:require [adsb.aircraft :as aircraft]
             [adsb.fixtures :as fixtures]
             [adsb.geo :as geo]
             [adsb.ingest.coerce :as coerce]
             [adsb.ingest.plausibility :as plausibility]
+            [adsb.picture :as picture]
             [adsb.schema :as schema]
             [clojure.test :refer [deftest is testing]]
             [malli.core :as m]))
@@ -255,11 +255,11 @@
 
     (testing "the sweep evicts the suspect track like any other"
       (is (:aircraft/position-suspect? (get suspect ups-icao)))
-      (is (empty? (aircraft/age-out suspect long-after))))
+      (is (empty? (picture/sweep suspect long-after))))
 
     (testing "an aircraft re-acquired after the sweep is a new track and
               starts clean — its first position has nothing to jump from"
-      (let [swept   (aircraft/age-out suspect long-after)
+      (let [swept   (picture/sweep suspect long-after)
             reheard (plausibility/merge-batch-flagging-jumps
                       swept [teleported] long-after)]
         (is (not (contains? (get reheard ups-icao) :aircraft/position-suspect?)))))))
@@ -387,10 +387,10 @@
               recomputing it away"
       (let [aircraft (-> {}
                          (plausibility/merge-batch-flagging-jumps
-                           (accumulator/snapshot jumped (+ heard-at 1000))
+                           (picture/snapshot jumped (+ heard-at 1000))
                            (+ heard-at 1000))
                          (plausibility/merge-batch-flagging-jumps
-                           (accumulator/snapshot jumped (+ heard-at 2000))
+                           (picture/snapshot jumped (+ heard-at 2000))
                            (+ heard-at 2000))
                          (get ups-icao))]
         (is (:aircraft/position-suspect? aircraft))))))

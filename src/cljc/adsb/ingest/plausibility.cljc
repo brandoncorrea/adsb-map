@@ -1,7 +1,7 @@
 (ns adsb.ingest.plausibility
-  (:require [adsb.accumulator :as accumulator]
-            [adsb.aircraft :as aircraft]
-            [adsb.geo :as geo]))
+  (:require [adsb.aircraft :as aircraft]
+            [adsb.geo :as geo]
+            [adsb.picture :as picture]))
 
 (def ^:const default-max-range-m 400000)
 
@@ -52,8 +52,8 @@
 
 (defn merge-batch-flagging-jumps [picture batch captured-at-ms]
   (let [batch (flag-position-jumps picture batch captured-at-ms default-max-implied-speed-kt)]
-    (aircraft/merge-batch picture batch captured-at-ms)))
+    (picture/merge-batch picture batch captured-at-ms)))
 
 (defn accumulate-flagging-jumps [picture delta heard-at-ms]
   (let [delta (flag-position-jump picture delta heard-at-ms default-max-implied-speed-kt)]
-    (accumulator/accumulate picture delta heard-at-ms)))
+    (picture/accumulate picture delta heard-at-ms)))
